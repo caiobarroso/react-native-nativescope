@@ -68,6 +68,19 @@ describe("withStorageInspector", () => {
     expect(result.filePath).toBe("/real/react");
   });
 
+  it("estende watchFolders com a raiz do pacote e nodeModulesPaths com o do projeto", () => {
+    const wrapped = withStorageInspector(
+      { watchFolders: ["/existente"] },
+      { projectRoot: "/meu/app" },
+    ) as unknown as {
+      watchFolders: string[];
+      resolver: { nodeModulesPaths: string[] };
+    };
+    expect(wrapped.watchFolders[0]).toBe("/existente");
+    expect(wrapped.watchFolders[1]).toContain("metro");
+    expect(wrapped.resolver.nodeModulesPaths).toContain("/meu/app/node_modules");
+  });
+
   it("intercepta react-native-mmkv com o shim de auto-discovery", () => {
     const wrapped = withStorageInspector({});
     const { context } = fakeContext();

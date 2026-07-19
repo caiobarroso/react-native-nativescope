@@ -42,10 +42,23 @@ function withStorageInspector(config, options = {}) {
   const resolver = config.resolver ?? {};
   const previousResolveRequest = resolver.resolveRequest;
 
+  // Instalado via file:/link:, o pacote é um symlink e os shims vivem FORA
+  // do projeto. Duas consequências no Metro:
+  // 1. watchFolders precisa incluir a raiz real do pacote, senão o Metro
+  //    se recusa a servir os arquivos de shim;
+  // 2. nodeModulesPaths precisa incluir o node_modules do projeto, senão o
+  //    require() do módulo real feito de dentro do shim não resolve.
+  const packageRoot = path.join(__dirname, "..");
+
   return {
     ...config,
+    watchFolders: [...(config.watchFolders ?? []), packageRoot],
     resolver: {
       ...resolver,
+      nodeModulesPaths: [
+        ...(resolver.nodeModulesPaths ?? []),
+        path.join(projectRoot, "node_modules"),
+      ],
       resolveRequest(context, moduleName, platform) {
         // Composição, nunca substituição: respeita resolver custom do projeto.
         const fallback = (ctx, name, plat) =>
