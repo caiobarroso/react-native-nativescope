@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
-import { useStudio } from "../lib/store.ts";
+import { useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, Pause, Play } from "lucide-react";
+import { useStudio, type ActivityItem } from "../lib/store.ts";
 
 const CHANGE_LABEL = {
   created: "criado",
@@ -22,6 +22,36 @@ const CHANGE_COLOR = {
 export function ActivityStrip() {
   const activity = useStudio((s) => s.activity);
   const [collapsed, setCollapsed] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [paused, setPaused] = useState(false);
+  /** snapshot congelado enquanto pausado — o feed continua acumulando no store */
+  const frozenRef = useRef<ActivityItem[]>([]);
+
+  if (paused && frozenRef.current.length === 0 && activity.length > 0) {
+    frozenRef.current = activity;
+  }
+
+  const visible = useMemo(() => {
+    const base = paused ? frozenRef.current : activity;
+    if (filter.trim() === "") return base;
+    const q = filter.toLowerCase();
+    return base.filter(
+      (item) =>
+        item.key.toLowerCase().includes(q) ||
+        item.providerLabel.toLowerCase().includes(q) ||
+        (item.preview ?? "").toLowerCase().includes(q),
+    );
+  }, [activity, filter, paused]);
+
+  const heldBack = paused ? activity.length - frozenRef.current.length : 0;
+
+  function togglePause(): void {
+    setPaused((p) => {
+      if (p) frozenRef.current = [];
+      else frozenRef.current = activity;
+      return !p;
+    });
+  }
 
   return (
     <section
@@ -33,12 +63,32 @@ export function ActivityStrip() {
         <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
           Atividade
         </span>
-        {activity.length > 0 && (
-          <span className="text-[11px] text-text-subtle">{activity.length}</span>
+        {visible.length > 0 && (
+          <span className="text-[11px] text-text-subtle">{visible.length}</span>
+        )}
+        {!collapsed && (
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="filtrar…"
+            className="ml-2 w-40 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[11px] outline-none placeholder:text-text-subtle focus:border-border"
+          />
         )}
         <button
+          onClick={togglePause}
+          title={paused ? "Retomar" : "Pausar"}
+          className={`ml-auto flex items-center gap-1 rounded p-1 text-[10px] ${
+            paused
+              ? "bg-accent-wash text-accent"
+              : "text-text-subtle hover:bg-surface-hover hover:text-text"
+          }`}
+        >
+          {paused ? <Play size={12} /> : <Pause size={12} />}
+          {paused && heldBack > 0 && <span>+{heldBack}</span>}
+        </button>
+        <button
           onClick={() => setCollapsed((c) => !c)}
-          className="ml-auto rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+          className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
           title={collapsed ? "Expandir" : "Recolher"}
         >
           {collapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -47,12 +97,14 @@ export function ActivityStrip() {
 
       {!collapsed && (
         <ol className="flex-1 overflow-y-auto px-1 pb-1">
-          {activity.length === 0 && (
+          {visible.length === 0 && (
             <li className="px-2 py-3 text-text-subtle">
-              Mudanças no storage do app aparecem aqui em tempo real.
+              {filter
+                ? "Nada bate com o filtro."
+                : "Mudanças no storage do app aparecem aqui em tempo real."}
             </li>
           )}
-          {activity.map((item) => (
+          {visible.map((item) => (
             <li
               key={item.id}
               className="flex h-7 items-center gap-3 rounded px-2 font-mono text-[12px] hover:bg-surface-hover"

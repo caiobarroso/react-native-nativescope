@@ -1,8 +1,72 @@
 import { useEffect, useState } from "react";
-import { Trash2, X } from "lucide-react";
+import { History, Trash2, X } from "lucide-react";
 import type { StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
 import { getValue, setValue, removeKey } from "../lib/studio-client.ts";
+
+const HISTORY_LABEL = {
+  created: "criado",
+  updated: "atualizado",
+  removed: "removido",
+} as const;
+
+/**
+ * Histórico da chave selecionada — a terceira coluna (plano §5.2).
+ * Não é metadata: é o diferencial do produto no nível da chave.
+ */
+function KeyHistory({ historyKey }: { historyKey: string }) {
+  const history = useStudio((s) => s.keyHistory[historyKey]);
+
+  return (
+    <aside className="flex w-60 shrink-0 flex-col border-l border-border">
+      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-3">
+        <History size={13} strokeWidth={1.5} className="text-text-subtle" />
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+          Histórico
+        </span>
+        {history && history.length > 1 && (
+          <span className="text-[11px] text-text-subtle">{history.length}</span>
+        )}
+      </div>
+      <ol className="flex-1 overflow-y-auto p-2">
+        {(!history || history.length === 0) && (
+          <li className="px-1 py-2 text-[11px] text-text-subtle">
+            Mudanças nesta chave aparecem aqui enquanto o Studio estiver aberto.
+          </li>
+        )}
+        {history?.map((entry, i) => (
+          <li key={i} className="mb-2 rounded-md border border-border p-2">
+            <div className="mb-1 flex items-center gap-2 text-[10px] text-text-subtle">
+              <time className="tabular-nums">
+                {new Date(entry.timestamp).toLocaleTimeString("pt-BR")}
+              </time>
+              <span
+                className={
+                  entry.change === "created"
+                    ? "text-created"
+                    : entry.change === "removed"
+                      ? "text-deleted"
+                      : "text-updated"
+                }
+              >
+                {HISTORY_LABEL[entry.change]}
+              </span>
+              <span
+                title={entry.source === "studio" ? "pelo Studio" : "pelo app"}
+                className={`ml-auto h-1.5 w-1.5 rounded-full ${
+                  entry.source === "studio" ? "bg-accent" : "bg-text-subtle"
+                }`}
+              />
+            </div>
+            {entry.preview !== null && (
+              <p className="truncate font-mono text-[11px] text-text-muted">{entry.preview}</p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </aside>
+  );
+}
 
 function CreateKeyForm({
   providerId,
@@ -272,7 +336,8 @@ export function ValueEditor() {
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex min-w-0 flex-1">
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       {/* faixa de metadata — fina, não uma coluna (plano §5.2) */}
       <div className="flex h-9 shrink-0 items-center gap-3 border-b border-border px-4">
         <span className="min-w-0 truncate font-mono text-[12px] font-semibold">
@@ -357,6 +422,10 @@ export function ValueEditor() {
         </button>
         {error && <span className="text-[12px] text-deleted">{error}</span>}
       </div>
+    </div>
+    <KeyHistory
+      historyKey={`${keysId(selection.providerId, selection.instanceId)} ${selectedKey}`}
+    />
     </div>
   );
 }

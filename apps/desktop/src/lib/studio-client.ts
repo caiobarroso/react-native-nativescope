@@ -248,6 +248,25 @@ export async function removeKey(
   });
 }
 
+/** Variante da listagem que devolve os dados (busca global) em vez de gravar no store. */
+export async function fetchAllKeys(providerId: string, instanceId: string) {
+  const result = await sendCommand({
+    type: "key-value.list",
+    payload: { providerId, instanceId },
+  });
+  const parsed = keyValueListResultSchema.safeParse(result);
+  return parsed.success ? parsed.data.entries : [];
+}
+
+export async function fetchAllTables(providerId: string, instanceId: string) {
+  const result = await sendCommand({
+    type: "database.tables",
+    payload: { providerId, instanceId },
+  });
+  const parsed = databaseTablesResultSchema.safeParse(result);
+  return parsed.success ? parsed.data.tables : [];
+}
+
 // ------------------------------------------------------------- database.*
 
 export async function loadTables(providerId: string, instanceId: string): Promise<void> {

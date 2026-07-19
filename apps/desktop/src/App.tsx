@@ -9,6 +9,7 @@ import { ValueEditor } from "./components/ValueEditor.tsx";
 import { TableList } from "./components/TableList.tsx";
 import { RowGrid } from "./components/RowGrid.tsx";
 import { ActivityStrip } from "./components/ActivityStrip.tsx";
+import { GlobalSearch } from "./components/GlobalSearch.tsx";
 
 export default function App() {
   const phase = useStudio((s) => s.phase);
@@ -44,6 +45,7 @@ export default function App() {
             </main>
           </div>
           <ActivityStrip />
+          <GlobalSearch />
         </>
       ) : (
         <main className="min-h-0 flex-1">
