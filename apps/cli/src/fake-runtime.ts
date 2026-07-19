@@ -7,6 +7,40 @@ import {
 } from "@rnsi/runtime";
 import type { WebSocketLike, SQLiteDatabaseLike } from "@rnsi/runtime";
 
+/** Semente GB-scale (plano de grandes volumes §E): prova os orçamentos ao vivo. */
+function seedScale(raw: DatabaseSync, adapter: ReturnType<typeof createMemoryAdapter>): void {
+  // 5.000 chaves pequenas + valores grandes (o preview/get-full/export em ação)
+  for (let i = 0; i < 5000; i += 1) {
+    adapter.writeFromApp("default", `bulk.item.${String(i).padStart(4, "0")}`, {
+      type: "json",
+      value: JSON.stringify({ index: i, status: i % 3 === 0 ? "done" : "pending" }),
+    });
+  }
+  adapter.writeFromApp("default", "huge.payload", {
+    type: "json",
+    value: JSON.stringify({ blob: "x".repeat(2 * 1024 * 1024) }), // ~2 MB
+  });
+  adapter.writeFromApp("default", "huge.text", {
+    type: "string",
+    value: "linha de log repetida para simular dump grande\n".repeat(20_000), // ~900 KB
+  });
+
+  // 100k linhas de uma vez (CTE recursiva — rápido) + uma célula de ~1 MB
+  raw.exec(`
+    CREATE TABLE events (
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL,
+      payload TEXT
+    );
+    INSERT INTO events (kind, payload)
+    WITH RECURSIVE cnt(v) AS (SELECT 1 UNION ALL SELECT v + 1 FROM cnt WHERE v < 100000)
+    SELECT 'evento-' || (v % 7), 'payload ' || v FROM cnt;
+  `);
+  raw
+    .prepare("INSERT INTO events (kind, payload) VALUES ('gigante', ?)")
+    .run("dado-enorme ".repeat(90_000)); // ~1 MB numa célula
+}
+
 /** SQLite REAL em memória (node:sqlite) atrás da interface do expo-sqlite. */
 function createFakeDatabase(): { db: SQLiteDatabaseLike; raw: DatabaseSync } {
   const raw = new DatabaseSync(":memory:");
@@ -55,7 +89,12 @@ function createFakeDatabase(): { db: SQLiteDatabaseLike; raw: DatabaseSync } {
  * memória, e simula atividade de app: token renovando, fila de sync
  * crescendo e drenando, feature flag alternando.
  */
-export function startFakeRuntime(options: { port: number; sessionToken: string }) {
+export function startFakeRuntime(options: {
+  port: number;
+  sessionToken: string;
+  /** true: semente GB-scale — 100k linhas SQLite, 5k chaves, valores de MB. */
+  scale?: boolean;
+}) {
   const adapter = createMemoryAdapter({
     providerId: "async-storage",
     label: "AsyncStorage",
@@ -100,6 +139,8 @@ export function startFakeRuntime(options: { port: number; sessionToken: string }
   const { db, raw } = createFakeDatabase();
   const sqlite = createExpoSqliteAdapter();
   sqlite.registerDatabase("proline.db", db);
+
+  if (options.scale) seedScale(raw, adapter);
 
   const runtime = startRuntime({
     url: `ws://127.0.0.1:${options.port}`,

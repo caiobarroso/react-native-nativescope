@@ -87,7 +87,7 @@ async function main(): Promise<void> {
 
   if (args[0] === "fake-runtime") {
     // Uso interno/testes: conecta um app falso num serviço já de pé.
-    startFakeRuntime({ port, sessionToken });
+    startFakeRuntime({ port, sessionToken, scale: flag("fake-scale") });
     console.log(`fake-runtime conectando em ws://127.0.0.1:${port}`);
     return;
   }
@@ -146,8 +146,13 @@ async function main(): Promise<void> {
   console.log("");
 
   if (flag("fake")) {
-    startFakeRuntime({ port, sessionToken });
-    console.log("(--fake: runtime simulado conectado)");
+    const scale = flag("fake-scale");
+    startFakeRuntime({ port, sessionToken, scale });
+    console.log(
+      scale
+        ? "(--fake --fake-scale: runtime simulado com 100k linhas + valores de MB)"
+        : "(--fake: runtime simulado conectado)",
+    );
   }
 
   if (!flag("no-open")) openBrowser(url);

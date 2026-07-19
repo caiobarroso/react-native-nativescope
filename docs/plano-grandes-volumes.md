@@ -1,5 +1,12 @@
 # Plano: Grandes Volumes de Dados ("GB-scale sem desespero")
 
+> **Status: IMPLEMENTADO** (G1–G7, commits `6075522`…). Desvios conscientes:
+> checksum é FNV-1a 32-bit (não sha256 — custo no device; integridade, não
+> cripto); snapshots usam previews+flags de truncamento em vez de hash
+> dedicado; Web Worker ficou desnecessário (payloads na main thread são
+> bounded em 64 KB por chunk); backpressure é flush-antecipado no teto em
+> vez de evento sync.pressure. ADR-0001 cobre a semântica de coalescing.
+
 > Objetivo: um device com **vários GB** de dados locais deve ser inspecionável
 > no Studio **sem gargalo perceptível**, com duas garantias invioláveis:
 >
