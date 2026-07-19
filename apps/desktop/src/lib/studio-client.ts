@@ -5,8 +5,15 @@ import {
   providerListResultSchema,
   keyValueListResultSchema,
   keyValueGetResultSchema,
+  databaseTablesResultSchema,
+  databaseRowsResultSchema,
+  databaseExecuteResultSchema,
   type AnyMessage,
+  type CellValue,
   type CommandMessage,
+  type ExecuteResult,
+  type Row,
+  type RowRef,
   type StorageValue,
 } from "@rnsi/protocol";
 import { createTransport, type Transport } from "@rnsi/runtime";
@@ -147,6 +154,23 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       });
       return;
     }
+
+    case "database.changed": {
+      const provider = store.providers.find(
+        (p) => p.providerId === event.payload.providerId,
+      );
+      store.applyDatabaseChange({
+        providerId: event.payload.providerId,
+        providerLabel: provider?.label ?? event.payload.providerId,
+        instanceId: event.payload.instanceId,
+        table: event.payload.table,
+        rowId: event.payload.rowId,
+        operation: event.payload.operation,
+        source: event.payload.source,
+        timestamp: event.timestamp,
+      });
+      return;
+    }
   }
 }
 
@@ -222,4 +246,71 @@ export async function removeKey(
     type: "key-value.remove",
     payload: { providerId, instanceId, key },
   });
+}
+
+// ------------------------------------------------------------- database.*
+
+export async function loadTables(providerId: string, instanceId: string): Promise<void> {
+  const result = await sendCommand({
+    type: "database.tables",
+    payload: { providerId, instanceId },
+  });
+  const parsed = databaseTablesResultSchema.safeParse(result);
+  if (parsed.success) {
+    useStudio.getState().setTables(providerId, instanceId, parsed.data.tables);
+  }
+}
+
+export async function loadRows(
+  providerId: string,
+  instanceId: string,
+  table: string,
+  options: { limit: number; offset: number; orderBy?: string; direction?: "asc" | "desc" },
+): Promise<{ rows: Row[]; total: number } | null> {
+  const result = await sendCommand({
+    type: "database.rows",
+    payload: { providerId, instanceId, table, ...options },
+  });
+  const parsed = databaseRowsResultSchema.safeParse(result);
+  return parsed.success ? parsed.data : null;
+}
+
+export async function updateCell(
+  providerId: string,
+  instanceId: string,
+  table: string,
+  ref: RowRef,
+  column: string,
+  value: CellValue,
+): Promise<void> {
+  await sendCommand({
+    type: "database.update",
+    payload: { providerId, instanceId, table, ref, set: { [column]: value } },
+  });
+}
+
+export async function deleteRow(
+  providerId: string,
+  instanceId: string,
+  table: string,
+  ref: RowRef,
+): Promise<void> {
+  await sendCommand({
+    type: "database.delete",
+    payload: { providerId, instanceId, table, ref },
+  });
+}
+
+export async function executeSql(
+  providerId: string,
+  instanceId: string,
+  sql: string,
+): Promise<ExecuteResult> {
+  const result = await sendCommand({
+    type: "database.execute",
+    payload: { providerId, instanceId, sql },
+  });
+  const parsed = databaseExecuteResultSchema.safeParse(result);
+  if (!parsed.success) throw new Error("resposta inválida do runtime");
+  return parsed.data.result;
 }

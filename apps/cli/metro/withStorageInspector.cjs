@@ -23,7 +23,7 @@ const SHIM_DIR = path.join(__dirname, "shims");
 const SHIM_TARGETS = {
   "@react-native-async-storage/async-storage": "async-storage.js",
   "react-native-mmkv": "mmkv.js",
-  // "expo-sqlite": "expo-sqlite.js",     // Fase 3
+  "expo-sqlite": "expo-sqlite.js",
 };
 
 /** módulo virtual que entrega porta+token da sessão ao shim */

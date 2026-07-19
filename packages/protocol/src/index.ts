@@ -21,6 +21,22 @@ export {
   type ProtocolError,
 } from "./errors.ts";
 export {
+  cellValueSchema,
+  columnSchema,
+  tableSchema,
+  rowRefSchema,
+  rowSchema,
+  executeResultSchema,
+  databaseTablesResultSchema,
+  databaseRowsResultSchema,
+  databaseExecuteResultSchema,
+  type CellValue,
+  type TableSchema,
+  type RowRef,
+  type Row,
+  type ExecuteResult,
+} from "./database.ts";
+export {
   changeSourceSchema,
   helloMessageSchema,
   helloAckMessageSchema,

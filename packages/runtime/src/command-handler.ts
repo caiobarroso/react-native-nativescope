@@ -4,6 +4,7 @@ import {
   type CommandResultMessage,
 } from "@rnsi/protocol";
 import type { AdapterRegistry } from "./registry.ts";
+import { isDatabaseAdapter, isKeyValueAdapter } from "./adapter.ts";
 
 /**
  * Executa um command contra o registry e devolve o resultado.
@@ -42,17 +43,71 @@ export async function handleCommand(
 
     switch (command.type) {
       case "key-value.list":
-        return succeed({ entries: await adapter.listKeys(command.payload.instanceId) });
       case "key-value.get":
-        return succeed({
-          value: await adapter.get(command.payload.instanceId, command.payload.key),
-        });
       case "key-value.set":
-        await adapter.set(command.payload.instanceId, command.payload.key, command.payload.value);
+      case "key-value.remove": {
+        if (!isKeyValueAdapter(adapter)) {
+          return fail("unsupported-capability", `${adapter.providerId} não é key-value`);
+        }
+        switch (command.type) {
+          case "key-value.list":
+            return succeed({ entries: await adapter.listKeys(command.payload.instanceId) });
+          case "key-value.get":
+            return succeed({
+              value: await adapter.get(command.payload.instanceId, command.payload.key),
+            });
+          case "key-value.set":
+            await adapter.set(
+              command.payload.instanceId,
+              command.payload.key,
+              command.payload.value,
+            );
+            return succeed({});
+          case "key-value.remove":
+            await adapter.remove(command.payload.instanceId, command.payload.key);
+            return succeed({});
+        }
+      }
+    }
+
+    if (!isDatabaseAdapter(adapter)) {
+      return fail("unsupported-capability", `${adapter.providerId} não é database`);
+    }
+    switch (command.type) {
+      case "database.tables":
+        return succeed({ tables: await adapter.tables(command.payload.instanceId) });
+      case "database.rows": {
+        const { instanceId, table, limit, offset, orderBy, direction } = command.payload;
+        return succeed(
+          await adapter.rows(instanceId, table, { limit, offset, orderBy, direction }),
+        );
+      }
+      case "database.update":
+        await adapter.update(
+          command.payload.instanceId,
+          command.payload.table,
+          command.payload.ref,
+          command.payload.set,
+        );
         return succeed({});
-      case "key-value.remove":
-        await adapter.remove(command.payload.instanceId, command.payload.key);
+      case "database.insert":
+        await adapter.insert(
+          command.payload.instanceId,
+          command.payload.table,
+          command.payload.values,
+        );
         return succeed({});
+      case "database.delete":
+        await adapter.delete(
+          command.payload.instanceId,
+          command.payload.table,
+          command.payload.ref,
+        );
+        return succeed({});
+      case "database.execute":
+        return succeed({
+          result: await adapter.execute(command.payload.instanceId, command.payload.sql),
+        });
     }
   } catch (cause) {
     return fail("internal", cause instanceof Error ? cause.message : String(cause));

@@ -1,7 +1,7 @@
 import { Database, KeyRound, Moon, Sun, SunMoon } from "lucide-react";
 import { useStudio } from "../lib/store.ts";
 import { useTheme } from "../lib/theme.ts";
-import { loadKeys } from "../lib/studio-client.ts";
+import { loadKeys, loadTables } from "../lib/studio-client.ts";
 
 export function Sidebar() {
   const providers = useStudio((s) => s.providers);
@@ -39,7 +39,11 @@ export function Sidebar() {
                       providerId: provider.providerId,
                       instanceId: instance.instanceId,
                     });
-                    void loadKeys(provider.providerId, instance.instanceId);
+                    if (provider.capabilities.includes("database.query")) {
+                      void loadTables(provider.providerId, instance.instanceId);
+                    } else {
+                      void loadKeys(provider.providerId, instance.instanceId);
+                    }
                   }}
                   className={`block w-full rounded-md px-2 py-1.5 pl-7 text-left font-mono text-[12px] ${
                     active

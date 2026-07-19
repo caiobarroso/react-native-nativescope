@@ -1,5 +1,5 @@
 import type { ProviderDescriptor } from "@rnsi/protocol";
-import type { KeyValueAdapter } from "./adapter.ts";
+import type { ProviderAdapter } from "./adapter.ts";
 
 /**
  * Registro de adapters do runtime. Os shims registram aqui no momento em que
@@ -7,15 +7,15 @@ import type { KeyValueAdapter } from "./adapter.ts";
  * import, nunca uma chamada manual do usuário.
  */
 export interface AdapterRegistry {
-  register(adapter: KeyValueAdapter): void;
-  get(providerId: string): KeyValueAdapter | undefined;
+  register(adapter: ProviderAdapter): void;
+  get(providerId: string): ProviderAdapter | undefined;
   describe(): ProviderDescriptor[];
-  onRegister(listener: (adapter: KeyValueAdapter) => void): () => void;
+  onRegister(listener: (adapter: ProviderAdapter) => void): () => void;
 }
 
 export function createRegistry(): AdapterRegistry {
-  const adapters = new Map<string, KeyValueAdapter>();
-  const listeners = new Set<(adapter: KeyValueAdapter) => void>();
+  const adapters = new Map<string, ProviderAdapter>();
+  const listeners = new Set<(adapter: ProviderAdapter) => void>();
 
   return {
     register(adapter) {

@@ -1,24 +1,37 @@
 import type {
   Capability,
+  CellValue,
   ChangeSource,
+  ExecuteResult,
   InstanceDescriptor,
   KeyEntry,
+  Row,
+  RowRef,
   StorageValue,
+  TableSchema,
 } from "@rnsi/protocol";
 
 /**
- * Contrato de um adapter key-value. Interfaces pequenas por capability —
- * SQLite terá o próprio contrato (database.*), não uma extensão deste.
+ * Base comum de todo adapter — só a identidade e as capabilities.
+ * Interfaces pequenas por capability: key-value e database são contratos
+ * separados, não uma interface gigante (plano §13.3).
  *
  * Sem classe base. Cada adapter é um objeto que satisfaz a interface
  * (regra §16.7 do doc de produto).
  */
-export interface KeyValueAdapter {
+export interface ProviderAdapter {
   providerId: string;
   label: string;
   capabilities: Capability[];
-
   instances(): InstanceDescriptor[];
+}
+
+export function isKeyValueAdapter(adapter: ProviderAdapter): adapter is KeyValueAdapter {
+  return adapter.capabilities.includes("key-value.read");
+}
+
+/** Contrato de um adapter key-value. */
+export interface KeyValueAdapter extends ProviderAdapter {
   listKeys(instanceId: string): Promise<KeyEntry[]>;
   get(instanceId: string, key: string): Promise<StorageValue | null>;
   set(instanceId: string, key: string, value: StorageValue): Promise<void>;
@@ -40,4 +53,35 @@ export interface KeyValueChange {
   change: "created" | "updated" | "removed";
   source: ChangeSource;
   entry: KeyEntry | null;
+}
+
+export function isDatabaseAdapter(adapter: ProviderAdapter): adapter is DatabaseAdapter {
+  return adapter.capabilities.includes("database.query");
+}
+
+/** Contrato de um adapter de banco (SQLite). */
+export interface DatabaseAdapter extends ProviderAdapter {
+  tables(instanceId: string): Promise<TableSchema[]>;
+  rows(
+    instanceId: string,
+    table: string,
+    options: { limit: number; offset: number; orderBy?: string; direction?: "asc" | "desc" },
+  ): Promise<{ rows: Row[]; total: number }>;
+  update(
+    instanceId: string,
+    table: string,
+    ref: RowRef,
+    set: Record<string, CellValue>,
+  ): Promise<void>;
+  insert(instanceId: string, table: string, values: Record<string, CellValue>): Promise<void>;
+  delete(instanceId: string, table: string, ref: RowRef): Promise<void>;
+  execute(instanceId: string, sql: string): Promise<ExecuteResult>;
+  subscribe(instanceId: string, listener: (change: DatabaseChange) => void): () => void;
+}
+
+export interface DatabaseChange {
+  table: string;
+  rowId: number | null;
+  operation: "insert" | "update" | "delete" | "unknown";
+  source: ChangeSource;
 }

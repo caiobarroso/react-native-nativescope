@@ -8,7 +8,7 @@ import {
 import { createRegistry, type AdapterRegistry } from "./registry.ts";
 import { handleCommand } from "./command-handler.ts";
 import { createTransport, type Transport, type WebSocketLike } from "./transport.ts";
-import type { KeyValueAdapter } from "./adapter.ts";
+import { isDatabaseAdapter, isKeyValueAdapter, type ProviderAdapter } from "./adapter.ts";
 
 export interface RuntimeOptions {
   url: string;
@@ -43,26 +43,47 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     if (handshakeDone) send(event);
   }
 
-  function watchAdapter(adapter: KeyValueAdapter): void {
+  function watchAdapter(adapter: ProviderAdapter): void {
     for (const { instanceId } of adapter.instances()) {
-      subscriptions.push(
-        adapter.subscribe(instanceId, (change) => {
-          sendEvent({
-            kind: "event",
-            protocolVersion: PROTOCOL_VERSION,
-            timestamp: Date.now(),
-            type: "key-value.changed",
-            payload: {
-              providerId: adapter.providerId,
-              instanceId,
-              key: change.key,
-              change: change.change,
-              source: change.source,
-              entry: change.entry,
-            },
-          });
-        }),
-      );
+      if (isKeyValueAdapter(adapter)) {
+        subscriptions.push(
+          adapter.subscribe(instanceId, (change) => {
+            sendEvent({
+              kind: "event",
+              protocolVersion: PROTOCOL_VERSION,
+              timestamp: Date.now(),
+              type: "key-value.changed",
+              payload: {
+                providerId: adapter.providerId,
+                instanceId,
+                key: change.key,
+                change: change.change,
+                source: change.source,
+                entry: change.entry,
+              },
+            });
+          }),
+        );
+      } else if (isDatabaseAdapter(adapter)) {
+        subscriptions.push(
+          adapter.subscribe(instanceId, (change) => {
+            sendEvent({
+              kind: "event",
+              protocolVersion: PROTOCOL_VERSION,
+              timestamp: Date.now(),
+              type: "database.changed",
+              payload: {
+                providerId: adapter.providerId,
+                instanceId,
+                table: change.table,
+                rowId: change.rowId,
+                operation: change.operation,
+                source: change.source,
+              },
+            });
+          }),
+        );
+      }
     }
   }
 

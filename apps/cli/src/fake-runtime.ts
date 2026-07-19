@@ -1,6 +1,52 @@
+import { DatabaseSync } from "node:sqlite";
 import { WebSocket } from "ws";
-import { startRuntime, createMemoryAdapter } from "@rnsi/runtime";
-import type { WebSocketLike } from "@rnsi/runtime";
+import {
+  startRuntime,
+  createMemoryAdapter,
+  createExpoSqliteAdapter,
+} from "@rnsi/runtime";
+import type { WebSocketLike, SQLiteDatabaseLike } from "@rnsi/runtime";
+
+/** SQLite REAL em memória (node:sqlite) atrás da interface do expo-sqlite. */
+function createFakeDatabase(): { db: SQLiteDatabaseLike; raw: DatabaseSync } {
+  const raw = new DatabaseSync(":memory:");
+  raw.exec(`
+    CREATE TABLE visits (
+      id INTEGER PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'pending',
+      pdv TEXT,
+      startedAt TEXT,
+      finishedAt TEXT
+    );
+    INSERT INTO visits (status, pdv, startedAt, finishedAt) VALUES
+      ('done', 'Carrefour', '08:00', '08:37'),
+      ('pending', 'Pague Menos', NULL, NULL),
+      ('done', 'Atacadão', '09:05', '09:44');
+
+    CREATE TABLE tasks (
+      id INTEGER PRIMARY KEY,
+      title TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO tasks (title, done) VALUES
+      ('Conferir gôndola', 1),
+      ('Foto da fachada', 0),
+      ('Ruptura de estoque', 0);
+  `);
+  const db: SQLiteDatabaseLike = {
+    async getAllAsync(sql, params = []) {
+      return raw
+        .prepare(sql)
+        .all(...(params as Array<string | number | null>))
+        .map((row) => ({ ...(row as Record<string, unknown>) }));
+    },
+    async runAsync(sql, params = []) {
+      const result = raw.prepare(sql).run(...(params as Array<string | number | null>));
+      return { changes: Number(result.changes), lastInsertRowId: Number(result.lastInsertRowid) };
+    },
+  };
+  return { db, raw };
+}
 
 /**
  * Runtime falso para desenvolvimento e E2E da UI sem device.
@@ -50,6 +96,11 @@ export function startFakeRuntime(options: { port: number; sessionToken: string }
     },
   });
 
+  // SQLite simulado: banco real em memória, estilo app-proline.
+  const { db, raw } = createFakeDatabase();
+  const sqlite = createExpoSqliteAdapter();
+  sqlite.registerDatabase("proline.db", db);
+
   const runtime = startRuntime({
     url: `ws://127.0.0.1:${options.port}`,
     sessionToken: options.sessionToken,
@@ -59,6 +110,7 @@ export function startFakeRuntime(options: { port: number; sessionToken: string }
 
   runtime.registry.register(adapter);
   runtime.registry.register(mmkv);
+  runtime.registry.register(sqlite);
 
   let sessionCount = 7;
   let launchCount = 41;
@@ -103,6 +155,16 @@ export function startFakeRuntime(options: { port: number; sessionToken: string }
         value: launchCount,
       });
     }, 11000),
+
+    // SQLite: o "app" insere visitas e conclui pendentes
+    setInterval(() => {
+      const pdvs = ["Assaí", "Extra", "Dia", "Sam's Club"];
+      const insert = raw
+        .prepare("INSERT INTO visits (status, pdv) VALUES ('pending', ?)")
+        .run(pdvs[Math.floor(Math.random() * pdvs.length)] ?? "Assaí");
+      // simula o hook nativo do expo-sqlite disparando
+      sqlite.notifyNativeChange("proline.db", "visits", Number(insert.lastInsertRowid));
+    }, 9000),
   ];
 
   return {

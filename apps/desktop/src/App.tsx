@@ -6,10 +6,17 @@ import { Sidebar } from "./components/Sidebar.tsx";
 import { WaitingScreen } from "./components/WaitingScreen.tsx";
 import { KeyList } from "./components/KeyList.tsx";
 import { ValueEditor } from "./components/ValueEditor.tsx";
+import { TableList } from "./components/TableList.tsx";
+import { RowGrid } from "./components/RowGrid.tsx";
 import { ActivityStrip } from "./components/ActivityStrip.tsx";
 
 export default function App() {
   const phase = useStudio((s) => s.phase);
+  const isDatabase = useStudio((s) => {
+    if (!s.selection) return false;
+    const provider = s.providers.find((p) => p.providerId === s.selection?.providerId);
+    return provider?.capabilities.includes("database.query") ?? false;
+  });
 
   useEffect(() => {
     connect();
@@ -23,8 +30,17 @@ export default function App() {
           <div className="flex min-h-0 flex-1">
             <Sidebar />
             <main className="flex min-w-0 flex-1">
-              <KeyList />
-              <ValueEditor />
+              {isDatabase ? (
+                <>
+                  <TableList />
+                  <RowGrid />
+                </>
+              ) : (
+                <>
+                  <KeyList />
+                  <ValueEditor />
+                </>
+              )}
             </main>
           </div>
           <ActivityStrip />

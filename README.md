@@ -10,9 +10,10 @@ pnpm rn-storage-inspector
 
 100% local. Nenhum dado sai da sua máquina.
 
-> **Status: Fase 0 (fundação).** Fio de ponta a ponta funcionando —
-> CLI + serviço local + protocolo + UI com atividade em tempo real.
-> Ver [docs/plano-de-execucao.md](docs/plano-de-execucao.md).
+> **Status: Fases 0–3 implementadas.** AsyncStorage, MMKV (auto-discovery
+> por construtor) e SQLite (schema, grid editável, console SQL) funcionando
+> de ponta a ponta com atividade em tempo real. Falta validação em
+> simulador/device. Ver [docs/plano-de-execucao.md](docs/plano-de-execucao.md).
 
 ## Monorepo
 

@@ -1,4 +1,12 @@
-export type { KeyValueAdapter, KeyValueChange } from "./adapter.ts";
+export {
+  isKeyValueAdapter,
+  isDatabaseAdapter,
+  type ProviderAdapter,
+  type KeyValueAdapter,
+  type KeyValueChange,
+  type DatabaseAdapter,
+  type DatabaseChange,
+} from "./adapter.ts";
 export { createMemoryAdapter, toKeyEntry } from "./memory-adapter.ts";
 export { createRegistry, type AdapterRegistry } from "./registry.ts";
 export { handleCommand } from "./command-handler.ts";
@@ -19,3 +27,8 @@ export {
   type MMKVAdapter,
   type MMKVInstanceLike,
 } from "./adapters/mmkv.ts";
+export {
+  createExpoSqliteAdapter,
+  type ExpoSqliteAdapter,
+  type SQLiteDatabaseLike,
+} from "./adapters/expo-sqlite.ts";

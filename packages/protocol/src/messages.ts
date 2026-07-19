@@ -3,6 +3,7 @@ import { PROTOCOL_VERSION } from "./version.ts";
 import { keyEntrySchema, storageValueSchema } from "./values.ts";
 import { providerDescriptorSchema } from "./providers.ts";
 import { protocolErrorSchema } from "./errors.ts";
+import { cellValueSchema, rowRefSchema } from "./database.ts";
 
 /** Origem de uma mudança. Distinguir "eu fiz" de "o app fez" é requisito de UI. */
 export const changeSourceSchema = z.enum(["app", "studio"]);
@@ -79,6 +80,57 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("key-value.remove"),
     payload: z.object({ ...kvTarget, key: z.string() }),
   }),
+  // ------------------------------------------------------------- database.*
+  z.object({
+    ...commandBase,
+    type: z.literal("database.tables"),
+    payload: z.object({ ...kvTarget }),
+  }),
+  z.object({
+    ...commandBase,
+    type: z.literal("database.rows"),
+    payload: z.object({
+      ...kvTarget,
+      table: z.string(),
+      limit: z.number().int().positive().max(500),
+      offset: z.number().int().nonnegative(),
+      orderBy: z.string().optional(),
+      direction: z.enum(["asc", "desc"]).optional(),
+    }),
+  }),
+  z.object({
+    ...commandBase,
+    type: z.literal("database.update"),
+    payload: z.object({
+      ...kvTarget,
+      table: z.string(),
+      ref: rowRefSchema,
+      set: z.record(cellValueSchema),
+    }),
+  }),
+  z.object({
+    ...commandBase,
+    type: z.literal("database.insert"),
+    payload: z.object({
+      ...kvTarget,
+      table: z.string(),
+      values: z.record(cellValueSchema),
+    }),
+  }),
+  z.object({
+    ...commandBase,
+    type: z.literal("database.delete"),
+    payload: z.object({
+      ...kvTarget,
+      table: z.string(),
+      ref: rowRefSchema,
+    }),
+  }),
+  z.object({
+    ...commandBase,
+    type: z.literal("database.execute"),
+    payload: z.object({ ...kvTarget, sql: z.string() }),
+  }),
 ]);
 
 export type CommandMessage = z.infer<typeof commandMessageSchema>;
@@ -144,6 +196,20 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
     ...eventBase,
     type: z.literal("provider.registered"),
     payload: z.object({ provider: providerDescriptorSchema }),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("database.changed"),
+    payload: z.object({
+      providerId: z.string(),
+      instanceId: z.string(),
+      table: z.string(),
+      /** rowid quando o hook nativo entrega; null em DELETE ou sem rowid. */
+      rowId: z.number().nullable(),
+      /** O hook do expo-sqlite não entrega a operação — "unknown" é honesto. */
+      operation: z.enum(["insert", "update", "delete", "unknown"]),
+      source: changeSourceSchema,
+    }),
   }),
   // Emitidos pelo serviço local, não pelo runtime:
   z.object({
