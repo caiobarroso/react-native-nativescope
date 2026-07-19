@@ -240,6 +240,9 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
       change: z.enum(["created", "updated", "removed"]),
       source: changeSourceSchema,
       entry: keyEntrySchema.nullable(),
+      /** >1 quando o runtime fundiu uma rajada: este evento representa N
+       * mudanças na chave dentro da janela de coalescing (ADR-0001). */
+      coalescedCount: z.number().int().positive().optional(),
     }),
   }),
   z.object({
@@ -259,6 +262,8 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
       /** O hook do expo-sqlite não entrega a operação — "unknown" é honesto. */
       operation: z.enum(["insert", "update", "delete", "unknown"]),
       source: changeSourceSchema,
+      /** >1 quando o runtime fundiu uma rajada de mudanças na tabela. */
+      coalescedCount: z.number().int().positive().optional(),
     }),
   }),
   // Streaming chunked (plano de grandes volumes §B): valores grandes nunca

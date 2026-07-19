@@ -16,6 +16,8 @@ export interface ActivityItem {
   change: "created" | "updated" | "removed";
   source: ChangeSource;
   preview: string | null;
+  /** >1 quando o runtime fundiu uma rajada de mudanças neste item. */
+  coalesced?: number;
 }
 
 export interface Selection {
@@ -87,6 +89,7 @@ interface StudioState {
     source: ChangeSource;
     entry: KeyEntry | null;
     timestamp: number;
+    coalescedCount?: number;
   }): void;
   select(selection: Selection | null): void;
   selectKey(key: string | null): void;
@@ -106,6 +109,7 @@ interface StudioState {
     operation: "insert" | "update" | "delete" | "unknown";
     source: ChangeSource;
     timestamp: number;
+    coalescedCount?: number;
   }): void;
 }
 
@@ -212,6 +216,7 @@ export const useStudio = create<StudioState>((set) => ({
         change: input.change,
         source: input.source,
         preview: input.entry?.preview ?? null,
+        ...(input.coalescedCount !== undefined ? { coalesced: input.coalescedCount } : {}),
       };
 
       const historyKey = `${id} ${input.key}`;
@@ -355,6 +360,7 @@ export const useStudio = create<StudioState>((set) => ({
               : "updated",
         source: input.source,
         preview: null,
+        ...(input.coalescedCount !== undefined ? { coalesced: input.coalescedCount } : {}),
       };
       const tableHistoryKey = `${keysId(input.providerId, input.instanceId)} ${input.table}`;
       // O nonce dispara refetch no RowGrid — só bump quando o evento é da

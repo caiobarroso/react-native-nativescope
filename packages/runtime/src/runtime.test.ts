@@ -15,6 +15,7 @@ import { createRegistry } from "./registry.ts";
 import { startRuntime } from "./bootstrap.ts";
 import { handleCommand } from "./command-handler.ts";
 import { createStreamHub, fnv1a32 } from "./streams.ts";
+import { createCoalescer } from "./event-coalescer.ts";
 import type { WebSocketLike } from "./transport.ts";
 
 function command(partial: Pick<CommandMessage, "type" | "payload">): CommandMessage {
@@ -229,6 +230,53 @@ describe("command handler", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("unknown-provider");
+  });
+});
+
+describe("coalescer de eventos (ADR-0001)", () => {
+  it("primeira mudança sai imediata; rajada vira UM trailing com coalescedCount", async () => {
+    const delivered: Array<{ item: string; count: number }> = [];
+    const coalescer = createCoalescer<string>((item, count) => delivered.push({ item, count }), {
+      windowMs: 10,
+    });
+
+    coalescer.push("k", "v1");
+    expect(delivered).toEqual([{ item: "v1", count: 1 }]); // leading, síncrono
+
+    coalescer.push("k", "v2");
+    coalescer.push("k", "v3");
+    coalescer.push("k", "v4");
+    expect(delivered).toHaveLength(1); // ainda na janela
+
+    await vi.waitFor(() => expect(delivered).toHaveLength(2));
+    // trailing: estado mais recente + quantas mudanças ele representa
+    expect(delivered[1]).toEqual({ item: "v4", count: 3 });
+  });
+
+  it("chaves distintas não se fundem", () => {
+    const delivered: string[] = [];
+    const coalescer = createCoalescer<string>((item) => delivered.push(item), { windowMs: 50 });
+    coalescer.push("a", "1");
+    coalescer.push("b", "2");
+    expect(delivered).toEqual(["1", "2"]);
+  });
+
+  it("teto de pendentes força flush imediato (backpressure)", () => {
+    const delivered: Array<{ item: string; count: number }> = [];
+    const coalescer = createCoalescer<string>((item, count) => delivered.push({ item, count }), {
+      windowMs: 60_000,
+      maxPending: 3,
+    });
+    coalescer.push("a", "a1");
+    coalescer.push("a", "a2"); // trailing pendente de "a"
+    coalescer.push("b", "b1");
+    coalescer.push("c", "c1"); // atinge o teto → flush síncrono
+    expect(delivered).toEqual([
+      { item: "a1", count: 1 },
+      { item: "b1", count: 1 },
+      { item: "c1", count: 1 },
+      { item: "a2", count: 1 },
+    ]);
   });
 });
 

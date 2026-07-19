@@ -120,6 +120,14 @@ export function ActivityStrip() {
                 {item.providerLabel}
               </span>
               <span className="min-w-0 flex-1 truncate">{item.key}</span>
+              {item.coalesced !== undefined && item.coalesced > 1 && (
+                <span
+                  title={`${item.coalesced} mudanças fundidas numa rajada (ADR-0001)`}
+                  className="shrink-0 rounded border border-border px-1 text-[10px] tabular-nums text-text-subtle"
+                >
+                  ×{item.coalesced}
+                </span>
+              )}
               <span className={`shrink-0 ${CHANGE_COLOR[item.change]}`}>
                 {CHANGE_LABEL[item.change]}
               </span>

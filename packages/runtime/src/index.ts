@@ -19,6 +19,7 @@ export {
 export { createRegistry, type AdapterRegistry } from "./registry.ts";
 export { handleCommand, type CommandContext } from "./command-handler.ts";
 export { createStreamHub, fnv1a32, type StreamHub } from "./streams.ts";
+export { createCoalescer, type Coalescer } from "./event-coalescer.ts";
 export {
   createTransport,
   type Transport,

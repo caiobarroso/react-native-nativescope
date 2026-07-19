@@ -269,6 +269,9 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
         source: event.payload.source,
         entry: event.payload.entry,
         timestamp: event.timestamp,
+        ...(event.payload.coalescedCount !== undefined
+          ? { coalescedCount: event.payload.coalescedCount }
+          : {}),
       });
       return;
     }
@@ -294,6 +297,9 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
         operation: event.payload.operation,
         source: event.payload.source,
         timestamp: event.timestamp,
+        ...(event.payload.coalescedCount !== undefined
+          ? { coalescedCount: event.payload.coalescedCount }
+          : {}),
       });
       scheduleTableRefresh(event.payload.providerId, event.payload.instanceId);
       return;
