@@ -335,6 +335,27 @@ export async function updateCell(
   });
 }
 
+export async function insertRow(
+  providerId: string,
+  instanceId: string,
+  table: string,
+  values: Record<string, CellValue>,
+): Promise<RowRef | null> {
+  const result = await sendCommand({
+    type: "database.insert",
+    payload: { providerId, instanceId, table, values },
+  });
+  if (
+    result &&
+    typeof result === "object" &&
+    "ref" in result &&
+    (result.ref === null || typeof result.ref === "object")
+  ) {
+    return result.ref as RowRef | null;
+  }
+  return null;
+}
+
 export async function deleteRow(
   providerId: string,
   instanceId: string,

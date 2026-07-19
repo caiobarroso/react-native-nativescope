@@ -107,7 +107,8 @@ describe("expo-sqlite adapter", () => {
 
   it("insere e exclui linhas", async () => {
     const { adapter, db } = setup();
-    await adapter.insert("app.db", "visits", { status: "pending", pdv: "Assaí" });
+    const inserted = await adapter.insert("app.db", "visits", { status: "pending", pdv: "Assaí" });
+    expect(inserted.ref).toEqual({ rowid: 4 });
     expect((await db.getAllAsync("SELECT COUNT(*) AS n FROM visits"))[0]?.["n"]).toBe(4);
 
     await adapter.delete("app.db", "visits", { rowid: 1 });

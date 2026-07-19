@@ -1,6 +1,30 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { Braces, Check, Code2, Copy, FileCode2, History, ListTree, Maximize2, Minimize2, Trash2, X } from "lucide-react";
+import {
+  Braces,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Code2,
+  Copy,
+  Database,
+  FileCode2,
+  History,
+  ListTree,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Search,
+  Table2,
+  Trash2,
+  X,
+} from "lucide-react";
+import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from "@tanstack/react-table";
 import type { StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
 import { getValue, setValue, removeKey } from "../lib/studio-client.ts";
@@ -58,12 +82,19 @@ function isJsonRoot(value: unknown): value is JsonRoot {
   return typeof value === "object" && value !== null;
 }
 
+const JSON_NODE_COUNT_LIMIT = 5000;
+
 function countJsonNodes(value: unknown): number {
-  if (!isJsonRoot(value)) return 1;
-  return (Object.values(value) as unknown[]).reduce<number>(
-    (total, child) => total + countJsonNodes(child),
-    1,
-  );
+  let count = 0;
+  const stack: unknown[] = [value];
+  while (stack.length > 0 && count < JSON_NODE_COUNT_LIMIT) {
+    const current = stack.pop();
+    count += 1;
+    if (isJsonRoot(current)) {
+      stack.push(...Object.values(current));
+    }
+  }
+  return count;
 }
 
 function rootLabel(value: unknown): string {
@@ -76,7 +107,7 @@ function rootLabel(value: unknown): string {
 type TsDeclaration = "interface" | "type";
 type TsArrayStyle = "array" | "bracket";
 
-interface TypeScriptOptions {
+export interface TypeScriptOptions {
   declaration: TsDeclaration;
   arrayStyle: TsArrayStyle;
 }
@@ -97,7 +128,7 @@ function safePropertyName(name: string): string {
   return /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
 }
 
-function generateTypeScript(
+export function generateTypeScript(
   value: unknown,
   rootName: string,
   options: TypeScriptOptions,
@@ -208,7 +239,607 @@ function indent(level: number): string {
   return "  ".repeat(level);
 }
 
-function JsonWorkspace({
+type JsonPath = Array<string | number>;
+
+type JsonTableRow = {
+  index: number;
+  value: unknown;
+};
+
+function pathLabel(segment: string | number): string {
+  return typeof segment === "number" ? `#${segment + 1}` : segment;
+}
+
+function valueKind(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  if (value === null) return "null";
+  return typeof value;
+}
+
+function isCollection(value: unknown): value is JsonRoot {
+  return typeof value === "object" && value !== null;
+}
+
+function collectionLabel(value: unknown): string {
+  if (Array.isArray(value)) return `${value.length} itens`;
+  if (isPlainObject(value)) return `${Object.keys(value).length} campos`;
+  return valueKind(value);
+}
+
+function getAtPath(root: unknown, path: JsonPath): unknown {
+  return path.reduce<unknown>((current, segment) => {
+    if (Array.isArray(current) && typeof segment === "number") return current[segment];
+    if (isPlainObject(current) && typeof segment === "string") return current[segment];
+    return undefined;
+  }, root);
+}
+
+function setAtPath(root: unknown, path: JsonPath, value: unknown): unknown {
+  if (path.length === 0) return value;
+  const [head, ...tail] = path;
+  if (Array.isArray(root) && typeof head === "number") {
+    return root.map((item, index) => (index === head ? setAtPath(item, tail, value) : item));
+  }
+  if (isPlainObject(root) && typeof head === "string") {
+    return { ...root, [head]: setAtPath(root[head], tail, value) };
+  }
+  return root;
+}
+
+function deleteAtPath(root: unknown, path: JsonPath): unknown {
+  if (path.length === 0) return root;
+  const parentPath = path.slice(0, -1);
+  const leaf = path[path.length - 1];
+  const parent = getAtPath(root, parentPath);
+  if (Array.isArray(parent) && typeof leaf === "number") {
+    return setAtPath(root, parentPath, parent.filter((_, index) => index !== leaf));
+  }
+  if (isPlainObject(parent) && typeof leaf === "string") {
+    const next = { ...parent };
+    delete next[leaf];
+    return setAtPath(root, parentPath, next);
+  }
+  return root;
+}
+
+function duplicateAtPath(root: unknown, path: JsonPath): unknown {
+  const parentPath = path.slice(0, -1);
+  const leaf = path[path.length - 1];
+  const parent = getAtPath(root, parentPath);
+  const value = getAtPath(root, path);
+  const clone = JSON.parse(JSON.stringify(value));
+  if (Array.isArray(parent) && typeof leaf === "number") {
+    return setAtPath(root, parentPath, [
+      ...parent.slice(0, leaf + 1),
+      clone,
+      ...parent.slice(leaf + 1),
+    ]);
+  }
+  if (isPlainObject(parent) && typeof leaf === "string") {
+    let nextKey = `${leaf}Copy`;
+    let suffix = 2;
+    while (Object.hasOwn(parent, nextKey)) {
+      nextKey = `${leaf}Copy${suffix++}`;
+    }
+    return setAtPath(root, parentPath, { ...parent, [nextKey]: clone });
+  }
+  return root;
+}
+
+function parsePrimitiveDraft(raw: string, previous: unknown): unknown {
+  if (typeof previous === "number") {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : previous;
+  }
+  if (typeof previous === "boolean") return raw === "true";
+  if (previous === null) return raw === "" ? null : raw;
+  return raw;
+}
+
+function stringifyJson(value: unknown): string {
+  return JSON.stringify(value, null, 2);
+}
+
+function defaultValueForArray(array: unknown[]): unknown {
+  const sample = array[0];
+  if (isPlainObject(sample)) return {};
+  if (Array.isArray(sample)) return [];
+  if (typeof sample === "number") return 0;
+  if (typeof sample === "boolean") return false;
+  if (sample === null) return null;
+  return "";
+}
+
+function searchPreview(value: unknown, budget = 1200): string {
+  const seen = new Set<unknown>();
+  let remaining = budget;
+
+  function walk(input: unknown): string {
+    if (remaining <= 0) return "";
+    if (input === null || typeof input !== "object") {
+      const text = String(input);
+      remaining -= text.length;
+      return text;
+    }
+    if (seen.has(input)) return "";
+    seen.add(input);
+    const values = Array.isArray(input)
+      ? input.slice(0, 20)
+      : Object.entries(input)
+          .slice(0, 30)
+          .flatMap(([key, child]) => [key, child]);
+    return values.map(walk).join(" ");
+  }
+
+  return walk(value).toLowerCase();
+}
+
+function JsonPrimitiveEditor({
+  value,
+  onChange,
+}: {
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const [draft, setDraft] = useState(value === null ? "" : String(value ?? ""));
+
+  useEffect(() => {
+    setDraft(value === null ? "" : String(value ?? ""));
+  }, [value]);
+
+  function commit(): void {
+    const next = parsePrimitiveDraft(draft, value);
+    if (Object.is(next, value)) return;
+    onChange(next);
+  }
+
+  if (typeof value === "boolean") {
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={value}
+        data-checked={value}
+        onClick={() => onChange(!value)}
+        className="rnsi-switch"
+      />
+    );
+  }
+  if (typeof value === "number") {
+    return (
+      <input
+        type="number"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") setDraft(String(value));
+        }}
+        className="h-7 w-full rounded-sm border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent"
+      />
+    );
+  }
+  if (value === null) {
+    return <span className="font-mono text-[12px] text-deleted">null</span>;
+  }
+  return (
+    <input
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") setDraft(value === null ? "" : String(value ?? ""));
+      }}
+      className="h-7 w-full rounded-sm border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent"
+    />
+  );
+}
+
+function JsonVisualExplorer({
+  value,
+  sourceName,
+  onChange,
+}: {
+  value: unknown;
+  sourceName?: string;
+  onChange: (value: unknown) => void;
+}) {
+  const [path, setPath] = useState<JsonPath>([]);
+  const [query, setQuery] = useState("");
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const [newFieldName, setNewFieldName] = useState("");
+  const current = getAtPath(value, path);
+
+  function updatePath(targetPath: JsonPath, nextValue: unknown): void {
+    onChange(setAtPath(value, targetPath, nextValue));
+  }
+
+  function navigate(nextPath: JsonPath): void {
+    setPath(nextPath);
+    setQuery("");
+    setPageIndex(0);
+  }
+
+  const page = useMemo(() => {
+    if (!Array.isArray(current)) {
+      return { rows: [] as JsonTableRow[], total: 0, limited: false };
+    }
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      const total = current.length;
+      const safePage = Math.min(pageIndex, Math.max(0, Math.ceil(total / pageSize) - 1));
+      const start = safePage * pageSize;
+      return {
+        rows: current
+          .slice(start, start + pageSize)
+          .map((item, offset) => ({ index: start + offset, value: item })),
+        total,
+        limited: false,
+      };
+    }
+
+    const scanLimit = Math.min(current.length, 5000);
+    const pageStart = pageIndex * pageSize;
+    const pageEnd = pageStart + pageSize;
+    const matchedRows: JsonTableRow[] = [];
+    let total = 0;
+    for (let index = 0; index < scanLimit; index += 1) {
+      const item = current[index];
+      if (!searchPreview(item).includes(q)) continue;
+      if (total >= pageStart && total < pageEnd) matchedRows.push({ index, value: item });
+      total += 1;
+    }
+    return { rows: matchedRows, total, limited: scanLimit < current.length };
+  }, [current, query, pageIndex, pageSize]);
+
+  const pageCount = Math.max(1, Math.ceil(page.total / pageSize));
+  const safePageIndex = Math.min(pageIndex, pageCount - 1);
+  const pagedRows = page.rows;
+
+  const objectColumns = useMemo<ColumnDef<JsonTableRow>[]>(() => {
+    if (!Array.isArray(current)) return [];
+    const objectRows = current
+      .slice(0, 300)
+      .map((item, index) => ({ index, value: item }))
+      .filter((row) => isPlainObject(row.value));
+    const keys = [...new Set(objectRows.flatMap((row) => Object.keys(row.value as Record<string, unknown>)))].slice(0, 12);
+    const cols: ColumnDef<JsonTableRow>[] = [
+      ...keys.map<ColumnDef<JsonTableRow>>((key) => ({
+        id: key,
+        header: key,
+        accessorFn: (row) => (isPlainObject(row.value) ? row.value[key] : undefined),
+        cell: ({ row, getValue }) => {
+          const cellValue = getValue();
+          const cellPath = [...path, row.original.index, key];
+          if (isCollection(cellValue)) {
+            return (
+              <button
+                onClick={() => navigate(cellPath)}
+                className="flex h-8 w-full items-center gap-2 px-2 text-left text-text-muted hover:bg-surface-hover hover:text-text"
+              >
+                <Database size={12} strokeWidth={1.5} className="text-accent" />
+                <span className="truncate">{collectionLabel(cellValue)}</span>
+              </button>
+            );
+          }
+          return (
+            <div className="px-1">
+              <JsonPrimitiveEditor value={cellValue} onChange={(next) => updatePath(cellPath, next)} />
+            </div>
+          );
+        },
+      })),
+      {
+        id: "__actions",
+        size: 142,
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-1 px-1">
+            <button
+              onClick={() => navigate([...path, row.original.index])}
+              title="Abrir detalhe"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+            >
+              Abrir
+              <ChevronRight size={12} strokeWidth={1.5} />
+            </button>
+            <button
+              onClick={() => onChange(duplicateAtPath(value, [...path, row.original.index]))}
+              title="Duplicar"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
+            >
+              <Copy size={12} strokeWidth={1.5} />
+            </button>
+            <button
+              onClick={() => onChange(deleteAtPath(value, [...path, row.original.index]))}
+              title="Deletar"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-deleted hover:bg-deleted-wash"
+            >
+              <Trash2 size={12} strokeWidth={1.5} />
+            </button>
+          </div>
+        ),
+      },
+    ];
+    return cols;
+  }, [current, path, value]);
+
+  const table = useReactTable({
+    data: pagedRows,
+    columns: objectColumns,
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (row) => String(row.index),
+  });
+
+  if (!isCollection(current)) {
+    return (
+      <div className="flex h-full flex-col gap-3">
+        <JsonVisualHeader sourceName={sourceName} path={path} onNavigate={navigate} />
+        <div className="max-w-xl rounded-md border border-border bg-surface-raised p-4">
+          <JsonPrimitiveEditor value={current} onChange={(next) => updatePath(path, next)} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-72 flex-col overflow-hidden rounded-md border border-border bg-surface-raised">
+      <JsonVisualHeader sourceName={sourceName} path={path} onNavigate={navigate} />
+
+      {Array.isArray(current) ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+            <Search size={13} strokeWidth={1.5} className="text-text-subtle" />
+            <input
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPageIndex(0);
+              }}
+              placeholder={`Buscar em ${path[path.length - 1] ?? "array"}...`}
+              className="h-7 w-56 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-accent"
+            />
+            <button
+              onClick={() => updatePath(path, [...current, defaultValueForArray(current)])}
+              className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+            >
+              <Plus size={12} strokeWidth={1.5} />
+              Adicionar
+            </button>
+          </div>
+          {objectColumns.length > 1 ? (
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full border-separate border-spacing-0 font-mono text-[12px]">
+                <thead className="sticky top-0 z-10 bg-surface">
+                  {table.getHeaderGroups().map((group) => (
+                    <tr key={group.id}>
+                      {group.headers.map((header) => (
+                        <th
+                          key={header.id}
+                          className="h-8 border-b border-r border-border px-2 text-left font-semibold"
+                        >
+                          {header.isPlaceholder
+                            ? null
+                            : flexRender(header.column.columnDef.header, header.getContext())}
+                        </th>
+                      ))}
+                    </tr>
+                  ))}
+                </thead>
+                <tbody>
+                  {table.getRowModel().rows.map((row) => (
+                    <tr
+                      key={row.id}
+                      onDoubleClick={() => navigate([...path, row.original.index])}
+                      className="hover:bg-surface-hover"
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="h-9 border-b border-r border-border align-middle">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <ol className="min-h-0 flex-1 overflow-auto">
+              {pagedRows.map((row) => (
+                <li key={row.index} className="flex h-9 items-center gap-2 border-b border-border px-3">
+                  <span className="w-10 shrink-0 font-mono text-[11px] text-text-subtle">#{row.index + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    {isCollection(row.value) ? (
+                      <button
+                        onClick={() => navigate([...path, row.index])}
+                        className="flex w-full items-center gap-2 text-left text-text-muted hover:text-text"
+                      >
+                        <Database size={12} strokeWidth={1.5} className="text-accent" />
+                        {collectionLabel(row.value)}
+                      </button>
+                    ) : (
+                      <JsonPrimitiveEditor
+                        value={row.value}
+                        onChange={(next) => updatePath([...path, row.index], next)}
+                      />
+                    )}
+                  </div>
+                  <button
+                    onClick={() => onChange(duplicateAtPath(value, [...path, row.index]))}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover"
+                  >
+                    <Copy size={12} strokeWidth={1.5} />
+                  </button>
+                  <button
+                    onClick={() => onChange(deleteAtPath(value, [...path, row.index]))}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-deleted hover:bg-deleted-wash"
+                  >
+                    <Trash2 size={12} strokeWidth={1.5} />
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+          <div className="flex h-10 shrink-0 items-center gap-2 border-t border-border px-3 text-[12px] text-text-muted">
+            <button
+              onClick={() => setPageIndex((page) => Math.max(0, page - 1))}
+              disabled={safePageIndex === 0}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border disabled:opacity-40"
+            >
+              <ChevronLeft size={13} strokeWidth={1.5} />
+            </button>
+            <span>
+              Página {safePageIndex + 1} de {pageCount}
+            </span>
+            <button
+              onClick={() => setPageIndex((page) => Math.min(pageCount - 1, page + 1))}
+              disabled={safePageIndex >= pageCount - 1}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border disabled:opacity-40"
+            >
+              <ChevronRight size={13} strokeWidth={1.5} />
+            </button>
+            <select
+              value={pageSize}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPageIndex(0);
+              }}
+              className="ml-2 h-7 rounded-md border border-border bg-surface px-2 text-[12px]"
+            >
+              {[25, 50, 100].map((size) => (
+                <option key={size} value={size}>
+                  {size} rows
+                </option>
+              ))}
+            </select>
+            <span className="ml-auto">
+              {page.total} registros{page.limited ? " nos primeiros 5000 itens" : ""}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+            <input
+              value={newFieldName}
+              onChange={(event) => setNewFieldName(event.target.value)}
+              placeholder="novoCampo"
+              className="h-7 w-48 rounded-md border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent"
+            />
+            <button
+              onClick={() => {
+                const name = newFieldName.trim();
+                if (!name || Object.hasOwn(current, name)) return;
+                updatePath(path, { ...current, [name]: "" });
+                setNewFieldName("");
+              }}
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+            >
+              <Plus size={12} strokeWidth={1.5} />
+              Adicionar campo
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto p-2">
+          <div className="divide-y divide-border rounded-md border border-border">
+            {Object.entries(current).map(([key, child]) => {
+              const childPath = [...path, key];
+              return (
+                <div key={key} className="grid min-h-9 grid-cols-[190px_1fr_74px] items-center">
+                  <div className="min-w-0 border-r border-border px-3 font-mono text-[12px] font-semibold">
+                    <span className="truncate">{key}</span>
+                  </div>
+                  <div className="min-w-0 px-2">
+                    {isCollection(child) ? (
+                      <button
+                        onClick={() => navigate(childPath)}
+                        className="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-text-muted hover:bg-surface-hover hover:text-text"
+                      >
+                        <Database size={12} strokeWidth={1.5} className="text-accent" />
+                        <span className="truncate">{collectionLabel(child)}</span>
+                        <ChevronRight size={13} strokeWidth={1.5} className="ml-auto" />
+                      </button>
+                    ) : (
+                      <JsonPrimitiveEditor value={child} onChange={(next) => updatePath(childPath, next)} />
+                    )}
+                  </div>
+                  <div className="flex items-center justify-end gap-1 px-2">
+                    <span className="rounded border border-border px-1.5 py-px text-[10px] text-text-subtle">
+                      {valueKind(child)}
+                    </span>
+                    <button
+                      onClick={() => onChange(deleteAtPath(value, childPath))}
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-deleted hover:bg-deleted-wash"
+                    >
+                      <Trash2 size={12} strokeWidth={1.5} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JsonVisualHeader({
+  sourceName,
+  path,
+  onNavigate,
+}: {
+  sourceName?: string;
+  path: JsonPath;
+  onNavigate: (path: JsonPath) => void;
+}) {
+  const currentLabel = path.length === 0 ? "Raiz" : pathLabel(path[path.length - 1] ?? "Raiz");
+  return (
+    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface-sunken px-3 text-[12px]">
+      {path.length > 0 ? (
+        <button
+          onClick={() => onNavigate(path.slice(0, -1))}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2.5 font-medium text-text-muted hover:bg-surface-hover hover:text-text"
+        >
+          <ChevronLeft size={14} strokeWidth={1.5} />
+          Voltar
+        </button>
+      ) : (
+        <span className="inline-flex h-8 items-center rounded-md border border-transparent px-2.5 text-text-subtle">
+          Raiz
+        </span>
+      )}
+
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+        <button
+          onClick={() => onNavigate([])}
+          className="min-w-0 truncate rounded-md px-2 py-1 font-mono font-semibold text-text hover:bg-surface-hover"
+        >
+          {sourceName ?? "root"}
+        </button>
+        {path.map((segment, index) => (
+          <span key={`${String(segment)}-${index}`} className="flex min-w-0 items-center gap-1">
+            <ChevronRight size={12} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
+            <button
+              onClick={() => onNavigate(path.slice(0, index + 1))}
+              className="max-w-44 truncate rounded-md px-2 py-1 font-mono text-text-muted hover:bg-surface-hover hover:text-text"
+            >
+              {pathLabel(segment)}
+            </button>
+          </span>
+        ))}
+      </div>
+
+      <span className="hidden shrink-0 rounded-md border border-border bg-surface-raised px-2 py-1 font-mono text-[11px] text-text-subtle sm:inline-flex">
+        {currentLabel}
+      </span>
+    </div>
+  );
+}
+
+export function JsonWorkspace({
   draft,
   onDraftChange,
   sourceName,
@@ -219,7 +850,7 @@ function JsonWorkspace({
   sourceName?: string;
   minHeight?: string;
 }) {
-  const [mode, setMode] = useState<"tree" | "raw" | "ts">("tree");
+  const [mode, setMode] = useState<"visual" | "tree" | "raw" | "ts">("visual");
   const [collapsed, setCollapsed] = useState<boolean | number>(2);
   const [viewerKey, setViewerKey] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -240,6 +871,8 @@ function JsonWorkspace({
   );
   const treeValue = parsed.error === null && isJsonRoot(parsed.value) ? parsed.value : null;
   const nodeCount = parsed.error === null ? countJsonNodes(parsed.value) : 0;
+  const nodeCountLabel =
+    nodeCount >= JSON_NODE_COUNT_LIMIT ? `${JSON_NODE_COUNT_LIMIT}+ nós` : `${nodeCount} nós`;
   const showTree = mode === "tree" && parsed.error === null;
 
   function setCollapse(next: boolean | number): void {
@@ -273,6 +906,16 @@ function JsonWorkspace({
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface-sunken px-2">
         <div className="flex rounded-md border border-border bg-surface-raised p-0.5">
           <button
+            onClick={() => setMode("visual")}
+            disabled={parsed.error !== null}
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+              mode === "visual" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
+            } disabled:opacity-40`}
+          >
+            <Table2 size={12} strokeWidth={1.5} />
+            Visual
+          </button>
+          <button
             onClick={() => setMode("tree")}
             className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
               mode === "tree" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
@@ -304,7 +947,7 @@ function JsonWorkspace({
 
         <span className="ml-1 hidden items-center gap-1.5 text-[11px] text-text-subtle sm:flex">
           <Braces size={12} strokeWidth={1.5} />
-          {parsed.error === null ? `${rootLabel(parsed.value)} · ${nodeCount} nós` : "inválido"}
+          {parsed.error === null ? `${rootLabel(parsed.value)} · ${nodeCountLabel}` : "inválido"}
         </span>
 
         <button
@@ -341,7 +984,13 @@ function JsonWorkspace({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
-        {mode === "ts" && parsed.error === null ? (
+        {mode === "visual" && parsed.error === null ? (
+          <JsonVisualExplorer
+            value={parsed.value}
+            sourceName={sourceName}
+            onChange={(next) => onDraftChange(stringifyJson(next))}
+          />
+        ) : mode === "ts" && parsed.error === null ? (
           <div className="flex h-full min-h-72 flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -610,19 +1259,13 @@ function CreateKeyForm({
           <span className="text-[11px] font-medium text-text-muted">Valor</span>
           {type === "boolean" ? (
             <button
+              type="button"
               onClick={() => setBoolDraft((v) => !v)}
               role="switch"
               aria-checked={boolDraft}
-              className={`relative h-6 w-11 rounded-full transition-colors ${
-                boolDraft ? "bg-accent" : "bg-border-strong"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
-                  boolDraft ? "translate-x-5.5" : "translate-x-0.5"
-                }`}
-              />
-            </button>
+              data-checked={boolDraft}
+              className="rnsi-switch rnsi-switch-lg"
+            />
           ) : type === "json" ? (
             <JsonWorkspace
               draft={draft}
@@ -812,19 +1455,13 @@ export function ValueEditor() {
           <p className="text-text-subtle">Carregando…</p>
         ) : draftType === "boolean" ? (
           <button
+            type="button"
             onClick={() => setBoolDraft((v) => !v)}
             role="switch"
             aria-checked={boolDraft}
-            className={`relative h-6 w-11 rounded-full transition-colors ${
-              boolDraft ? "bg-accent" : "bg-border-strong"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
-                boolDraft ? "translate-x-5.5" : "translate-x-0.5"
-              }`}
-            />
-          </button>
+            data-checked={boolDraft}
+            className="rnsi-switch rnsi-switch-lg"
+          />
         ) : draftType === "null" ? (
           <p className="font-mono text-text-subtle">null</p>
         ) : draftType === "number" ? (

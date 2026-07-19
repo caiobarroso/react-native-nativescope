@@ -111,8 +111,86 @@ body {
   animation: rnsi-flash 900ms ease-out;
 }
 
-/* Foco visível em tudo que é focável. */
+@keyframes rnsi-snackbar-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.rnsi-snackbar {
+  animation: rnsi-snackbar-in 180ms ease-out;
+}
+
+@keyframes rnsi-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.rnsi-drawer-in {
+  animation: rnsi-drawer-in 180ms ease-out;
+}
+
+/* Foco visível, mas fino. Inputs já têm borda; o foco não deve virar moldura grossa. */
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 0;
+}
+
+.rnsi-switch {
+  position: relative;
+  display: inline-flex;
+  height: 16px;
+  width: 28px;
+  flex: 0 0 auto;
+  border-radius: 9999px;
+  background: var(--border-strong);
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.rnsi-switch::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  height: 12px;
+  width: 12px;
+  border-radius: 9999px;
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
+  transition: transform 160ms ease;
+}
+
+.rnsi-switch[data-checked="true"] {
+  background: var(--accent);
+}
+
+.rnsi-switch[data-checked="true"]::after {
+  transform: translateX(12px);
+}
+
+.rnsi-switch-lg {
+  height: 24px;
+  width: 44px;
+}
+
+.rnsi-switch-lg::after {
+  height: 20px;
+  width: 20px;
+}
+
+.rnsi-switch-lg[data-checked="true"]::after {
+  transform: translateX(20px);
 }

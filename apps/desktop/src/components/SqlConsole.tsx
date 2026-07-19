@@ -392,8 +392,8 @@ function createEditorExtensions(
         "--cm-punctuation": "#c4bdb2",
       },
       "&.cm-focused": {
-        outline: "2px solid var(--accent)",
-        outlineOffset: "1px",
+        outline: "1px solid color-mix(in srgb, var(--accent) 72%, transparent)",
+        outlineOffset: "0",
       },
       ".cm-content": {
         color: "var(--text)",
@@ -550,8 +550,12 @@ export function SqlConsole() {
             autocomplete
           </span>
         )}
-        <span className="ml-auto">
-          {open ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+        <span className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle">
+          {open ? (
+            <ChevronDown size={14} strokeWidth={1.5} />
+          ) : (
+            <ChevronUp size={14} strokeWidth={1.5} />
+          )}
         </span>
       </button>
 

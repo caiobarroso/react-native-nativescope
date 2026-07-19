@@ -74,7 +74,11 @@ export interface DatabaseAdapter extends ProviderAdapter {
     ref: RowRef,
     set: Record<string, CellValue>,
   ): Promise<void>;
-  insert(instanceId: string, table: string, values: Record<string, CellValue>): Promise<void>;
+  insert(
+    instanceId: string,
+    table: string,
+    values: Record<string, CellValue>,
+  ): Promise<{ ref: RowRef | null }>;
   delete(instanceId: string, table: string, ref: RowRef): Promise<void>;
   execute(instanceId: string, sql: string): Promise<ExecuteResult>;
   subscribe(instanceId: string, listener: (change: DatabaseChange) => void): () => void;

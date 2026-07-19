@@ -77,21 +77,25 @@ export function ActivityStrip() {
         <button
           onClick={togglePause}
           title={paused ? "Retomar" : "Pausar"}
-          className={`ml-auto flex items-center gap-1 rounded p-1 text-[10px] ${
+          className={`ml-auto inline-flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-1.5 text-[10px] ${
             paused
               ? "bg-accent-wash text-accent"
               : "text-text-subtle hover:bg-surface-hover hover:text-text"
           }`}
         >
-          {paused ? <Play size={12} /> : <Pause size={12} />}
+          {paused ? <Play size={13} strokeWidth={1.5} /> : <Pause size={13} strokeWidth={1.5} />}
           {paused && heldBack > 0 && <span>+{heldBack}</span>}
         </button>
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
           title={collapsed ? "Expandir" : "Recolher"}
         >
-          {collapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {collapsed ? (
+            <ChevronUp size={14} strokeWidth={1.5} />
+          ) : (
+            <ChevronDown size={14} strokeWidth={1.5} />
+          )}
         </button>
       </header>
 

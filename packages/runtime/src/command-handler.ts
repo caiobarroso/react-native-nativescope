@@ -91,12 +91,13 @@ export async function handleCommand(
         );
         return succeed({});
       case "database.insert":
-        await adapter.insert(
-          command.payload.instanceId,
-          command.payload.table,
-          command.payload.values,
+        return succeed(
+          await adapter.insert(
+            command.payload.instanceId,
+            command.payload.table,
+            command.payload.values,
+          ),
         );
-        return succeed({});
       case "database.delete":
         await adapter.delete(
           command.payload.instanceId,

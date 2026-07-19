@@ -322,15 +322,30 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     async insert(instanceId, table, values) {
       const t = get(instanceId);
       const columns = Object.keys(values);
+      const info = await tableInfo(t, table);
       markStudioMutation(t, table, "insert", null);
+      let lastInsertRowId: number | null = null;
       if (columns.length === 0) {
-        await t.db.runAsync(`INSERT INTO ${quoteIdent(table)} DEFAULT VALUES`);
-        return;
+        const result = await t.db.runAsync(`INSERT INTO ${quoteIdent(table)} DEFAULT VALUES`);
+        lastInsertRowId = Number(result.lastInsertRowId);
+      } else {
+        const result = await t.db.runAsync(
+          `INSERT INTO ${quoteIdent(table)} (${columns.map(quoteIdent).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+          columns.map((c) => toParam(values[c] ?? null)),
+        );
+        lastInsertRowId = Number(result.lastInsertRowId);
       }
-      await t.db.runAsync(
-        `INSERT INTO ${quoteIdent(table)} (${columns.map(quoteIdent).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
-        columns.map((c) => toParam(values[c] ?? null)),
-      );
+      if (info.identity === "rowid" && Number.isFinite(lastInsertRowId)) {
+        return { ref: { rowid: lastInsertRowId } };
+      }
+      if (info.identity === "pk" && info.pkColumns.every((column) => column in values)) {
+        return {
+          ref: {
+            pk: Object.fromEntries(info.pkColumns.map((column) => [column, values[column] ?? null])),
+          },
+        };
+      }
+      return { ref: null };
     },
 
     async delete(instanceId, table, ref) {

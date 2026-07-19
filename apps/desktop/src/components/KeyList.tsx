@@ -1,5 +1,9 @@
-import { Plus, Search } from "lucide-react";
+import { Copy, Files, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import type { KeyEntry, StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
+import { getValue, loadKeys, removeKey, setValue } from "../lib/studio-client.ts";
+import { generateTypeScript } from "./ValueEditor.tsx";
+import { useState } from "react";
 
 const TYPE_LABEL: Record<string, string> = {
   string: "str",
@@ -9,6 +13,37 @@ const TYPE_LABEL: Record<string, string> = {
   buffer: "buf",
   null: "null",
 };
+
+function copyText(value: string): void {
+  void navigator.clipboard.writeText(value);
+}
+
+function nextDuplicateName(key: string, entries: KeyEntry[] | undefined): string {
+  const existing = new Set((entries ?? []).map((entry) => entry.key));
+  const base = `${key}.copy`;
+  if (!existing.has(base)) return base;
+  let index = 2;
+  while (existing.has(`${base}${index}`)) index += 1;
+  return `${base}${index}`;
+}
+
+function storageTypeSchema(key: string, value: StorageValue): string {
+  if (value.type === "json") {
+    try {
+      return generateTypeScript(JSON.parse(value.value), key, {
+        declaration: "interface",
+        arrayStyle: "array",
+      });
+    } catch {
+      return generateTypeScript(undefined, key, { declaration: "type", arrayStyle: "array" });
+    }
+  }
+  return generateTypeScript(
+    value.type === "null" ? null : value.type === "buffer" ? "" : value.value,
+    key,
+    { declaration: "type", arrayStyle: "array" },
+  );
+}
 
 export function KeyList() {
   const selection = useStudio((s) => s.selection);
@@ -22,8 +57,36 @@ export function KeyList() {
   const setCreating = useStudio((s) => s.setCreating);
   const keyFilter = useStudio((s) => s.keyFilter);
   const setKeyFilter = useStudio((s) => s.setKeyFilter);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   if (!selection) return null;
+
+  async function deleteEntry(key: string): Promise<void> {
+    if (!selection) return;
+    await removeKey(selection.providerId, selection.instanceId, key);
+    if (selectedKey === key) selectKey(null);
+    await loadKeys(selection.providerId, selection.instanceId);
+    setOpenMenu(null);
+  }
+
+  async function duplicateEntry(key: string): Promise<void> {
+    if (!selection) return;
+    const value = await getValue(selection.providerId, selection.instanceId, key);
+    if (!value) return;
+    const nextKey = nextDuplicateName(key, keys);
+    await setValue(selection.providerId, selection.instanceId, nextKey, value);
+    await loadKeys(selection.providerId, selection.instanceId);
+    selectKey(nextKey);
+    setOpenMenu(null);
+  }
+
+  async function copySchema(key: string): Promise<void> {
+    if (!selection) return;
+    const value = await getValue(selection.providerId, selection.instanceId, key);
+    if (!value) return;
+    copyText(storageTypeSchema(key, value));
+    setOpenMenu(null);
+  }
 
   const filtered =
     keyFilter.trim() === ""
@@ -74,22 +137,75 @@ export function KeyList() {
           recentChanges[`${keysId(selection.providerId, selection.instanceId)} ${entry.key}`];
         const flash = changeStamp && Date.now() - changeStamp < 950;
         return (
-          <button
+          <div
             key={`${entry.key}-${changeStamp ?? 0}`}
-            onClick={() => selectKey(entry.key)}
-            className={`flex h-8 shrink-0 items-center gap-2 border-l-2 px-3 text-left ${
+            className={`group relative flex h-8 w-full shrink-0 items-center border-l-2 ${
               active
                 ? "border-accent bg-accent-wash"
                 : "border-transparent hover:bg-surface-hover"
             } ${flash ? "rnsi-flash" : ""}`}
           >
-            <span className="min-w-0 flex-1 truncate font-mono text-[12px]">
-              {entry.key}
-            </span>
-            <span className="shrink-0 rounded border border-border px-1 py-px text-[10px] text-text-subtle">
-              {TYPE_LABEL[entry.valueType] ?? entry.valueType}
-            </span>
-          </button>
+            <button
+              onClick={() => {
+                setOpenMenu(null);
+                selectKey(entry.key);
+              }}
+              className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left"
+            >
+              <span className="min-w-0 flex-1 truncate font-mono text-[12px]">
+                {entry.key}
+              </span>
+              <span className="shrink-0 rounded border border-border px-1 py-px text-[10px] text-text-subtle">
+                {TYPE_LABEL[entry.valueType] ?? entry.valueType}
+              </span>
+            </button>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpenMenu((current) => (current === entry.key ? null : entry.key));
+              }}
+              className="mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-subtle opacity-0 hover:bg-surface-hover hover:text-text group-hover:opacity-100 data-[open=true]:opacity-100"
+              data-open={openMenu === entry.key}
+              title="Ações"
+            >
+              <MoreHorizontal size={14} strokeWidth={1.5} />
+            </button>
+            {openMenu === entry.key && (
+              <div className="absolute right-1 top-7 z-30 w-44 overflow-hidden rounded-md border border-border bg-surface-raised py-1 text-[12px] shadow-lg shadow-black/10">
+                <button
+                  onClick={() => {
+                    copyText(entry.key);
+                    setOpenMenu(null);
+                  }}
+                  className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-text-muted hover:bg-surface-hover hover:text-text"
+                >
+                  <Copy size={13} strokeWidth={1.5} />
+                  Copiar nome
+                </button>
+                <button
+                  onClick={() => void copySchema(entry.key)}
+                  className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-text-muted hover:bg-surface-hover hover:text-text"
+                >
+                  <Copy size={13} strokeWidth={1.5} />
+                  Copiar schema
+                </button>
+                <button
+                  onClick={() => void duplicateEntry(entry.key)}
+                  className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-text-muted hover:bg-surface-hover hover:text-text"
+                >
+                  <Files size={13} strokeWidth={1.5} />
+                  Duplicar
+                </button>
+                <button
+                  onClick={() => void deleteEntry(entry.key)}
+                  className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-deleted hover:bg-deleted-wash"
+                >
+                  <Trash2 size={13} strokeWidth={1.5} />
+                  Deletar
+                </button>
+              </div>
+            )}
+          </div>
         );
       })}
       </div>

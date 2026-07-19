@@ -85,6 +85,7 @@ interface StudioState {
   selectTable(table: string | null): void;
   openTableTab(table: string): void;
   closeTableTab(table: string): void;
+  reorderTableTabs(tabs: string[]): void;
   applyDatabaseChange(input: {
     providerId: string;
     providerLabel: string;
@@ -273,6 +274,17 @@ export const useStudio = create<StudioState>((set) => ({
         tableTabs: { ...state.tableTabs, [id]: nextTabs },
         selectedTable: state.selectedTable === table ? fallback : state.selectedTable,
       };
+    }),
+
+  reorderTableTabs: (tabs) =>
+    set((state) => {
+      if (!state.selection) return {};
+      const id = keysId(state.selection.providerId, state.selection.instanceId);
+      const current = state.tableTabs[id] ?? [];
+      const sameMembers =
+        current.length === tabs.length && current.every((table) => tabs.includes(table));
+      if (!sameMembers) return {};
+      return { tableTabs: { ...state.tableTabs, [id]: tabs } };
     }),
 
   applyDatabaseChange: (input) =>
