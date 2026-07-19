@@ -5,16 +5,21 @@
   "main": "expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios"
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
-    "@react-native-async-storage/async-storage": "2.1.2",
-    "expo": "~53.0.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "^57.0.7",
+    "expo-dev-client": "~57.0.7",
+    "expo-sqlite": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.0",
     "react-native-mmkv": "^3.2.0",
-    "expo-status-bar": "~2.2.3",
-    "react": "19.0.0",
-    "react-native": "0.79.5",
     "react-native-storage-inspector": "file:../cli"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.4"
   }
 }

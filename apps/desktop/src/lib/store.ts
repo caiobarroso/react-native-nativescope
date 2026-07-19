@@ -48,6 +48,8 @@ interface StudioState {
   keyFilter: string;
   /** tabelas por `${providerId} ${instanceId}` (providers database.*) */
   tables: Record<string, TableSchema[]>;
+  /** tabs abertas por banco SQLite — `${providerId} ${instanceId}` → table names */
+  tableTabs: Record<string, string[]>;
   selectedTable: string | null;
   /** incrementado a cada database.changed — o grid re-consulta ao mudar */
   dbRefreshNonce: number;
@@ -81,6 +83,8 @@ interface StudioState {
   setKeyFilter(filter: string): void;
   setTables(providerId: string, instanceId: string, tables: TableSchema[]): void;
   selectTable(table: string | null): void;
+  openTableTab(table: string): void;
+  closeTableTab(table: string): void;
   applyDatabaseChange(input: {
     providerId: string;
     providerLabel: string;
@@ -110,6 +114,7 @@ export const useStudio = create<StudioState>((set) => ({
   creating: false,
   keyFilter: "",
   tables: {},
+  tableTabs: {},
   selectedTable: null,
   dbRefreshNonce: 0,
   recentChanges: {},
@@ -183,17 +188,92 @@ export const useStudio = create<StudioState>((set) => ({
     }),
 
   select: (selection) =>
-    set({ selection, selectedKey: null, creating: false, keyFilter: "", selectedTable: null }),
+    set((state) => {
+      if (!selection) {
+        return {
+          selection,
+          selectedKey: null,
+          creating: false,
+          keyFilter: "",
+          selectedTable: null,
+        };
+      }
+      const id = keysId(selection.providerId, selection.instanceId);
+      const tabs = state.tableTabs[id] ?? [];
+      return {
+        selection,
+        selectedKey: null,
+        creating: false,
+        keyFilter: "",
+        selectedTable: tabs.includes(state.selectedTable ?? "")
+          ? state.selectedTable
+          : tabs[0] ?? null,
+      };
+    }),
   selectKey: (selectedKey) => set({ selectedKey, creating: false }),
   setCreating: (creating) => set(creating ? { creating, selectedKey: null } : { creating }),
   setKeyFilter: (keyFilter) => set({ keyFilter }),
 
   setTables: (providerId, instanceId, tables) =>
-    set((state) => ({
-      tables: { ...state.tables, [keysId(providerId, instanceId)]: tables },
-    })),
+    set((state) => {
+      const id = keysId(providerId, instanceId);
+      const valid = new Set(tables.map((table) => table.name));
+      const currentTabs = state.tableTabs[id] ?? [];
+      const nextTabs = currentTabs.filter((table) => valid.has(table));
+      const isCurrentSelection =
+        state.selection?.providerId === providerId && state.selection.instanceId === instanceId;
+      const selectedTable =
+        isCurrentSelection && state.selectedTable && !valid.has(state.selectedTable)
+          ? nextTabs[0] ?? null
+          : state.selectedTable;
+      return {
+        tables: { ...state.tables, [id]: tables },
+        tableTabs: { ...state.tableTabs, [id]: nextTabs },
+        selectedTable,
+      };
+    }),
 
-  selectTable: (selectedTable) => set({ selectedTable }),
+  selectTable: (selectedTable) =>
+    set((state) => {
+      if (!selectedTable || !state.selection) return { selectedTable };
+      const id = keysId(state.selection.providerId, state.selection.instanceId);
+      const current = state.tableTabs[id] ?? [];
+      const nextTabs = current.includes(selectedTable)
+        ? current
+        : [...current, selectedTable];
+      return {
+        selectedTable,
+        tableTabs: { ...state.tableTabs, [id]: nextTabs },
+      };
+    }),
+
+  openTableTab: (table) =>
+    set((state) => {
+      if (!state.selection) return {};
+      const id = keysId(state.selection.providerId, state.selection.instanceId);
+      const current = state.tableTabs[id] ?? [];
+      return {
+        selectedTable: table,
+        tableTabs: {
+          ...state.tableTabs,
+          [id]: current.includes(table) ? current : [...current, table],
+        },
+      };
+    }),
+
+  closeTableTab: (table) =>
+    set((state) => {
+      if (!state.selection) return {};
+      const id = keysId(state.selection.providerId, state.selection.instanceId);
+      const current = state.tableTabs[id] ?? [];
+      const index = current.indexOf(table);
+      const nextTabs = current.filter((name) => name !== table);
+      const fallback = nextTabs[Math.min(index, nextTabs.length - 1)] ?? null;
+      return {
+        tableTabs: { ...state.tableTabs, [id]: nextTabs },
+        selectedTable: state.selectedTable === table ? fallback : state.selectedTable,
+      };
+    }),
 
   applyDatabaseChange: (input) =>
     set((state) => {
@@ -212,9 +292,16 @@ export const useStudio = create<StudioState>((set) => ({
         source: input.source,
         preview: null,
       };
+      const tableHistoryKey = `${keysId(input.providerId, input.instanceId)} ${input.table}`;
+      // O nonce dispara refetch no RowGrid — só bump quando o evento é da
+      // instância selecionada; evento de outro banco não deve custar query.
+      const matchesSelection =
+        state.selection?.providerId === input.providerId &&
+        state.selection.instanceId === input.instanceId;
       return {
         activity: [item, ...state.activity].slice(0, ACTIVITY_LIMIT),
-        dbRefreshNonce: state.dbRefreshNonce + 1,
+        dbRefreshNonce: matchesSelection ? state.dbRefreshNonce + 1 : state.dbRefreshNonce,
+        recentChanges: { ...state.recentChanges, [tableHistoryKey]: Date.now() },
       };
     }),
 }));

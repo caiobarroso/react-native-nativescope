@@ -1,8 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROTOCOL_VERSION, type CommandMessage } from "@rnsi/protocol";
+import {
+  PROTOCOL_VERSION,
+  parseMessage,
+  serializeMessage,
+  type AnyMessage,
+  type CommandMessage,
+} from "@rnsi/protocol";
 import { createMemoryAdapter } from "./memory-adapter.ts";
+import { createMMKVAdapter, type MMKVInstanceLike } from "./adapters/mmkv.ts";
 import { createRegistry } from "./registry.ts";
+import { startRuntime } from "./bootstrap.ts";
 import { handleCommand } from "./command-handler.ts";
+import type { WebSocketLike } from "./transport.ts";
 
 function command(partial: Pick<CommandMessage, "type" | "payload">): CommandMessage {
   return {
@@ -125,5 +134,125 @@ describe("command handler", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("unknown-provider");
+  });
+});
+
+class FakeSocket implements WebSocketLike {
+  sent: string[] = [];
+  private listeners = new Map<string, Set<(event?: { data: unknown }) => void>>();
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {
+    this.emit("close");
+  }
+
+  addEventListener(
+    type: "open" | "close" | "error" | "message",
+    listener: (() => void) | ((event: { data: unknown }) => void),
+  ): void {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener as (event?: { data: unknown }) => void);
+    this.listeners.set(type, listeners);
+  }
+
+  emit(type: string, event?: { data: unknown }): void {
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
+
+function decode(raw: string): AnyMessage {
+  const parsed = parseMessage(raw);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return parsed.message;
+}
+
+function createNativeMmkv(): MMKVInstanceLike {
+  const data = new Map<string, string | number | boolean | ArrayBuffer>();
+  const listeners = new Set<(key: string) => void>();
+  return {
+    getAllKeys: () => [...data.keys()],
+    contains: (key) => data.has(key),
+    getString: (key) => {
+      const value = data.get(key);
+      return typeof value === "string" ? value : undefined;
+    },
+    getNumber: (key) => {
+      const value = data.get(key);
+      return typeof value === "number" ? value : undefined;
+    },
+    getBoolean: (key) => {
+      const value = data.get(key);
+      return typeof value === "boolean" ? value : undefined;
+    },
+    set(key, value) {
+      data.set(key, value);
+      for (const listener of listeners) listener(key);
+    },
+    delete(key) {
+      data.delete(key);
+      for (const listener of listeners) listener(key);
+    },
+    addOnValueChangedListener(listener) {
+      listeners.add(listener);
+      return { remove: () => listeners.delete(listener) };
+    },
+  };
+}
+
+describe("runtime", () => {
+  it("assina instâncias que aparecem depois do provider", () => {
+    const sockets: FakeSocket[] = [];
+    const runtime = startRuntime({
+      url: "ws://test",
+      sessionToken: "token",
+      client: { name: "test-runtime", platform: "node" },
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const socket = sockets[0];
+    expect(socket).toBeDefined();
+    if (!socket) throw new Error("socket não criado");
+
+    socket.emit("open");
+    socket.emit("message", {
+      data: serializeMessage({
+        kind: "hello-ack",
+        protocolVersion: PROTOCOL_VERSION,
+        sessionId: "s1",
+      }),
+    });
+
+    const adapter = createMMKVAdapter();
+    runtime.registry.register(adapter);
+    adapter.registerInstance("settings", createNativeMmkv());
+    void adapter.set("settings", "theme", { type: "string", value: "dark" });
+
+    const messages = socket.sent.map(decode);
+    expect(messages.some((message) => message.kind === "hello")).toBe(true);
+    expect(
+      messages.some(
+        (message) =>
+          message.kind === "event" &&
+          message.type === "provider.registered" &&
+          message.payload.provider.instances.some((i) => i.instanceId === "settings"),
+      ),
+    ).toBe(true);
+    expect(
+      messages.some(
+        (message) =>
+          message.kind === "event" &&
+          message.type === "key-value.changed" &&
+          message.payload.instanceId === "settings" &&
+          message.payload.key === "theme",
+      ),
+    ).toBe(true);
+
+    runtime.close();
   });
 });

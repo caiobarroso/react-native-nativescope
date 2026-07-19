@@ -18,6 +18,10 @@ export {
 } from "./transport.ts";
 export { startRuntime, type Runtime, type RuntimeOptions } from "./bootstrap.ts";
 export {
+  emitAppDevtoolsChange,
+  type AppDevtoolsChange,
+} from "./app-devtools.ts";
+export {
   createAsyncStorageAdapter,
   type AsyncStorageAdapter,
   type AsyncStorageApi,

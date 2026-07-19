@@ -8,6 +8,7 @@ import { detectProject } from "./detect.ts";
 import { startLocalServer } from "./server.ts";
 import { startFakeRuntime } from "./fake-runtime.ts";
 import { ensureMetroConfig, spawnMetro } from "./metro-config.ts";
+import { startAdbWatcher } from "./android.ts";
 
 const args = process.argv.slice(2);
 
@@ -61,10 +62,22 @@ function writeSessionFile(projectDir: string, port: number, token: string): void
   }
 }
 
-function tryAdbReverse(port: number): void {
-  // Best-effort: emulador/device Android via USB passa a alcançar 127.0.0.1.
-  execFile("adb", ["reverse", `tcp:${port}`, `tcp:${port}`], () => {
-    /* sem adb ou sem device: silêncio — iOS Simulator não precisa */
+/**
+ * Túnel Android contínuo: reaplica `adb reverse` quando um device é plugado
+ * depois, o cabo cai, ou o adb server reinicia — e reporta problemas
+ * (mais de um device, depuração não autorizada) em vez de falhar em
+ * silêncio. iOS Simulator não precisa de nada disso.
+ */
+function watchAndroid(port: number): void {
+  startAdbWatcher(port, (state) => {
+    if (!state.available) return; // sem adb no PATH: irrelevante fora do Android
+    if (state.problem) {
+      console.log(`android: ${state.problem}`);
+    } else if (state.reversed.length > 0) {
+      console.log(
+        `android: adb reverse ativo (${state.reversed.length} device${state.reversed.length > 1 ? "s" : ""})`,
+      );
+    }
   });
 }
 
@@ -103,7 +116,7 @@ async function main(): Promise<void> {
   });
 
   writeSessionFile(projectDir, port, sessionToken);
-  tryAdbReverse(port);
+  watchAndroid(port);
 
   // Zero config: garante o wrap do Metro e sobe o Metro do projeto junto.
   const isAppProject = project.flavor !== "unknown";

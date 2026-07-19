@@ -38,6 +38,7 @@ type Pending = {
 let transport: Transport | null = null;
 const pending = new Map<string, Pending>();
 let nextRequestId = 1;
+const tableRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function sessionToken(): string | null {
   return new URLSearchParams(window.location.search).get("token");
@@ -86,6 +87,31 @@ export function connect(): void {
 
 function send(message: AnyMessage): void {
   transport?.send(serializeMessage(message));
+}
+
+/**
+ * Reagenda a releitura do schema após database.changed — mas SÓ para a
+ * instância que o usuário está olhando. tables() custa PRAGMA+COUNT por
+ * tabela no device; com um app inserindo continuamente, refresh
+ * incondicional viraria carga permanente mesmo com o Studio em outra tela.
+ * Ao selecionar a instância, a UI recarrega tudo de qualquer forma.
+ */
+const TABLE_REFRESH_DEBOUNCE_MS = 400;
+
+function scheduleTableRefresh(providerId: string, instanceId: string): void {
+  const selection = useStudio.getState().selection;
+  if (selection?.providerId !== providerId || selection.instanceId !== instanceId) return;
+
+  const key = `${providerId} ${instanceId}`;
+  const current = tableRefreshTimers.get(key);
+  if (current) clearTimeout(current);
+  tableRefreshTimers.set(
+    key,
+    setTimeout(() => {
+      tableRefreshTimers.delete(key);
+      void loadTables(providerId, instanceId);
+    }, TABLE_REFRESH_DEBOUNCE_MS),
+  );
 }
 
 function handleMessage(message: AnyMessage): void {
@@ -169,6 +195,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
         source: event.payload.source,
         timestamp: event.timestamp,
       });
+      scheduleTableRefresh(event.payload.providerId, event.payload.instanceId);
       return;
     }
   }

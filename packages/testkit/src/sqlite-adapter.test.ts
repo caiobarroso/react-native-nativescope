@@ -160,6 +160,33 @@ describe("expo-sqlite adapter", () => {
     expect(changes.map((c) => c.source)).toEqual(["studio", "app"]);
   });
 
+  it("fallback JS emite mudança do app quando o hook nativo não chega", () => {
+    const db = createNodeSqlite(SETUP);
+    const adapter = createExpoSqliteAdapter();
+    adapter.registerDatabase("app.db", db, { hasChangeListener: true });
+    const changes: DatabaseChange[] = [];
+    adapter.subscribe("app.db", (c) => changes.push(c));
+
+    adapter.notifyAppMutation("app.db", "visits", 3);
+
+    expect(changes).toEqual([
+      { table: "visits", rowId: 3, operation: "unknown", source: "app" },
+    ]);
+  });
+
+  it("deduplica hook nativo e fallback JS da mesma mutação", () => {
+    const db = createNodeSqlite(SETUP);
+    const adapter = createExpoSqliteAdapter();
+    adapter.registerDatabase("app.db", db, { hasChangeListener: true });
+    const changes: DatabaseChange[] = [];
+    adapter.subscribe("app.db", (c) => changes.push(c));
+
+    adapter.notifyAppMutation("app.db", "visits", null);
+    adapter.notifyNativeChange("app.db", "visits", 1);
+
+    expect(changes).toHaveLength(1);
+  });
+
   it("banco desconhecido é erro estruturado", async () => {
     const adapter = createExpoSqliteAdapter();
     await expect(adapter.tables("ghost.db")).rejects.toThrow("unknown instance");
@@ -170,5 +197,19 @@ describe("expo-sqlite adapter", () => {
     adapter.registerDatabase("a.db", createNodeSqlite());
     adapter.registerDatabase("a.db", createNodeSqlite());
     expect(adapter.instances()).toHaveLength(1);
+  });
+
+  it("avisa quando um novo banco aparece", () => {
+    const adapter = createExpoSqliteAdapter();
+    const seen: string[][] = [];
+    adapter.onInstancesChanged?.(() => {
+      seen.push(adapter.instances().map((i) => i.instanceId));
+    });
+
+    adapter.registerDatabase("a.db", createNodeSqlite());
+    adapter.registerDatabase("a.db", createNodeSqlite());
+    adapter.registerDatabase("b.db", createNodeSqlite());
+
+    expect(seen).toEqual([["a.db"], ["a.db", "b.db"]]);
   });
 });

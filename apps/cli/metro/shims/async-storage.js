@@ -61,4 +61,3 @@ if (runtime) {
 }
 
 module.exports = real;
-module.exports.default = AsyncStorage;

@@ -26,12 +26,38 @@ if (runtime) {
   try {
     const adapter = rnsi.createExpoSqliteAdapter();
     runtime.registry.register(adapter);
+    const databaseByPath = new Map();
+
+    const mutationTable = (sql) => {
+      const trimmed = String(sql || "").trim();
+      const match =
+        /^(?:insert|replace)\s+into\s+["'`]?([A-Za-z_][\w]*)/i.exec(trimmed) ||
+        /^update\s+["'`]?([A-Za-z_][\w]*)/i.exec(trimmed) ||
+        /^delete\s+from\s+["'`]?([A-Za-z_][\w]*)/i.exec(trimmed) ||
+        /^(?:create|drop|alter)\s+table(?:\s+if\s+(?:not\s+)?exists)?\s+["'`]?([A-Za-z_][\w]*)/i.exec(trimmed);
+      return match ? match[1] : null;
+    };
+
+    const isMutation = (sql) =>
+      /^\s*(insert|replace|update|delete|create|drop|alter)\b/i.test(String(sql || ""));
+
+    // lastInsertRowId só é significativo em INSERT/REPLACE. Num UPDATE ele
+    // carrega o rowid do último insert ANTERIOR — usá-lo geraria uma chave
+    // de dedup errada e o evento nativo duplicaria a mutação.
+    const isInsert = (sql) => /^\s*(insert|replace)\b/i.test(String(sql || ""));
+
+    const splitStatements = (sql) =>
+      String(sql || "")
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean);
 
     if (typeof real.addDatabaseChangeListener === "function") {
       real.addDatabaseChangeListener((event) => {
         try {
+          const instanceId = databaseByPath.get(event.databaseFilePath) ?? event.databaseName;
           adapter.notifyNativeChange(
-            event.databaseName,
+            instanceId,
             event.tableName,
             typeof event.rowId === "number" ? event.rowId : null,
           );
@@ -44,7 +70,50 @@ if (runtime) {
     const withListener = (options) => ({ ...(options || {}), enableChangeListener: true });
 
     const register = (name, db) => {
+      if (typeof db.databasePath === "string") databaseByPath.set(db.databasePath, name);
+
+      const notifyMutation = (sql, rowId = null) => {
+        if (!isMutation(sql)) return;
+        const table = mutationTable(sql) ?? "*";
+        if (/^\s*(create|drop|alter)\b/i.test(String(sql || ""))) {
+          adapter.notifySchemaChanged(name, table);
+        }
+        adapter.notifyAppMutation(
+          name,
+          table,
+          typeof rowId === "number" && rowId > 0 ? rowId : null,
+        );
+      };
+
+      // Wrap IN-PLACE, no próprio objeto — nunca Object.create(db):
+      // herança por protótipo quebra com campos privados de classe
+      // (#campo) e faz métodos que escrevem this.x divergirem de estado.
+      // Mesmo padrão do shim de AsyncStorage.
       try {
+        if (typeof db.runAsync === "function") {
+          const originalRun = db.runAsync.bind(db);
+          db.runAsync = async (sql, ...params) => {
+            const result = await originalRun(sql, ...params);
+            try {
+              notifyMutation(sql, isInsert(sql) ? result && result.lastInsertRowId : null);
+            } catch {
+              /* instrumentação nunca propaga erro para o app */
+            }
+            return result;
+          };
+        }
+        if (typeof db.execAsync === "function") {
+          const originalExec = db.execAsync.bind(db);
+          db.execAsync = async (sql) => {
+            const result = await originalExec(sql);
+            try {
+              for (const statement of splitStatements(sql)) notifyMutation(statement);
+            } catch {
+              /* idem */
+            }
+            return result;
+          };
+        }
         adapter.registerDatabase(name, db, { hasChangeListener: true });
       } catch {
         /* registro nunca quebra a abertura do banco */

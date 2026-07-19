@@ -11,6 +11,12 @@ node_modules
 dist
 dist-ssr
 *.local
+.expo/
+.pnpm-store/
+
+# prebuild do playground (CNG regenera; não versionamos nativo)
+apps/playground/android/
+apps/playground/ios/
 
 # Editor directories and files
 .vscode/*

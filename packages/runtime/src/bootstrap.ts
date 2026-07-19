@@ -9,6 +9,7 @@ import { createRegistry, type AdapterRegistry } from "./registry.ts";
 import { handleCommand } from "./command-handler.ts";
 import { createTransport, type Transport, type WebSocketLike } from "./transport.ts";
 import { isDatabaseAdapter, isKeyValueAdapter, type ProviderAdapter } from "./adapter.ts";
+import { emitAppDevtoolsChange } from "./app-devtools.ts";
 
 export interface RuntimeOptions {
   url: string;
@@ -33,6 +34,7 @@ export interface Runtime {
 export function startRuntime(options: RuntimeOptions): Runtime {
   const registry = createRegistry();
   const subscriptions: Array<() => void> = [];
+  const watchedInstances = new Map<string, Set<string>>();
   let handshakeDone = false;
 
   function send(message: AnyMessage): void {
@@ -43,15 +45,43 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     if (handshakeDone) send(event);
   }
 
+  function providerDescriptor(adapter: ProviderAdapter) {
+    return {
+      providerId: adapter.providerId,
+      label: adapter.label,
+      capabilities: adapter.capabilities,
+      instances: adapter.instances(),
+    };
+  }
+
+  function announceProvider(adapter: ProviderAdapter): void {
+    sendEvent({
+      kind: "event",
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp: Date.now(),
+      type: "provider.registered",
+      payload: {
+        provider: providerDescriptor(adapter),
+      },
+    });
+  }
+
   function watchAdapter(adapter: ProviderAdapter): void {
+    const watched = watchedInstances.get(adapter.providerId) ?? new Set<string>();
+    watchedInstances.set(adapter.providerId, watched);
+
     for (const { instanceId } of adapter.instances()) {
+      if (watched.has(instanceId)) continue;
+      watched.add(instanceId);
+
       if (isKeyValueAdapter(adapter)) {
         subscriptions.push(
           adapter.subscribe(instanceId, (change) => {
+            const timestamp = Date.now();
             sendEvent({
               kind: "event",
               protocolVersion: PROTOCOL_VERSION,
-              timestamp: Date.now(),
+              timestamp,
               type: "key-value.changed",
               payload: {
                 providerId: adapter.providerId,
@@ -62,15 +92,26 @@ export function startRuntime(options: RuntimeOptions): Runtime {
                 entry: change.entry,
               },
             });
+            emitAppDevtoolsChange({
+              kind: "key-value",
+              providerId: adapter.providerId,
+              instanceId,
+              key: change.key,
+              change: change.change,
+              source: change.source,
+              entry: change.entry,
+              timestamp,
+            });
           }),
         );
       } else if (isDatabaseAdapter(adapter)) {
         subscriptions.push(
           adapter.subscribe(instanceId, (change) => {
+            const timestamp = Date.now();
             sendEvent({
               kind: "event",
               protocolVersion: PROTOCOL_VERSION,
-              timestamp: Date.now(),
+              timestamp,
               type: "database.changed",
               payload: {
                 providerId: adapter.providerId,
@@ -80,6 +121,16 @@ export function startRuntime(options: RuntimeOptions): Runtime {
                 operation: change.operation,
                 source: change.source,
               },
+            });
+            emitAppDevtoolsChange({
+              kind: "database",
+              providerId: adapter.providerId,
+              instanceId,
+              table: change.table,
+              rowId: change.rowId,
+              operation: change.operation,
+              source: change.source,
+              timestamp,
             });
           }),
         );
@@ -125,20 +176,13 @@ export function startRuntime(options: RuntimeOptions): Runtime {
 
   registry.onRegister((adapter) => {
     watchAdapter(adapter);
-    sendEvent({
-      kind: "event",
-      protocolVersion: PROTOCOL_VERSION,
-      timestamp: Date.now(),
-      type: "provider.registered",
-      payload: {
-        provider: {
-          providerId: adapter.providerId,
-          label: adapter.label,
-          capabilities: adapter.capabilities,
-          instances: adapter.instances(),
-        },
-      },
-    });
+    subscriptions.push(
+      adapter.onInstancesChanged?.(() => {
+        watchAdapter(adapter);
+        announceProvider(adapter);
+      }) ?? (() => {}),
+    );
+    announceProvider(adapter);
   });
 
   return {

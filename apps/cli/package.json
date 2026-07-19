@@ -7,9 +7,11 @@
     "rn-storage-inspector": "./dist/cli.mjs"
   },
   "exports": {
+    "./app": "./app/index.cjs",
     "./metro": "./metro/withStorageInspector.cjs"
   },
   "files": [
+    "app",
     "dist",
     "metro"
   ],

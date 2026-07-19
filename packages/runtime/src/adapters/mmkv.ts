@@ -178,6 +178,11 @@ export function createMMKVAdapter(): MMKVAdapter {
       return tracked.has(instanceId);
     },
 
+    onInstancesChanged(listener) {
+      registrationListeners.add(listener);
+      return () => registrationListeners.delete(listener);
+    },
+
     async listKeys(instanceId) {
       const t = get(instanceId);
       const entries: KeyEntry[] = [];

@@ -118,6 +118,20 @@ describe("MMKV: tipos e instâncias", () => {
     expect(adapter.hasInstance("default")).toBe(true);
   });
 
+  it("avisa quando uma nova instância aparece", () => {
+    const adapter = createMMKVAdapter();
+    const seen: string[][] = [];
+    adapter.onInstancesChanged?.(() => {
+      seen.push(adapter.instances().map((i) => i.instanceId));
+    });
+
+    adapter.registerInstance("settings", createFakeMMKV());
+    adapter.registerInstance("settings", createFakeMMKV());
+    adapter.registerInstance("cache", createFakeMMKV());
+
+    expect(seen).toEqual([["settings"], ["cache", "settings"]]);
+  });
+
   it("string com cara de JSON é inferida como json; inválida fica string", async () => {
     const instance = createFakeMMKV();
     const adapter = createMMKVAdapter();

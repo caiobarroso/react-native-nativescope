@@ -10,8 +10,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
+    "@lezer/highlight": "^1.2.3",
     "@rnsi/protocol": "workspace:*",
     "@rnsi/runtime": "workspace:*",
+    "@uiw/react-codemirror": "^4.25.11",
+    "@uiw/react-json-view": "2.0.0-alpha.43",
     "lucide-react": "^0.525.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

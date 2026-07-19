@@ -19,9 +19,14 @@ export interface ExpoSqliteAdapter extends DatabaseAdapter {
   ): void;
   /** Chamado pelo shim quando o hook nativo dispara. */
   notifyNativeChange(instanceId: string, table: string, rowId: number | null): void;
+  /** Fallback do shim para mutações JS quando o hook nativo é tardio/incompleto. */
+  notifyAppMutation(instanceId: string, table: string, rowId: number | null): void;
+  /** Chamado pelo shim ao detectar DDL — invalida o cache de schema da tabela. */
+  notifySchemaChanged(instanceId: string, table: string): void;
 }
 
 const ECHO_TTL_MS = 800;
+const RECENT_EVENT_TTL_MS = 250;
 const DEFAULT_SELECT_LIMIT = 200;
 const ROWID_ALIAS = "__rnsi_rowid__";
 
@@ -57,9 +62,14 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     listeners: Set<(change: DatabaseChange) => void>;
     /** `${table}` → expiração — mutações do Studio pendentes de eco. */
     pendingStudioWrites: Map<string, number>;
+    /** Eventos recentes do hook/fallback, para não duplicar nativo + fallback. */
+    recentEvents: Map<string, number>;
+    /** Cache de identidade/colunas por tabela — ver tableInfo. */
+    schemaCache: Map<string, { identity: TableSchema["identity"]; columnNames: string[]; pkColumns: string[] }>;
   }
 
   const tracked = new Map<string, Tracked>();
+  const registrationListeners = new Set<() => void>();
 
   function get(instanceId: string): Tracked {
     const t = tracked.get(instanceId);
@@ -69,6 +79,32 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
 
   function emit(t: Tracked, change: DatabaseChange): void {
     for (const listener of t.listeners) listener(change);
+  }
+
+  function recentKeys(table: string, rowId: number | null): string[] {
+    return [`${table}:*`, rowId === null ? `${table}:*` : `${table}:${rowId}`];
+  }
+
+  /**
+   * Dedup fallback×nativo com janela de 250ms. Trade-off consciente: dois
+   * UPDATEs no MESMO row em <250ms viram um evento só, e um execAsync em
+   * lote (chave `table:*`) suprime os eventos nativos da tabela na janela.
+   * Os DADOS ficam certos (a UI refaz a consulta a cada evento) — é o
+   * timeline que pode subcontar mudanças muito rápidas.
+   */
+  function emitOnce(t: Tracked, change: DatabaseChange): void {
+    const now = Date.now();
+    for (const [key, expiresAt] of t.recentEvents) {
+      if (expiresAt <= now) t.recentEvents.delete(key);
+    }
+    if (recentKeys(change.table, change.rowId).some((key) => t.recentEvents.has(key))) {
+      return;
+    }
+    t.recentEvents.set(
+      change.rowId === null ? `${change.table}:*` : `${change.table}:${change.rowId}`,
+      now + RECENT_EVENT_TTL_MS,
+    );
+    emit(t, change);
   }
 
   function consumeStudioEcho(t: Tracked, table: string): boolean {
@@ -105,6 +141,35 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     return columns.some((c) => Number(c["pk"]) > 0) ? "pk" : "none";
   }
 
+  interface TableInfo {
+    identity: TableSchema["identity"];
+    columnNames: string[];
+    pkColumns: string[];
+  }
+
+  /**
+   * Schema não muda a cada evento — o probe de identidade e o PRAGMA rodam
+   * UMA vez por tabela e ficam em cache. Sem isto, cada refetch do grid
+   * custava até 4 queries auxiliares no device. Invalidação: DDL detectado
+   * pelo shim (notifySchemaChanged) ou mutação manual no console SQL.
+   */
+  async function tableInfo(t: Tracked, table: string): Promise<TableInfo> {
+    const cached = t.schemaCache.get(table);
+    if (cached) return cached;
+    const identity = await tableIdentity(t.db, table);
+    const columns = await t.db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
+    const info: TableInfo = {
+      identity,
+      columnNames: columns.map((c) => String(c["name"])),
+      pkColumns: columns
+        .filter((c) => Number(c["pk"]) > 0)
+        .sort((a, b) => Number(a["pk"]) - Number(b["pk"]))
+        .map((c) => String(c["name"])),
+    };
+    t.schemaCache.set(table, info);
+    return info;
+  }
+
   function refToWhere(ref: RowRef): { clause: string; params: Array<string | number | null> } {
     if ("rowid" in ref) return { clause: "rowid = ?", params: [ref.rowid] };
     const columns = Object.keys(ref.pk);
@@ -134,7 +199,15 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
         hasChangeListener: options.hasChangeListener ?? false,
         listeners: new Set(),
         pendingStudioWrites: new Map(),
+        recentEvents: new Map(),
+        schemaCache: new Map(),
       });
+      for (const listener of registrationListeners) listener();
+    },
+
+    onInstancesChanged(listener) {
+      registrationListeners.add(listener);
+      return () => registrationListeners.delete(listener);
     },
 
     notifyNativeChange(instanceId, table, rowId) {
@@ -142,7 +215,21 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       if (!t) return;
       const source: ChangeSource = consumeStudioEcho(t, table) ? "studio" : "app";
       // O hook do expo-sqlite entrega {table, rowId} mas NÃO a operação.
-      emit(t, { table, rowId, operation: "unknown", source });
+      emitOnce(t, { table, rowId, operation: "unknown", source });
+    },
+
+    notifyAppMutation(instanceId, table, rowId) {
+      const t = tracked.get(instanceId);
+      if (!t) return;
+      const source: ChangeSource = consumeStudioEcho(t, table) ? "studio" : "app";
+      emitOnce(t, { table, rowId, operation: "unknown", source });
+    },
+
+    notifySchemaChanged(instanceId, table) {
+      const t = tracked.get(instanceId);
+      if (!t) return;
+      // DDL do app (CREATE/DROP/ALTER): invalida só a tabela afetada.
+      t.schemaCache.delete(table);
     },
 
     async tables(instanceId) {
@@ -166,22 +253,23 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
             pkIndex: Number(c["pk"]),
           })),
           rowCount: Number(countRow[0]?.["n"] ?? 0),
-          identity: await tableIdentity(db, name),
+          identity: (await tableInfo(get(instanceId), name)).identity,
         });
       }
       return result;
     },
 
     async rows(instanceId, table, options) {
-      const { db } = get(instanceId);
-      const identity = await tableIdentity(db, table);
+      const t = get(instanceId);
+      const { db } = t;
+      const { identity, columnNames, pkColumns } = await tableInfo(t, table);
 
       // orderBy validado contra as colunas reais — nunca interpolado cru.
       let orderClause = "";
       if (options.orderBy) {
-        const columns = await db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
-        const valid = columns.some((c) => String(c["name"]) === options.orderBy);
-        if (!valid) throw new Error(`coluna desconhecida: ${options.orderBy}`);
+        if (!columnNames.includes(options.orderBy)) {
+          throw new Error(`coluna desconhecida: ${options.orderBy}`);
+        }
         orderClause = ` ORDER BY ${quoteIdent(options.orderBy)} ${options.direction === "desc" ? "DESC" : "ASC"}`;
       }
 
@@ -194,15 +282,6 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
         options.offset,
       ]);
       const countRow = await db.getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`);
-
-      let pkColumns: string[] = [];
-      if (identity === "pk") {
-        const columns = await db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
-        pkColumns = columns
-          .filter((c) => Number(c["pk"]) > 0)
-          .sort((a, b) => Number(a["pk"]) - Number(b["pk"]))
-          .map((c) => String(c["name"]));
-      }
 
       const rows: Row[] = raw.map((record) => {
         const cells: Record<string, CellValue> = {};
@@ -283,6 +362,8 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       }
       // Mutação manual: o eco vem como "app"… a menos que marquemos. Sem
       // saber a tabela afetada, marcamos como studio via evento direto.
+      // Mutação manual pode ser DDL — invalida o cache de schema inteiro.
+      t.schemaCache.clear();
       const result = await t.db.runAsync(trimmed);
       if (!t.hasChangeListener) {
         emit(t, { table: "*", rowId: null, operation: "unknown", source: "studio" });

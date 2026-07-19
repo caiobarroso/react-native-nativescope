@@ -24,6 +24,7 @@ export interface ProviderAdapter {
   label: string;
   capabilities: Capability[];
   instances(): InstanceDescriptor[];
+  onInstancesChanged?(listener: () => void): () => void;
 }
 
 export function isKeyValueAdapter(adapter: ProviderAdapter): adapter is KeyValueAdapter {

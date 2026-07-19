@@ -7,7 +7,8 @@ export function TableList() {
     selection ? s.tables[keysId(selection.providerId, selection.instanceId)] : undefined,
   );
   const selectedTable = useStudio((s) => s.selectedTable);
-  const selectTable = useStudio((s) => s.selectTable);
+  const openTableTab = useStudio((s) => s.openTableTab);
+  const recentChanges = useStudio((s) => s.recentChanges);
 
   if (!selection) return null;
 
@@ -19,15 +20,17 @@ export function TableList() {
       )}
       {tables?.map((table) => {
         const active = table.name === selectedTable;
+        const changeStamp = recentChanges[`${keysId(selection.providerId, selection.instanceId)} ${table.name}`];
+        const flash = changeStamp && Date.now() - changeStamp < 950;
         return (
           <button
-            key={table.name}
-            onClick={() => selectTable(table.name)}
+            key={`${table.name}-${changeStamp ?? 0}`}
+            onClick={() => openTableTab(table.name)}
             className={`flex h-8 shrink-0 items-center gap-2 border-l-2 px-3 text-left ${
               active
                 ? "border-accent bg-accent-wash"
                 : "border-transparent hover:bg-surface-hover"
-            }`}
+            } ${flash ? "rnsi-flash" : ""}`}
           >
             <Table2 size={13} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
             <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{table.name}</span>

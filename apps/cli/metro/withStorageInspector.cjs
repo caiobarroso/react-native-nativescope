@@ -18,6 +18,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const SHIM_DIR = path.join(__dirname, "shims");
+const APP_DIR = path.join(__dirname, "..", "app");
 
 /** módulo interceptado → arquivo de shim */
 const SHIM_TARGETS = {
@@ -75,6 +76,24 @@ function withStorageInspector(config, options = {}) {
           return fallback(context, moduleName, platform);
         }
 
+        // react-native-storage-inspector/app referencia libs de storage que
+        // o projeto pode não ter (ex.: app MMKV-only usando só o hook de
+        // MMKV). O Metro resolve TODO require literal no bundle — sem este
+        // stub, a ausência de uma lib quebraria o build inteiro.
+        const fromAppApi =
+          typeof context.originModulePath === "string" &&
+          context.originModulePath.startsWith(APP_DIR);
+        if (fromAppApi && SHIM_TARGETS[moduleName]) {
+          try {
+            // Só prova que o módulo existe. Existindo, segue o fluxo normal
+            // abaixo — o /app precisa do SHIM em dev, senão escritas feitas
+            // pelos hooks não seriam instrumentadas.
+            fallback(context, moduleName, platform);
+          } catch {
+            return { type: "sourceFile", filePath: path.join(SHIM_DIR, "missing-module.js") };
+          }
+        }
+
         if (moduleName === SESSION_MODULE) {
           // A CLI escreve este arquivo ao subir. Sem ele, o shim vira no-op.
           return {
@@ -100,4 +119,4 @@ function withStorageInspector(config, options = {}) {
   };
 }
 
-module.exports = { withStorageInspector, SHIM_TARGETS, SESSION_MODULE, SHIM_DIR };
+module.exports = { withStorageInspector, SHIM_TARGETS, SESSION_MODULE, SHIM_DIR, APP_DIR };

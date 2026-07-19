@@ -1,4 +1,5 @@
 import { useStudio } from "../lib/store.ts";
+import { SnapshotTool } from "./SnapshotTool.tsx";
 
 export function Header() {
   const phase = useStudio((s) => s.phase);
@@ -11,6 +12,7 @@ export function Header() {
       </span>
 
       <div className="ml-auto flex items-center gap-3">
+        {phase === "connected" && <SnapshotTool />}
         {appClient && (
           <span className="text-text-muted">
             {appClient.name}

@@ -4,9 +4,16 @@
     "slug": "rnsi-playground",
     "version": "0.1.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
-    "ios": { "supportsTablet": false },
-    "android": {}
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.kbarroso.rnsiplayground"
+    },
+    "android": {
+      "package": "com.kbarroso.rnsiplayground"
+    },
+    "plugins": [
+      "expo-status-bar",
+      "expo-sqlite"
+    ]
   }
 }

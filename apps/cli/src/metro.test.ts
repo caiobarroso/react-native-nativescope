@@ -3,8 +3,9 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { withStorageInspector, SHIM_DIR, SESSION_MODULE } =
+const { withStorageInspector, SHIM_DIR, SESSION_MODULE, APP_DIR } =
   require("../metro/withStorageInspector.cjs") as {
+    APP_DIR: string;
     withStorageInspector: (
       config: Record<string, unknown>,
       options?: { sessionFile?: string; projectRoot?: string },
@@ -77,7 +78,8 @@ describe("withStorageInspector", () => {
       resolver: { nodeModulesPaths: string[] };
     };
     expect(wrapped.watchFolders[0]).toBe("/existente");
-    expect(wrapped.watchFolders[1]).toContain("metro");
+    // a raiz do pacote é apps/cli (pai do diretório metro/)
+    expect(wrapped.watchFolders[1]).toContain("cli");
     expect(wrapped.resolver.nodeModulesPaths).toContain("/meu/app/node_modules");
   });
 
@@ -105,6 +107,26 @@ describe("withStorageInspector", () => {
     // mas o alvo de shim continua interceptado antes do custom
     const shimmed = wrapped.resolver.resolveRequest(context, ASYNC_STORAGE, "android");
     expect(shimmed.filePath).toBe(join(SHIM_DIR, "async-storage.js"));
+  });
+
+  it("require de storage ausente vindo do /app resolve para o stub, não quebra o bundle", () => {
+    const wrapped = withStorageInspector({});
+    const context = {
+      dev: true,
+      originModulePath: join(APP_DIR, "index.cjs"),
+      resolveRequest: () => {
+        throw new Error("Unable to resolve module");
+      },
+    };
+    const result = wrapped.resolver.resolveRequest(context, ASYNC_STORAGE, "android");
+    expect(result.filePath).toBe(join(SHIM_DIR, "missing-module.js"));
+  });
+
+  it("require de storage PRESENTE vindo do /app segue o fluxo normal (shim em dev)", () => {
+    const wrapped = withStorageInspector({});
+    const { context } = fakeContext({ originModulePath: join(APP_DIR, "index.cjs") });
+    const result = wrapped.resolver.resolveRequest(context, ASYNC_STORAGE, "android");
+    expect(result.filePath).toBe(join(SHIM_DIR, "async-storage.js"));
   });
 
   it("resolve o módulo de sessão para o stub quando a CLI não escreveu o arquivo", () => {

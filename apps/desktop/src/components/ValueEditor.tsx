@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { History, Trash2, X } from "lucide-react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
+import { Braces, Check, Code2, Copy, FileCode2, History, ListTree, Maximize2, Minimize2, Trash2, X } from "lucide-react";
 import type { StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
 import { getValue, setValue, removeKey } from "../lib/studio-client.ts";
@@ -9,6 +10,446 @@ const HISTORY_LABEL = {
   updated: "atualizado",
   removed: "removido",
 } as const;
+
+type JsonRoot = Record<string, unknown> | unknown[];
+
+const JsonView = lazy(() => import("@uiw/react-json-view"));
+
+const jsonViewerTheme = {
+  "--w-rjv-font-family": "var(--font-mono)",
+  "--w-rjv-color": "var(--text)",
+  "--w-rjv-background-color": "transparent",
+  "--w-rjv-line-color": "var(--border)",
+  "--w-rjv-arrow-color": "var(--text-muted)",
+  "--w-rjv-edit-color": "var(--accent)",
+  "--w-rjv-info-color": "var(--text-subtle)",
+  "--w-rjv-update-color": "var(--accent)",
+  "--w-rjv-copied-color": "var(--accent)",
+  "--w-rjv-copied-success-color": "var(--created)",
+  "--w-rjv-key-number": "var(--text-muted)",
+  "--w-rjv-key-string": "var(--text)",
+  "--w-rjv-curlybraces-color": "var(--text-muted)",
+  "--w-rjv-colon-color": "var(--text-subtle)",
+  "--w-rjv-brackets-color": "var(--text-muted)",
+  "--w-rjv-ellipsis-color": "var(--accent)",
+  "--w-rjv-quotes-color": "var(--text-subtle)",
+  "--w-rjv-quotes-string-color": "var(--created)",
+  "--w-rjv-type-string-color": "var(--created)",
+  "--w-rjv-type-int-color": "#8a5a9e",
+  "--w-rjv-type-float-color": "#8a5a9e",
+  "--w-rjv-type-bigint-color": "#8a5a9e",
+  "--w-rjv-type-boolean-color": "var(--accent)",
+  "--w-rjv-type-date-color": "var(--created)",
+  "--w-rjv-type-url-color": "#476f8f",
+  "--w-rjv-type-null-color": "var(--deleted)",
+  "--w-rjv-type-nan-color": "var(--deleted)",
+  "--w-rjv-type-undefined-color": "var(--text-subtle)",
+} as CSSProperties;
+
+function parseJsonDraft(draft: string): { value: unknown; error: null } | { value: null; error: string } {
+  try {
+    return { value: JSON.parse(draft), error: null };
+  } catch (cause) {
+    return { value: null, error: cause instanceof Error ? cause.message : "JSON inválido" };
+  }
+}
+
+function isJsonRoot(value: unknown): value is JsonRoot {
+  return typeof value === "object" && value !== null;
+}
+
+function countJsonNodes(value: unknown): number {
+  if (!isJsonRoot(value)) return 1;
+  return (Object.values(value) as unknown[]).reduce<number>(
+    (total, child) => total + countJsonNodes(child),
+    1,
+  );
+}
+
+function rootLabel(value: unknown): string {
+  if (Array.isArray(value)) return `${value.length} itens`;
+  if (isJsonRoot(value)) return `${Object.keys(value).length} chaves`;
+  if (value === null) return "null";
+  return typeof value;
+}
+
+type TsDeclaration = "interface" | "type";
+type TsArrayStyle = "array" | "bracket";
+
+interface TypeScriptOptions {
+  declaration: TsDeclaration;
+  arrayStyle: TsArrayStyle;
+}
+
+function typeNameFromKey(name: string | undefined): string {
+  const words = (name ?? "StorageValue")
+    .replace(/\[[^\]]*\]/g, " ")
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean);
+  const candidate = words
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join("");
+  if (!candidate) return "StorageValue";
+  return /^\d/.test(candidate) ? `Storage${candidate}` : candidate;
+}
+
+function safePropertyName(name: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
+}
+
+function generateTypeScript(
+  value: unknown,
+  rootName: string,
+  options: TypeScriptOptions,
+): string {
+  const normalizedRoot = typeNameFromKey(rootName);
+  if (options.declaration === "interface" && isPlainObject(value)) {
+    return `export interface ${normalizedRoot} ${inferObjectType(value, 0, options)}\n`;
+  }
+  if (options.declaration === "interface" && Array.isArray(value)) {
+    return `export interface ${normalizedRoot} extends Array<${inferArrayItemType(value, 0, options)}> {}\n`;
+  }
+  return `export type ${normalizedRoot} = ${inferTsType(value, 0, options)};\n`;
+}
+
+function inferTsType(value: unknown, level: number, options: TypeScriptOptions): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return inferArrayType(value, level, options);
+  if (isPlainObject(value)) return inferObjectType(value, level, options);
+  if (typeof value === "string") return "string";
+  if (typeof value === "number") return Number.isInteger(value) ? "number" : "number";
+  if (typeof value === "boolean") return "boolean";
+  return "unknown";
+}
+
+function inferArrayType(values: unknown[], level: number, options: TypeScriptOptions): string {
+  return arrayOf(inferArrayItemType(values, level, options), options);
+}
+
+function inferArrayItemType(values: unknown[], level: number, options: TypeScriptOptions): string {
+  if (values.length === 0) return "unknown";
+
+  const objectValues = values.filter(isPlainObject);
+  const nonObjectValues = values.filter((value) => !isPlainObject(value));
+  const members = new Set<string>();
+
+  if (objectValues.length > 0) {
+    members.add(inferMergedObjectType(objectValues, level, options));
+  }
+  for (const value of nonObjectValues) {
+    members.add(Array.isArray(value) ? inferArrayType(value, level, options) : inferTsType(value, level, options));
+  }
+
+  return union([...members]);
+}
+
+function inferObjectType(
+  value: Record<string, unknown>,
+  level: number,
+  options: TypeScriptOptions,
+  optionalKeys = new Set<string>(),
+): string {
+  const entries = Object.entries(value);
+  if (entries.length === 0) return "Record<string, never>";
+
+  const pad = indent(level);
+  const childPad = indent(level + 1);
+  const lines = entries.map(([key, child]) => {
+    const optional = optionalKeys.has(key) ? "?" : "";
+    return `${childPad}${safePropertyName(key)}${optional}: ${inferTsType(child, level + 1, options)};`;
+  });
+  return `{\n${lines.join("\n")}\n${pad}}`;
+}
+
+function inferMergedObjectType(
+  values: Array<Record<string, unknown>>,
+  level: number,
+  options: TypeScriptOptions,
+): string {
+  const keys = [...new Set(values.flatMap((value) => Object.keys(value)))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  if (keys.length === 0) return "Record<string, never>";
+
+  const pad = indent(level);
+  const childPad = indent(level + 1);
+  const lines = keys.map((key) => {
+    const present = values.filter((value) => Object.hasOwn(value, key));
+    const optional = present.length < values.length ? "?" : "";
+    const type = inferUnionValues(present.map((value) => value[key]), level + 1, options);
+    return `${childPad}${safePropertyName(key)}${optional}: ${type};`;
+  });
+  return `{\n${lines.join("\n")}\n${pad}}`;
+}
+
+function inferUnionValues(values: unknown[], level: number, options: TypeScriptOptions): string {
+  const types = new Set(values.map((value) => inferTsType(value, level, options)));
+  return union([...types]);
+}
+
+function union(types: string[]): string {
+  const unique = [...new Set(types)];
+  if (unique.length === 0) return "unknown";
+  if (unique.length === 1) return unique[0] ?? "unknown";
+  return unique.sort().join(" | ");
+}
+
+function arrayOf(itemType: string, options: TypeScriptOptions): string {
+  const needsParens = itemType.includes(" | ");
+  if (options.arrayStyle === "array") return `Array<${itemType}>`;
+  return `${needsParens ? `(${itemType})` : itemType}[]`;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function indent(level: number): string {
+  return "  ".repeat(level);
+}
+
+function JsonWorkspace({
+  draft,
+  onDraftChange,
+  sourceName,
+  minHeight = "min-h-0",
+}: {
+  draft: string;
+  onDraftChange: (value: string) => void;
+  sourceName?: string;
+  minHeight?: string;
+}) {
+  const [mode, setMode] = useState<"tree" | "raw" | "ts">("tree");
+  const [collapsed, setCollapsed] = useState<boolean | number>(2);
+  const [viewerKey, setViewerKey] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [copiedTs, setCopiedTs] = useState(false);
+  const [tsDeclaration, setTsDeclaration] = useState<TsDeclaration>("interface");
+  const [tsArrayStyle, setTsArrayStyle] = useState<TsArrayStyle>("array");
+  const parsed = useMemo(() => parseJsonDraft(draft), [draft]);
+  const tsRootName = typeNameFromKey(sourceName);
+  const typeScript = useMemo(
+    () =>
+      parsed.error === null
+        ? generateTypeScript(parsed.value, tsRootName, {
+            declaration: tsDeclaration,
+            arrayStyle: tsArrayStyle,
+          })
+        : "",
+    [parsed, tsRootName, tsDeclaration, tsArrayStyle],
+  );
+  const treeValue = parsed.error === null && isJsonRoot(parsed.value) ? parsed.value : null;
+  const nodeCount = parsed.error === null ? countJsonNodes(parsed.value) : 0;
+  const showTree = mode === "tree" && parsed.error === null;
+
+  function setCollapse(next: boolean | number): void {
+    setCollapsed(next);
+    setViewerKey((key) => key + 1);
+  }
+
+  async function copyJson(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(draft);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  async function copyTypeScript(): Promise<void> {
+    if (!typeScript) return;
+    try {
+      await navigator.clipboard.writeText(typeScript);
+      setCopiedTs(true);
+      window.setTimeout(() => setCopiedTs(false), 1200);
+    } catch {
+      setCopiedTs(false);
+    }
+  }
+
+  return (
+    <div className={`flex h-full ${minHeight} min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-surface-raised`}>
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface-sunken px-2">
+        <div className="flex rounded-md border border-border bg-surface-raised p-0.5">
+          <button
+            onClick={() => setMode("tree")}
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+              mode === "tree" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
+            }`}
+          >
+            <ListTree size={12} strokeWidth={1.5} />
+            Árvore
+          </button>
+          <button
+            onClick={() => setMode("raw")}
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+              mode === "raw" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
+            }`}
+          >
+            <Code2 size={12} strokeWidth={1.5} />
+            Raw
+          </button>
+          <button
+            onClick={() => setMode("ts")}
+            disabled={parsed.error !== null}
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+              mode === "ts" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
+            } disabled:opacity-40`}
+          >
+            <FileCode2 size={12} strokeWidth={1.5} />
+            TS
+          </button>
+        </div>
+
+        <span className="ml-1 hidden items-center gap-1.5 text-[11px] text-text-subtle sm:flex">
+          <Braces size={12} strokeWidth={1.5} />
+          {parsed.error === null ? `${rootLabel(parsed.value)} · ${nodeCount} nós` : "inválido"}
+        </span>
+
+        <button
+          onClick={() => setCollapse(false)}
+          disabled={!treeValue}
+          title="Expandir tudo"
+          className="ml-auto rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
+        >
+          <Maximize2 size={13} strokeWidth={1.5} />
+        </button>
+        <button
+          onClick={() => setCollapse(2)}
+          disabled={!treeValue}
+          title="Profundidade 2"
+          className="rounded px-1.5 py-1 font-mono text-[11px] text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
+        >
+          2
+        </button>
+        <button
+          onClick={() => setCollapse(true)}
+          disabled={!treeValue}
+          title="Colapsar tudo"
+          className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
+        >
+          <Minimize2 size={13} strokeWidth={1.5} />
+        </button>
+        <button
+          onClick={() => void copyJson()}
+          title="Copiar JSON"
+          className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+        >
+          {copied ? <Check size={13} strokeWidth={1.5} /> : <Copy size={13} strokeWidth={1.5} />}
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        {mode === "ts" && parsed.error === null ? (
+          <div className="flex h-full min-h-72 flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={tsRootName}
+                readOnly
+                className="w-48 rounded border border-border bg-surface-sunken px-2 py-1 font-mono text-[11px] text-text-muted"
+                title="Nome inferido pela chave JSON"
+              />
+              <div className="flex rounded-md border border-border bg-surface p-0.5">
+                {(["interface", "type"] as const).map((option) => (
+                  <button
+                    key={option}
+                    onClick={() => setTsDeclaration(option)}
+                    className={`rounded px-2 py-1 text-[11px] ${
+                      tsDeclaration === option
+                        ? "bg-accent text-white"
+                        : "text-text-muted hover:bg-surface-hover"
+                    }`}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+              <div className="flex rounded-md border border-border bg-surface p-0.5">
+                <button
+                  onClick={() => setTsArrayStyle("array")}
+                  className={`rounded px-2 py-1 font-mono text-[11px] ${
+                    tsArrayStyle === "array"
+                      ? "bg-accent text-white"
+                      : "text-text-muted hover:bg-surface-hover"
+                  }`}
+                >
+                  Array&lt;T&gt;
+                </button>
+                <button
+                  onClick={() => setTsArrayStyle("bracket")}
+                  className={`rounded px-2 py-1 font-mono text-[11px] ${
+                    tsArrayStyle === "bracket"
+                      ? "bg-accent text-white"
+                      : "text-text-muted hover:bg-surface-hover"
+                  }`}
+                >
+                  T[]
+                </button>
+              </div>
+              <button
+                onClick={() => void copyTypeScript()}
+                className="ml-auto flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-surface-hover"
+              >
+                {copiedTs ? <Check size={12} strokeWidth={1.5} /> : <Copy size={12} strokeWidth={1.5} />}
+                Copiar
+              </button>
+            </div>
+            <pre className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[12px] leading-relaxed text-text">
+              <code>{typeScript}</code>
+            </pre>
+          </div>
+        ) : showTree ? (
+          treeValue ? (
+            <Suspense
+              fallback={
+                <div className="rounded-md border border-border bg-surface-sunken px-3 py-2 text-[12px] text-text-subtle">
+                  Carregando árvore JSON...
+                </div>
+              }
+            >
+              <JsonView
+                key={viewerKey}
+                value={treeValue}
+                keyName="root"
+                collapsed={collapsed}
+                displayDataTypes={false}
+                displayObjectSize
+                enableClipboard
+                shortenTextAfterLength={96}
+                indentWidth={18}
+                style={jsonViewerTheme}
+                className="text-[12px] leading-relaxed"
+              />
+            </Suspense>
+          ) : (
+            <div className="rounded-md border border-border bg-surface-sunken px-3 py-2 font-mono text-[12px] text-text">
+              {String(parsed.value)}
+            </div>
+          )
+        ) : (
+          <textarea
+            value={draft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            spellCheck={false}
+            className="h-full min-h-72 w-full resize-none rounded-md border border-border bg-surface p-3 font-mono text-[12px] leading-relaxed text-text outline-none focus:border-accent"
+          />
+        )}
+        {mode === "tree" && parsed.error !== null && (
+          <div className="flex h-full min-h-72 flex-col gap-2">
+            <p className="text-[12px] text-deleted">{parsed.error}</p>
+            <textarea
+              value={draft}
+              onChange={(e) => onDraftChange(e.target.value)}
+              spellCheck={false}
+              className="min-h-0 flex-1 resize-none rounded-md border border-border bg-surface p-3 font-mono text-[12px] leading-relaxed text-text outline-none focus:border-accent"
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Histórico da chave selecionada — a terceira coluna (plano §5.2).
@@ -134,7 +575,7 @@ function CreateKeyForm({
         </button>
       </div>
 
-      <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
         <label className="flex flex-col gap-1.5">
           <span className="text-[11px] font-medium text-text-muted">Chave</span>
           <input
@@ -151,7 +592,11 @@ function CreateKeyForm({
           <span className="text-[11px] font-medium text-text-muted">Tipo</span>
           <select
             value={type}
-            onChange={(e) => setType(e.target.value as typeof type)}
+            onChange={(e) => {
+              const next = e.target.value as typeof type;
+              setType(next);
+              if (next === "json" && draft.trim() === "") setDraft("{}");
+            }}
             className="w-40 rounded-md border border-border bg-surface-raised px-2 py-1.5 text-[12px]"
           >
             <option value="string">string</option>
@@ -179,12 +624,11 @@ function CreateKeyForm({
               />
             </button>
           ) : type === "json" ? (
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              spellCheck={false}
-              placeholder='{"exemplo": true}'
-              className="min-h-40 w-full flex-1 resize-none rounded-md border border-border bg-surface-raised p-3 font-mono text-[12px] leading-relaxed placeholder:text-text-subtle"
+            <JsonWorkspace
+              draft={draft}
+              onDraftChange={setDraft}
+              sourceName={keyName}
+              minHeight="min-h-0"
             />
           ) : (
             <input
@@ -347,7 +791,11 @@ export function ValueEditor() {
           {entry && <span>{entry.approxSize} B</span>}
           <select
             value={draftType}
-            onChange={(e) => setDraftType(e.target.value as ValueType)}
+            onChange={(e) => {
+              const next = e.target.value as ValueType;
+              setDraftType(next);
+              if (next === "json" && draft.trim() === "") setDraft("{}");
+            }}
             className="rounded border border-border bg-surface-raised px-1.5 py-0.5 text-[11px] text-text-muted"
           >
             {(["string", "number", "boolean", "json", "null"] as const).map((t) => (
@@ -359,7 +807,7 @@ export function ValueEditor() {
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
         {state === "loading" ? (
           <p className="text-text-subtle">Carregando…</p>
         ) : draftType === "boolean" ? (
@@ -394,12 +842,7 @@ export function ValueEditor() {
             className="w-full rounded-md border border-border bg-surface-raised px-3 py-1.5 font-mono text-[12px]"
           />
         ) : (
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            spellCheck={false}
-            className="h-full min-h-48 w-full resize-none rounded-md border border-border bg-surface-raised p-3 font-mono text-[12px] leading-relaxed"
-          />
+          <JsonWorkspace draft={draft} onDraftChange={setDraft} sourceName={selectedKey} />
         )}
       </div>
 
