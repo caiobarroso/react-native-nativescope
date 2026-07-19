@@ -9,7 +9,8 @@ import {
   setValue,
 } from "../lib/studio-client.ts";
 import { generateTypeScript } from "./ValueEditor.tsx";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 const TYPE_LABEL: Record<string, string> = {
   string: "str",
@@ -69,6 +70,45 @@ export function KeyList() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  const filtered = useMemo(
+    () =>
+      keyFilter.trim() === ""
+        ? keys
+        : keys?.filter(
+            (e) =>
+              e.key.toLowerCase().includes(keyFilter.toLowerCase()) ||
+              e.preview.toLowerCase().includes(keyFilter.toLowerCase()),
+          ),
+    [keys, keyFilter],
+  );
+
+  // Virtualização: 1 milhão de chaves carregadas = ~30 nós DOM (plano §C).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: filtered?.length ?? 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 32,
+    overscan: 12,
+  });
+
+  const loadMore = useCallback(() => {
+    if (!selection || loadingMore) return;
+    setLoadingMore(true);
+    void loadMoreKeys(selection.providerId, selection.instanceId).finally(() =>
+      setLoadingMore(false),
+    );
+  }, [selection, loadingMore]);
+
+  // Scroll infinito: chegando perto do fim da janela carregada (sem filtro
+  // ativo), a próxima página vem sozinha.
+  const virtualItems = virtualizer.getVirtualItems();
+  const lastVisibleIndex = virtualItems[virtualItems.length - 1]?.index ?? 0;
+  useEffect(() => {
+    if (keyFilter.trim() !== "") return;
+    if (!keysMeta?.nextAfterKey || loadingMore) return;
+    if (filtered && lastVisibleIndex >= filtered.length - 10) loadMore();
+  }, [lastVisibleIndex, filtered, keysMeta?.nextAfterKey, keyFilter, loadingMore, loadMore]);
+
   if (!selection) return null;
 
   async function deleteEntry(key: string): Promise<void> {
@@ -99,15 +139,6 @@ export function KeyList() {
     setOpenMenu(null);
   }
 
-  const filtered =
-    keyFilter.trim() === ""
-      ? keys
-      : keys?.filter(
-          (e) =>
-            e.key.toLowerCase().includes(keyFilter.toLowerCase()) ||
-            e.preview.toLowerCase().includes(keyFilter.toLowerCase()),
-        );
-
   return (
     <div className="flex w-72 shrink-0 flex-col border-r border-border">
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-2">
@@ -132,7 +163,7 @@ export function KeyList() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
       {keys === undefined && (
         <p className="p-4 text-text-subtle">Carregando chaves…</p>
       )}
@@ -142,7 +173,10 @@ export function KeyList() {
       {keys && keys.length > 0 && filtered?.length === 0 && (
         <p className="p-4 text-text-subtle">Nada bate com "{keyFilter}".</p>
       )}
-      {filtered?.map((entry) => {
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+      {virtualItems.map((virtualItem) => {
+        const entry = filtered?.[virtualItem.index];
+        if (!entry) return null;
         const active = entry.key === selectedKey;
         const changeStamp =
           recentChanges[`${keysId(selection.providerId, selection.instanceId)} ${entry.key}`];
@@ -150,7 +184,14 @@ export function KeyList() {
         return (
           <div
             key={`${entry.key}-${changeStamp ?? 0}`}
-            className={`group relative flex h-8 w-full shrink-0 items-center border-l-2 ${
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualItem.start}px)`,
+            }}
+            className={`group flex h-8 w-full shrink-0 items-center border-l-2 ${
               active
                 ? "border-accent bg-accent-wash"
                 : "border-transparent hover:bg-surface-hover"
@@ -219,6 +260,7 @@ export function KeyList() {
           </div>
         );
       })}
+      </div>
       {keysMeta?.nextAfterKey && (
         <div className="border-t border-border p-2">
           {keyFilter.trim() !== "" && (
@@ -228,13 +270,7 @@ export function KeyList() {
           )}
           <button
             disabled={loadingMore}
-            onClick={() => {
-              if (!selection) return;
-              setLoadingMore(true);
-              void loadMoreKeys(selection.providerId, selection.instanceId).finally(() =>
-                setLoadingMore(false),
-              );
-            }}
+            onClick={loadMore}
             className="h-7 w-full rounded-md border border-border text-[12px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-50"
           >
             {loadingMore

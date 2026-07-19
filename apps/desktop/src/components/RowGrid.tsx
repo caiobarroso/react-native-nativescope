@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
   ArrowUp,
@@ -968,6 +969,22 @@ export function RowGrid() {
     },
   });
 
+  // Virtualização do corpo: DOM O(viewport) — 10k linhas carregadas não são
+  // 10k <tr> (plano de grandes volumes §C).
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const gridRows = table.getRowModel().rows;
+  const rowVirtualizer = useVirtualizer({
+    count: gridRows.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 32,
+    overscan: 16,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const virtualPaddingTop = virtualRows[0]?.start ?? 0;
+  const virtualPaddingBottom =
+    rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1]?.end ?? 0);
+  const visibleColumnCount = table.getVisibleFlatColumns().length;
+
   // Early returns SÓ depois de todos os hooks (regras de hooks).
   if (!selection) {
     return null;
@@ -993,6 +1010,10 @@ export function RowGrid() {
   async function deleteSelectedRows(): Promise<void> {
     if (!selection || !selectedTable || selectedVisibleRows.length === 0) return;
     const deletedRows = selectedVisibleRows.map((row) => ({ cells: row.cells }));
+    // Linhas com células truncadas: o undo re-inseriria dados cortados.
+    const undoSafe = selectedVisibleRows.every(
+      (row) => (row.truncatedColumns?.length ?? 0) === 0,
+    );
     setLoading(true);
     setError(null);
     try {
@@ -1006,13 +1027,15 @@ export function RowGrid() {
       showToast({
         message: `${deletedRows.length} linha${deletedRows.length > 1 ? "s" : ""} deletada${
           deletedRows.length > 1 ? "s" : ""
-        }`,
-        undo: async () => {
-          for (const row of deletedRows) {
-            await insertRow(selection.providerId, selection.instanceId, selectedTable, row.cells);
-          }
-          await refresh(limitRef.current);
-        },
+        }${undoSafe ? "" : " (sem desfazer: célula grande truncada)"}`,
+        undo: undoSafe
+          ? async () => {
+              for (const row of deletedRows) {
+                await insertRow(selection.providerId, selection.instanceId, selectedTable, row.cells);
+              }
+              await refresh(limitRef.current);
+            }
+          : undefined,
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -1204,7 +1227,7 @@ export function RowGrid() {
       )}
 
       <div className="relative min-h-0 flex-1">
-        <div className="h-full overflow-auto border-l border-border">
+        <div ref={tableScrollRef} className="h-full overflow-auto border-l border-border">
           <table
             className="border-separate border-spacing-0 font-mono text-[12px]"
             style={{ width: table.getTotalSize(), minWidth: "100%" }}
@@ -1279,7 +1302,14 @@ export function RowGrid() {
               ))}
             </thead>
             <tbody>
-              {table.getRowModel().rows.map((row) => {
+              {virtualPaddingTop > 0 && (
+                <tr aria-hidden>
+                  <td colSpan={visibleColumnCount} style={{ height: virtualPaddingTop, padding: 0, border: 0 }} />
+                </tr>
+              )}
+              {virtualRows.map((virtualRow) => {
+                const row = gridRows[virtualRow.index];
+                if (!row) return null;
                 const key = refKey(row.original.ref);
                 const checked = key !== null && selectedRows.has(key);
                 return (
@@ -1305,6 +1335,11 @@ export function RowGrid() {
                   </tr>
                 );
               })}
+              {virtualPaddingBottom > 0 && (
+                <tr aria-hidden>
+                  <td colSpan={visibleColumnCount} style={{ height: virtualPaddingBottom, padding: 0, border: 0 }} />
+                </tr>
+              )}
             </tbody>
           </table>
 
