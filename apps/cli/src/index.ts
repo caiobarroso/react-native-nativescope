@@ -7,6 +7,7 @@ import { DEFAULT_PORT } from "@rnsi/protocol";
 import { detectProject } from "./detect.ts";
 import { startLocalServer } from "./server.ts";
 import { startFakeRuntime } from "./fake-runtime.ts";
+import { ensureMetroConfig, spawnMetro } from "./metro-config.ts";
 
 const args = process.argv.slice(2);
 
@@ -103,6 +104,27 @@ async function main(): Promise<void> {
 
   writeSessionFile(projectDir, port, sessionToken);
   tryAdbReverse(port);
+
+  // Zero config: garante o wrap do Metro e sobe o Metro do projeto junto.
+  const isAppProject = project.flavor !== "unknown";
+  if (isAppProject && !flag("fake")) {
+    const metroResult = ensureMetroConfig(projectDir, project.flavor);
+    if (metroResult.status === "created") {
+      console.log("metro.config.js criado com o inspector já aplicado.");
+    } else if (metroResult.status === "wrapped") {
+      console.log(
+        `metro.config.js embrulhado (original preservado em ${metroResult.originalBackup}).`,
+      );
+    } else if (metroResult.status === "manual") {
+      console.log("");
+      console.log(metroResult.reason);
+    }
+
+    if (!flag("no-metro") && metroResult.status !== "manual") {
+      const sessionFile = join(projectDir, "node_modules", ".cache", "rnsi", "session.js");
+      spawnMetro(projectDir, project.flavor, sessionFile);
+    }
+  }
 
   const url = `http://127.0.0.1:${port}/?token=${sessionToken}`;
   console.log("");
