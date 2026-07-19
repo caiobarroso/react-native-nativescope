@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design system — plano §4.
+ * Paleta quente e papel. Coral é acento, não cor de marca em tudo:
+ * estado ativo, foco, mudança recente, ação primária — e nada mais.
+ */
+:root {
+  /* superfícies */
+  --surface: #faf9f5;
+  --surface-sunken: #f0eee6;
+  --surface-raised: #ffffff;
+  --surface-hover: #f0eee6;
+
+  /* traço */
+  --border: #e5e2d9;
+  --border-strong: #d6d2c6;
+
+  /* texto */
+  --text: #1f1e1d;
+  --text-muted: #6b6862;
+  --text-subtle: #9a968c;
+
+  /* acento */
+  --accent: #d97757;
+  --accent-hover: #c4623f;
+  --accent-wash: #f5e6df;
+
+  /* semântica de dados */
+  --created: #5c8a5c;
+  --updated: #d97757;
+  --deleted: #c4544f;
+  --created-wash: #e8f0e8;
+  --deleted-wash: #f7e4e3;
+}
+
+.dark {
+  --surface: #1f1e1d;
+  --surface-sunken: #191817;
+  --surface-raised: #262624;
+  --surface-hover: #30302e;
+
+  --border: #3e3d3a;
+  --border-strong: #4e4c48;
+
+  --text: #f5f4ef;
+  --text-muted: #a8a49b;
+  --text-subtle: #6b6862;
+
+  --accent: #e08a6b;
+  --accent-hover: #eda184;
+  --accent-wash: #3a2a24;
+
+  --created: #7fa87f;
+  --updated: #e08a6b;
+  --deleted: #d97570;
+  --created-wash: #24301f;
+  --deleted-wash: #3a2422;
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-wash: var(--accent-wash);
+  --color-created: var(--created);
+  --color-updated: var(--updated);
+  --color-deleted: var(--deleted);
+  --color-created-wash: var(--created-wash);
+  --color-deleted-wash: var(--deleted-wash);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* O único movimento na tela é o que comunica dado mudando (§4.3). */
+@keyframes rnsi-flash {
+  from {
+    background-color: var(--accent-wash);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.rnsi-flash {
+  animation: rnsi-flash 900ms ease-out;
+}
+
+/* Foco visível em tudo que é focável. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

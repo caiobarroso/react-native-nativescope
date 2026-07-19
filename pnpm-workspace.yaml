@@ -1,2 +1,10 @@
-allowBuilds:
-  esbuild: true
+packages:
+  - "apps/*"
+  # Fora do workspace de propósito (plano §3.5, plano B): Metro + symlinks do
+  # pnpm ainda dão atrito. O playground instala as próprias deps com
+  # `npm install` dentro de apps/playground quando for rodar no simulador.
+  - "!apps/playground"
+  - "packages/*"
+
+onlyBuiltDependencies:
+  - esbuild

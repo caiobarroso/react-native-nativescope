@@ -1,7 +1,42 @@
-# Tauri + React + Typescript
+# React Native Storage Inspector
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Inspetor de dados locais para React Native — MMKV, AsyncStorage e SQLite,
+ao vivo, sem configuração.
 
-## Recommended IDE Setup
+```bash
+pnpm add -D react-native-storage-inspector
+pnpm rn-storage-inspector
+```
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+100% local. Nenhum dado sai da sua máquina.
+
+> **Status: Fase 0 (fundação).** Fio de ponta a ponta funcionando —
+> CLI + serviço local + protocolo + UI com atividade em tempo real.
+> Ver [docs/plano-de-execucao.md](docs/plano-de-execucao.md).
+
+## Monorepo
+
+| Pacote | O quê |
+|---|---|
+| `apps/cli` | O pacote público: CLI, serviço local (WS + UI), shims do Metro |
+| `apps/desktop` | A UI do Studio (cliente web puro; casca Tauri estacionada) |
+| `apps/playground` | App Expo real para testar em simulador (fora do workspace) |
+| `packages/protocol` | Contratos do fio: schemas Zod, commands, events, versão |
+| `packages/runtime` | SDK que roda dentro do app: transport, registry, adapters |
+
+## Desenvolvimento
+
+```bash
+pnpm install
+pnpm -r test                     # unitários + integração
+pnpm --filter @rnsi/desktop build
+node apps/cli/dist/cli.mjs --fake --no-open   # sobe com runtime simulado
+```
+
+`--fake` conecta um app falso que gera atividade — útil para desenvolver a
+UI sem simulador.
+
+## Regras que o CI garante
+
+- Nenhum import de `@tauri-apps/*` na UI (D5 — a UI é um cliente web puro).
+- O shim jamais aparece em bundle de release (`scripts/check-release-bundle.mjs`).

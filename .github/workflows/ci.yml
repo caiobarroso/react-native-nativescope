@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+      - run: pnpm --filter @rnsi/desktop build
+      - name: D5 — UI é cliente web puro (zero @tauri-apps)
+        run: |
+          if grep -rn "@tauri-apps" apps/desktop/src; then
+            echo "violação de D5: a UI não pode importar @tauri-apps" >&2
+            exit 1
+          fi
+          echo "✓ nenhum import de @tauri-apps na UI"
+
+  # O guard que impede o shim de vazar para bundles de produção.
+  # Exporta um bundle de RELEASE do playground e varre pelo marcador
+  # __RNSI_SHIM__. Se aparecer, o build quebra — sem exceção.
+  release-bundle-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter react-native-storage-inspector build
+      - name: Install playground deps
+        working-directory: apps/playground
+        run: npm install --no-audit --no-fund
+      - name: Export release bundle
+        working-directory: apps/playground
+        run: npx expo export --platform android --output-dir dist
+      - name: Scan bundle for shim leakage
+        run: |
+          shopt -s globstar nullglob
+          bundles=(apps/playground/dist/**/*.js)
+          if [ ${#bundles[@]} -eq 0 ]; then
+            echo "nenhum bundle encontrado — export falhou?" >&2
+            exit 1
+          fi
+          node scripts/check-release-bundle.mjs "${bundles[@]}"

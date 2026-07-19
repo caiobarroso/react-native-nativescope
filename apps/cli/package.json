@@ -1,0 +1,35 @@
+{
+  "name": "react-native-storage-inspector",
+  "version": "0.1.0",
+  "description": "Inspetor de dados locais para React Native — MMKV, AsyncStorage e SQLite, ao vivo, sem configuração.",
+  "type": "module",
+  "bin": {
+    "rn-storage-inspector": "./dist/cli.mjs"
+  },
+  "exports": {
+    "./metro": "./metro/withStorageInspector.cjs"
+  },
+  "files": [
+    "dist",
+    "metro"
+  ],
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/cli.mjs --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rnsi/protocol": "workspace:*",
+    "@rnsi/runtime": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/ws": "^8.18.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "~5.8.3",
+    "vitest": "^3.2.0"
+  }
+}
