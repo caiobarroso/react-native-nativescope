@@ -1,7 +1,7 @@
 import { Copy, Files, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import type { KeyEntry, StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
-import { getValue, loadKeys, removeKey, setValue } from "../lib/studio-client.ts";
+import { getValue, loadKeys, loadMoreKeys, removeKey, setValue } from "../lib/studio-client.ts";
 import { generateTypeScript } from "./ValueEditor.tsx";
 import { useState } from "react";
 
@@ -57,7 +57,11 @@ export function KeyList() {
   const setCreating = useStudio((s) => s.setCreating);
   const keyFilter = useStudio((s) => s.keyFilter);
   const setKeyFilter = useStudio((s) => s.setKeyFilter);
+  const keysMeta = useStudio((s) =>
+    selection ? s.keysMeta[keysId(selection.providerId, selection.instanceId)] : undefined,
+  );
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   if (!selection) return null;
 
@@ -208,6 +212,30 @@ export function KeyList() {
           </div>
         );
       })}
+      {keysMeta?.nextAfterKey && (
+        <div className="border-t border-border p-2">
+          {keyFilter.trim() !== "" && (
+            <p className="mb-1.5 px-1 text-[11px] text-text-subtle">
+              Filtro aplicado às {keys?.length ?? 0} chaves carregadas.
+            </p>
+          )}
+          <button
+            disabled={loadingMore}
+            onClick={() => {
+              if (!selection) return;
+              setLoadingMore(true);
+              void loadMoreKeys(selection.providerId, selection.instanceId).finally(() =>
+                setLoadingMore(false),
+              );
+            }}
+            className="h-7 w-full rounded-md border border-border text-[12px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-50"
+          >
+            {loadingMore
+              ? "Carregando…"
+              : `Carregar mais (${keys?.length ?? 0} de ${keysMeta.total})`}
+          </button>
+        </div>
+      )}
       </div>
     </div>
   );

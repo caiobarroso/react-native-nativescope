@@ -1,5 +1,6 @@
 import type { KeyEntry, StorageValue, ChangeSource } from "@rnsi/protocol";
 import type { KeyValueAdapter, KeyValueChange } from "../adapter.ts";
+import { KEY_READ_BATCH, breathe, pageOfKeys } from "../key-pagination.ts";
 
 /**
  * Interface mínima do AsyncStorage que o adapter precisa. Igual à API real —
@@ -133,15 +134,21 @@ export function createAsyncStorageAdapter(storage: AsyncStorageApi): AsyncStorag
       return [{ instanceId: INSTANCE_ID, label: INSTANCE_ID }];
     },
 
-    async listKeys(instanceId) {
+    async listKeys(instanceId, options) {
       assertInstance(instanceId);
       await primeKnownKeys();
-      const keys = await storage.getAllKeys();
-      const pairs = await storage.multiGet([...keys]);
-      return pairs
-        .filter((pair): pair is [string, string] => pair[1] !== null)
-        .map(([key, raw]) => toEntry(key, raw))
-        .sort((a, b) => a.key.localeCompare(b.key));
+      // Só nomes primeiro (barato). Valores: apenas os da página, em lotes
+      // curtos com yield — um dataset de GB nunca é materializado inteiro.
+      const { pageKeys, nextAfterKey, total } = pageOfKeys(await storage.getAllKeys(), options);
+      const entries: KeyEntry[] = [];
+      for (let i = 0; i < pageKeys.length; i += KEY_READ_BATCH) {
+        const pairs = await storage.multiGet(pageKeys.slice(i, i + KEY_READ_BATCH));
+        for (const [key, raw] of pairs) {
+          if (raw !== null) entries.push(toEntry(key, raw));
+        }
+        if (i + KEY_READ_BATCH < pageKeys.length) await breathe();
+      }
+      return { entries, nextAfterKey, total };
     },
 
     async get(instanceId, key) {

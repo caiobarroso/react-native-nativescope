@@ -50,8 +50,10 @@ export async function handleCommand(
           return fail("unsupported-capability", `${adapter.providerId} não é key-value`);
         }
         switch (command.type) {
-          case "key-value.list":
-            return succeed({ entries: await adapter.listKeys(command.payload.instanceId) });
+          case "key-value.list": {
+            const { instanceId, afterKey, limit } = command.payload;
+            return succeed(await adapter.listKeys(instanceId, { afterKey, limit }));
+          }
           case "key-value.get":
             return succeed({
               value: await adapter.get(command.payload.instanceId, command.payload.key),

@@ -1,5 +1,6 @@
 import type { KeyEntry, StorageValue, ChangeSource } from "@rnsi/protocol";
 import type { KeyValueAdapter, KeyValueChange } from "../adapter.ts";
+import { KEY_READ_BATCH, breathe, pageOfKeys } from "../key-pagination.ts";
 
 /**
  * Interface mínima de uma instância MMKV (react-native-mmkv v2/v3).
@@ -183,17 +184,24 @@ export function createMMKVAdapter(): MMKVAdapter {
       return () => registrationListeners.delete(listener);
     },
 
-    async listKeys(instanceId) {
+    async listKeys(instanceId, options) {
       const t = get(instanceId);
+      // Recorta a janela sobre os NOMES; valores só da página, em lotes
+      // curtos com yield (leituras MMKV são síncronas — o yield impede que
+      // uma página presa em valores grandes monopolize a JS thread).
+      const { pageKeys, nextAfterKey, total } = pageOfKeys(t.instance.getAllKeys(), options);
       const entries: KeyEntry[] = [];
-      for (const key of t.instance.getAllKeys()) {
-        const value = readValue(t.instance, key);
-        if (value !== null) {
-          entries.push(toEntry(key, value));
-          t.knownKeys.add(key);
+      for (let i = 0; i < pageKeys.length; i += KEY_READ_BATCH) {
+        for (const key of pageKeys.slice(i, i + KEY_READ_BATCH)) {
+          const value = readValue(t.instance, key);
+          if (value !== null) {
+            entries.push(toEntry(key, value));
+            t.knownKeys.add(key);
+          }
         }
+        if (i + KEY_READ_BATCH < pageKeys.length) await breathe();
       }
-      return entries.sort((a, b) => a.key.localeCompare(b.key));
+      return { entries, nextAfterKey, total };
     },
 
     async get(instanceId, key) {

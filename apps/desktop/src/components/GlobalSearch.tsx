@@ -176,8 +176,8 @@ async function buildIndex(providers: ProviderDescriptor[]): Promise<SearchHit[]>
     for (const instance of provider.instances) {
       if (provider.capabilities.includes("key-value.read")) {
         jobs.push(
-          fetchAllKeys(provider.providerId, instance.instanceId).then((entries: KeyEntry[]) =>
-            entries.map((entry) => ({
+          fetchAllKeys(provider.providerId, instance.instanceId).then(({ entries }) =>
+            entries.map((entry: KeyEntry) => ({
               kind: "key" as const,
               providerId: provider.providerId,
               providerLabel: provider.label,

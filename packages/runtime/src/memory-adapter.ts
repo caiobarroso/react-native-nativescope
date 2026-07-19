@@ -1,5 +1,6 @@
 import type { KeyEntry, StorageValue, ChangeSource } from "@rnsi/protocol";
 import type { KeyValueAdapter, KeyValueChange } from "./adapter.ts";
+import { pageOfKeys } from "./key-pagination.ts";
 
 const PREVIEW_MAX = 120;
 
@@ -84,10 +85,14 @@ export function createMemoryAdapter(options: {
       return instanceIds.map((instanceId) => ({ instanceId, label: instanceId }));
     },
 
-    async listKeys(instanceId) {
-      return [...store(instanceId).entries()]
-        .map(([key, value]) => toKeyEntry(key, value))
-        .sort((a, b) => a.key.localeCompare(b.key));
+    async listKeys(instanceId, options) {
+      const s = store(instanceId);
+      const { pageKeys, nextAfterKey, total } = pageOfKeys([...s.keys()], options);
+      return {
+        entries: pageKeys.map((key) => toKeyEntry(key, s.get(key) as StorageValue)),
+        nextAfterKey,
+        total,
+      };
     },
 
     async get(instanceId, key) {

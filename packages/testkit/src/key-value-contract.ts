@@ -44,8 +44,46 @@ export function describeKeyValueAdapterContract(options: {
       const { adapter, instanceId } = await setup();
       await adapter.set(instanceId, "b.key", { type: "string", value: "2" });
       await adapter.set(instanceId, "a.key", { type: "string", value: "1" });
-      const entries = await adapter.listKeys(instanceId);
-      expect(entries.map((e) => e.key)).toEqual(["a.key", "b.key"]);
+      const page = await adapter.listKeys(instanceId);
+      expect(page.entries.map((e) => e.key)).toEqual(["a.key", "b.key"]);
+      expect(page.total).toBe(2);
+      expect(page.nextAfterKey).toBeNull();
+    });
+
+    it("pagina por cursor: páginas O(limit), cursor estável, total constante", async () => {
+      const { adapter, instanceId } = await setup();
+      const keys = ["k.a", "k.b", "k.c", "k.d", "k.e"];
+      for (const key of keys) {
+        await adapter.set(instanceId, key, { type: "string", value: key });
+      }
+
+      const first = await adapter.listKeys(instanceId, { limit: 2 });
+      expect(first.entries.map((e) => e.key)).toEqual(["k.a", "k.b"]);
+      expect(first.total).toBe(5);
+      expect(first.nextAfterKey).toBe("k.b");
+
+      const second = await adapter.listKeys(instanceId, {
+        afterKey: first.nextAfterKey as string,
+        limit: 2,
+      });
+      expect(second.entries.map((e) => e.key)).toEqual(["k.c", "k.d"]);
+      expect(second.nextAfterKey).toBe("k.d");
+
+      const last = await adapter.listKeys(instanceId, {
+        afterKey: second.nextAfterKey as string,
+        limit: 2,
+      });
+      expect(last.entries.map((e) => e.key)).toEqual(["k.e"]);
+      expect(last.nextAfterKey).toBeNull();
+    });
+
+    it("cursor além do fim devolve página vazia, não erro", async () => {
+      const { adapter, instanceId } = await setup();
+      await adapter.set(instanceId, "só.uma", { type: "string", value: "x" });
+      const page = await adapter.listKeys(instanceId, { afterKey: "zzz.depois.do.fim" });
+      expect(page.entries).toEqual([]);
+      expect(page.nextAfterKey).toBeNull();
+      expect(page.total).toBe(1);
     });
 
     it("lê o que escreveu, preservando o tipo", async () => {
@@ -82,7 +120,7 @@ export function describeKeyValueAdapterContract(options: {
 
       expect(changes.map((c) => c.change)).toEqual(["created", "updated", "removed"]);
       expect(await adapter.get(instanceId, "k")).toBeNull();
-      const entries = await adapter.listKeys(instanceId);
+      const { entries } = await adapter.listKeys(instanceId);
       expect(entries.find((e) => e.key === "k")).toBeUndefined();
     });
 

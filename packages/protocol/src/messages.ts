@@ -63,7 +63,13 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...commandBase,
     type: z.literal("key-value.list"),
-    payload: z.object({ ...kvTarget }),
+    // Paginação por cursor lexicográfico: o custo de uma página é O(página),
+    // nunca O(dataset) — regra central do suporte a grandes volumes.
+    payload: z.object({
+      ...kvTarget,
+      afterKey: z.string().optional(),
+      limit: z.number().int().positive().max(500).optional(),
+    }),
   }),
   z.object({
     ...commandBase,
@@ -164,6 +170,10 @@ export const providerListResultSchema = z.object({
 });
 export const keyValueListResultSchema = z.object({
   entries: z.array(keyEntrySchema),
+  /** Cursor da próxima página; null quando esta é a última. */
+  nextAfterKey: z.string().nullable(),
+  /** Total de chaves na instância (contagem barata: só nomes, sem valores). */
+  total: z.number().int().nonnegative(),
 });
 export const keyValueGetResultSchema = z.object({
   value: storageValueSchema.nullable(),

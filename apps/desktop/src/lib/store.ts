@@ -37,8 +37,14 @@ interface StudioState {
   phase: Phase;
   appClient: { name: string; platform: string } | null;
   providers: ProviderDescriptor[];
-  /** chaves por `${providerId} ${instanceId}` */
+  /** chaves por `${providerId} ${instanceId}` — só a janela já carregada */
   keys: Record<string, KeyEntry[]>;
+  /**
+   * Paginação da lista de chaves: cursor da próxima página e total real na
+   * instância. A UI mostra "N de total" e carrega o resto sob demanda —
+   * um device com 1M de chaves nunca entra inteiro na memória do Studio.
+   */
+  keysMeta: Record<string, { nextAfterKey: string | null; total: number }>;
   activity: ActivityItem[];
   selection: Selection | null;
   selectedKey: string | null;
@@ -66,7 +72,12 @@ interface StudioState {
   setAppClient(client: StudioState["appClient"]): void;
   setProviders(providers: ProviderDescriptor[]): void;
   upsertProvider(provider: ProviderDescriptor): void;
-  setKeys(providerId: string, instanceId: string, entries: KeyEntry[]): void;
+  setKeys(
+    providerId: string,
+    instanceId: string,
+    page: { entries: KeyEntry[]; nextAfterKey: string | null; total: number },
+    mode: "replace" | "append",
+  ): void;
   applyChange(input: {
     providerId: string;
     providerLabel: string;
@@ -109,6 +120,7 @@ export const useStudio = create<StudioState>((set) => ({
   appClient: null,
   providers: [],
   keys: {},
+  keysMeta: {},
   activity: [],
   selection: null,
   selectedKey: null,
@@ -133,25 +145,61 @@ export const useStudio = create<StudioState>((set) => ({
       ].sort((a, b) => a.label.localeCompare(b.label)),
     })),
 
-  setKeys: (providerId, instanceId, entries) =>
-    set((state) => ({
-      keys: { ...state.keys, [keysId(providerId, instanceId)]: entries },
-    })),
+  setKeys: (providerId, instanceId, page, mode) =>
+    set((state) => {
+      const id = keysId(providerId, instanceId);
+      let entries = page.entries;
+      if (mode === "append") {
+        // Páginas são disjuntas por cursor, mas eventos podem ter inserido
+        // chaves na janela — dedupe por chave, a versão nova vence.
+        const merged = new Map((state.keys[id] ?? []).map((e) => [e.key, e]));
+        for (const entry of page.entries) merged.set(entry.key, entry);
+        entries = [...merged.values()].sort((a, b) =>
+          a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
+        );
+      }
+      return {
+        keys: { ...state.keys, [id]: entries },
+        keysMeta: {
+          ...state.keysMeta,
+          [id]: { nextAfterKey: page.nextAfterKey, total: page.total },
+        },
+      };
+    }),
 
   applyChange: (input) =>
     set((state) => {
       const id = keysId(input.providerId, input.instanceId);
       const current = state.keys[id];
+      const meta = state.keysMeta[id];
       let nextEntries = current;
+      let nextMeta = meta;
       if (current) {
         if (input.change === "removed") {
-          nextEntries = current.filter((e) => e.key !== input.key);
+          const existed = current.some((e) => e.key === input.key);
+          nextEntries = existed ? current.filter((e) => e.key !== input.key) : current;
+          if (meta && meta.total > 0) {
+            nextMeta = { ...meta, total: meta.total - 1 };
+          }
         } else if (input.entry) {
           const entry = input.entry;
           const exists = current.some((e) => e.key === entry.key);
-          nextEntries = exists
-            ? current.map((e) => (e.key === entry.key ? entry : e))
-            : [...current, entry].sort((a, b) => a.key.localeCompare(b.key));
+          if (exists) {
+            nextEntries = current.map((e) => (e.key === entry.key ? entry : e));
+          } else if (meta?.nextAfterKey != null && entry.key > meta.nextAfterKey) {
+            // Chave além da janela carregada: não inserir fora de ordem —
+            // ela aparece quando aquela página for carregada.
+            if (input.change === "created") {
+              nextMeta = { ...meta, total: meta.total + 1 };
+            }
+          } else {
+            nextEntries = [...current, entry].sort((a, b) =>
+              a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
+            );
+            if (meta && input.change === "created") {
+              nextMeta = { ...meta, total: meta.total + 1 };
+            }
+          }
         }
       }
 
@@ -176,6 +224,10 @@ export const useStudio = create<StudioState>((set) => ({
 
       return {
         keys: nextEntries === current ? state.keys : { ...state.keys, [id]: nextEntries ?? [] },
+        keysMeta:
+          nextMeta === meta || nextMeta === undefined
+            ? state.keysMeta
+            : { ...state.keysMeta, [id]: nextMeta },
         activity: [item, ...state.activity].slice(0, ACTIVITY_LIMIT),
         recentChanges: { ...state.recentChanges, [historyKey]: Date.now() },
         keyHistory: {

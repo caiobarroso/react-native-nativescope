@@ -105,8 +105,8 @@ describe("MMKV: tipos e instâncias", () => {
     await adapter.set("user", "só.no.user", { type: "string", value: "x" });
 
     expect(adapter.instances().map((i) => i.instanceId)).toEqual(["cache", "user"]);
-    expect(await adapter.listKeys("cache")).toHaveLength(0);
-    expect(await adapter.listKeys("user")).toHaveLength(1);
+    expect((await adapter.listKeys("cache")).entries).toHaveLength(0);
+    expect((await adapter.listKeys("user")).entries).toHaveLength(1);
   });
 
   it("registro de instância é idempotente por id", () => {

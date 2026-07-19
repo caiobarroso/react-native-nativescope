@@ -31,9 +31,23 @@ export function isKeyValueAdapter(adapter: ProviderAdapter): adapter is KeyValue
   return adapter.capabilities.includes("key-value.read");
 }
 
+/** Uma página da listagem de chaves — ver key-pagination.ts. */
+export interface KeyListPage {
+  entries: KeyEntry[];
+  nextAfterKey: string | null;
+  total: number;
+}
+
 /** Contrato de um adapter key-value. */
 export interface KeyValueAdapter extends ProviderAdapter {
-  listKeys(instanceId: string): Promise<KeyEntry[]>;
+  /**
+   * Lista uma PÁGINA de chaves. O adapter só lê os valores da janela pedida
+   * — nunca materializa o dataset inteiro (orçamento: memória O(página)).
+   */
+  listKeys(
+    instanceId: string,
+    options?: { afterKey?: string; limit?: number },
+  ): Promise<KeyListPage>;
   get(instanceId: string, key: string): Promise<StorageValue | null>;
   set(instanceId: string, key: string, value: StorageValue): Promise<void>;
   remove(instanceId: string, key: string): Promise<void>;

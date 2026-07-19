@@ -12,12 +12,13 @@ import {
   type CellValue,
   type CommandMessage,
   type ExecuteResult,
+  type KeyEntry,
   type Row,
   type RowRef,
   type StorageValue,
 } from "@rnsi/protocol";
 import { createTransport, type Transport } from "@rnsi/runtime";
-import { useStudio } from "./store.ts";
+import { useStudio, keysId } from "./store.ts";
 
 /**
  * Cliente do Studio. Único ponto da UI que toca o WebSocket — nenhum
@@ -228,14 +229,31 @@ export async function refreshProviders(): Promise<void> {
   if (parsed.success) useStudio.getState().setProviders(parsed.data.providers);
 }
 
+/** Tamanho de página da lista de chaves — mantém cada resposta leve. */
+const KEY_PAGE_LIMIT = 200;
+
 export async function loadKeys(providerId: string, instanceId: string): Promise<void> {
   const result = await sendCommand({
     type: "key-value.list",
-    payload: { providerId, instanceId },
+    payload: { providerId, instanceId, limit: KEY_PAGE_LIMIT },
   });
   const parsed = keyValueListResultSchema.safeParse(result);
   if (parsed.success) {
-    useStudio.getState().setKeys(providerId, instanceId, parsed.data.entries);
+    useStudio.getState().setKeys(providerId, instanceId, parsed.data, "replace");
+  }
+}
+
+/** Próxima página, anexada à janela já carregada. No-op na última página. */
+export async function loadMoreKeys(providerId: string, instanceId: string): Promise<void> {
+  const meta = useStudio.getState().keysMeta[keysId(providerId, instanceId)];
+  if (!meta?.nextAfterKey) return;
+  const result = await sendCommand({
+    type: "key-value.list",
+    payload: { providerId, instanceId, afterKey: meta.nextAfterKey, limit: KEY_PAGE_LIMIT },
+  });
+  const parsed = keyValueListResultSchema.safeParse(result);
+  if (parsed.success) {
+    useStudio.getState().setKeys(providerId, instanceId, parsed.data, "append");
   }
 }
 
@@ -275,14 +293,33 @@ export async function removeKey(
   });
 }
 
-/** Variante da listagem que devolve os dados (busca global) em vez de gravar no store. */
-export async function fetchAllKeys(providerId: string, instanceId: string) {
-  const result = await sendCommand({
-    type: "key-value.list",
-    payload: { providerId, instanceId },
-  });
-  const parsed = keyValueListResultSchema.safeParse(result);
-  return parsed.success ? parsed.data.entries : [];
+/**
+ * Varredura paginada da listagem (busca global, snapshots) — devolve os
+ * dados em vez de gravar no store. Limitada por maxEntries para nunca puxar
+ * um dataset GB inteiro; quem chama decide se o recorte basta.
+ */
+export async function fetchAllKeys(
+  providerId: string,
+  instanceId: string,
+  options?: { maxEntries?: number },
+): Promise<{ entries: KeyEntry[]; complete: boolean; total: number }> {
+  const maxEntries = options?.maxEntries ?? 2000;
+  const entries: KeyEntry[] = [];
+  let afterKey: string | undefined;
+  let total = 0;
+  for (;;) {
+    const result = await sendCommand({
+      type: "key-value.list",
+      payload: { providerId, instanceId, ...(afterKey ? { afterKey } : {}), limit: 500 },
+    });
+    const parsed = keyValueListResultSchema.safeParse(result);
+    if (!parsed.success) return { entries, complete: false, total };
+    entries.push(...parsed.data.entries);
+    total = parsed.data.total;
+    if (parsed.data.nextAfterKey === null) return { entries, complete: true, total };
+    if (entries.length >= maxEntries) return { entries, complete: false, total };
+    afterKey = parsed.data.nextAfterKey;
+  }
 }
 
 export async function fetchAllTables(providerId: string, instanceId: string) {

@@ -4,10 +4,18 @@ export {
   type ProviderAdapter,
   type KeyValueAdapter,
   type KeyValueChange,
+  type KeyListPage,
   type DatabaseAdapter,
   type DatabaseChange,
 } from "./adapter.ts";
 export { createMemoryAdapter, toKeyEntry } from "./memory-adapter.ts";
+export {
+  pageOfKeys,
+  breathe,
+  DEFAULT_KEY_PAGE_LIMIT,
+  MAX_KEY_PAGE_LIMIT,
+  KEY_READ_BATCH,
+} from "./key-pagination.ts";
 export { createRegistry, type AdapterRegistry } from "./registry.ts";
 export { handleCommand } from "./command-handler.ts";
 export {

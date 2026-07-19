@@ -16,6 +16,8 @@ import {
 } from "./studio-client.ts";
 
 export const SQLITE_SNAPSHOT_ROW_LIMIT = 500;
+/** Teto de chaves por instância num snapshot — além disso, snapshot parcial. */
+export const KEY_VALUE_SNAPSHOT_KEY_LIMIT = 2000;
 
 export interface KeyValueSnapshotItem {
   key: string;
@@ -187,7 +189,14 @@ async function captureKeyValueStore(
   const errors: string[] = [];
   const keys: KeyValueSnapshotItem[] = [];
   try {
-    const entries = await fetchAllKeys(provider.providerId, instanceId);
+    const { entries, complete } = await fetchAllKeys(provider.providerId, instanceId, {
+      maxEntries: KEY_VALUE_SNAPSHOT_KEY_LIMIT,
+    });
+    if (!complete) {
+      errors.push(
+        `instância com mais de ${KEY_VALUE_SNAPSHOT_KEY_LIMIT} chaves — snapshot parcial (${entries.length} capturadas)`,
+      );
+    }
     const values = await mapLimit(entries, 8, async (entry) => {
       try {
         const value = await getValue(provider.providerId, instanceId, entry.key);
