@@ -9,6 +9,7 @@ import {
   databaseTablesResultSchema,
   databaseRowsResultSchema,
   databaseExecuteResultSchema,
+  databaseCellResultSchema,
   type AnyMessage,
   type CellValue,
   type CommandMessage,
@@ -515,14 +516,41 @@ export async function loadRows(
   providerId: string,
   instanceId: string,
   table: string,
-  options: { limit: number; offset: number; orderBy?: string; direction?: "asc" | "desc" },
-): Promise<{ rows: Row[]; total: number } | null> {
+  options: {
+    limit: number;
+    offset: number;
+    /** Cursor keyset — página N custa o mesmo que a página 1 no device. */
+    afterRowid?: number;
+    orderBy?: string;
+    direction?: "asc" | "desc";
+  },
+): Promise<{ rows: Row[]; total: number; totalIsEstimate?: boolean } | null> {
   const result = await sendCommand({
     type: "database.rows",
     payload: { providerId, instanceId, table, ...options },
   });
   const parsed = databaseRowsResultSchema.safeParse(result);
   return parsed.success ? parsed.data : null;
+}
+
+/** Conteúdo COMPLETO de uma célula (BLOB/texto grande) via stream. */
+export async function getFullCell(
+  providerId: string,
+  instanceId: string,
+  table: string,
+  ref: RowRef,
+  column: string,
+  options?: { onProgress?: (received: number, total: number) => void },
+): Promise<{ data: string; kind: "text" | "blob" | "number" } | null> {
+  const result = await sendCommand({
+    type: "database.cell",
+    payload: { providerId, instanceId, table, ref, column },
+  });
+  const parsed = databaseCellResultSchema.safeParse(result);
+  if (!parsed.success) throw new Error("resposta inválida do runtime");
+  if (parsed.data.streamId === null) return null;
+  const data = await awaitStream(parsed.data.streamId, parsed.data.totalSize, options?.onProgress);
+  return { data, kind: parsed.data.kind };
 }
 
 export async function updateCell(

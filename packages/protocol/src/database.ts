@@ -27,6 +27,8 @@ export const tableSchema = z.object({
   name: z.string(),
   columns: z.array(columnSchema),
   rowCount: z.number().int().nonnegative(),
+  /** true quando rowCount é estimativa rápida (MAX(rowid)); o exato chega no refresh seguinte. */
+  rowCountIsEstimate: z.boolean().optional(),
   /**
    * Identidade estável para edição: rowid, PK declarada, ou nenhuma.
    * Sem identidade → a UI trata como somente leitura e diz o porquê.
@@ -46,6 +48,9 @@ export const rowSchema = z.object({
   /** null quando a tabela não tem identidade estável. */
   ref: rowRefSchema.nullable(),
   cells: z.record(cellValueSchema),
+  /** Colunas cujo valor foi cortado no limite de preview de célula —
+   * o conteúdo completo vem via database.cell (streaming). */
+  truncatedColumns: z.array(z.string()).optional(),
 });
 export type Row = z.infer<typeof rowSchema>;
 
@@ -60,5 +65,13 @@ export const databaseTablesResultSchema = z.object({ tables: z.array(tableSchema
 export const databaseRowsResultSchema = z.object({
   rows: z.array(rowSchema),
   total: z.number().int().nonnegative(),
+  /** true quando total é estimativa (o COUNT exato roda em background). */
+  totalIsEstimate: z.boolean().optional(),
 });
 export const databaseExecuteResultSchema = z.object({ result: executeResultSchema });
+export const databaseCellResultSchema = z.object({
+  /** null quando a célula é NULL/inexistente. Chunks chegam via stream.*. */
+  streamId: z.string().nullable(),
+  kind: z.enum(["text", "blob", "number"]),
+  totalSize: z.number().int().nonnegative(),
+});

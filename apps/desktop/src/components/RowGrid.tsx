@@ -35,7 +35,7 @@ import {
 } from "@tanstack/react-table";
 import type { CellValue, Row, RowRef, TableSchema } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
-import { deleteRow, insertRow, loadRows, updateCell } from "../lib/studio-client.ts";
+import { deleteRow, getFullCell, insertRow, loadRows, updateCell } from "../lib/studio-client.ts";
 import { JsonWorkspace } from "./ValueEditor.tsx";
 
 const PAGE = 50;
@@ -474,6 +474,8 @@ export function RowGrid() {
 
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalIsEstimate, setTotalIsEstimate] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ ref: RowRef; column: string; draft: string } | null>(
@@ -533,6 +535,7 @@ export function RowGrid() {
         if (page) {
           setRows(page.rows);
           setTotal(page.total);
+          setTotalIsEstimate(page.totalIsEstimate ?? false);
         }
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -541,6 +544,58 @@ export function RowGrid() {
       }
     },
     [selection, selectedTable, sorting, schema?.columns],
+  );
+
+  /**
+   * Próxima página ANEXADA à janela: keyset (rowid > último) quando não há
+   * ordenação — página 100k custa igual à página 1 no device. Com ordenação,
+   * OFFSET real (nunca o refetch-do-zero com limit crescente).
+   */
+  const loadMore = useCallback(async () => {
+    if (!selection || !selectedTable || loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const sort = sorting[0];
+      const orderBy = sort
+        ? schema?.columns.find((column) => column.name === sort.id)?.name
+        : undefined;
+      const last = rows[rows.length - 1];
+      const keysetCursor =
+        !orderBy && last?.ref && "rowid" in last.ref ? last.ref.rowid : undefined;
+      const page = await loadRows(selection.providerId, selection.instanceId, selectedTable, {
+        limit: PAGE,
+        offset: keysetCursor !== undefined ? 0 : rows.length,
+        ...(keysetCursor !== undefined ? { afterRowid: keysetCursor } : {}),
+        ...(orderBy ? { orderBy, direction: sort?.desc ? "desc" : "asc" } : {}),
+      });
+      if (page) {
+        setRows((current) => [...current, ...page.rows]);
+        setTotal(page.total);
+        setTotalIsEstimate(page.totalIsEstimate ?? false);
+        limitRef.current = rows.length + page.rows.length;
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [selection, selectedTable, sorting, schema?.columns, rows, loadingMore]);
+
+  /** Célula truncada: busca o conteúdo completo via stream antes de usar. */
+  const loadFullCellText = useCallback(
+    async (ref: RowRef, column: string): Promise<string | null> => {
+      if (!selection || !selectedTable) return null;
+      const cell = await getFullCell(
+        selection.providerId,
+        selection.instanceId,
+        selectedTable,
+        ref,
+        column,
+      );
+      return cell?.data ?? null;
+    },
+    [selection, selectedTable],
   );
 
   useEffect(() => {
@@ -668,9 +723,13 @@ export function RowGrid() {
         try {
           await deleteRow(selection.providerId, selection.instanceId, selectedTable, ref);
           setConfirmingDelete(null);
+          // Linha com célula truncada: o undo re-inseriria dados cortados.
+          const undoSafe = deleted && (deleted.truncatedColumns?.length ?? 0) === 0;
           showToast({
-            message: "Linha deletada",
-            undo: deleted
+            message: undoSafe
+              ? "Linha deletada"
+              : "Linha deletada (sem desfazer: célula grande truncada)",
+            undo: undoSafe && deleted
               ? async () => {
                   await insertRow(
                     selection.providerId,
@@ -704,6 +763,8 @@ export function RowGrid() {
         cell: ({ getValue, row }) => {
           const value = getValue<CellValue>() ?? null;
           const rowRef = row.original.ref;
+          const isTruncated =
+            row.original.truncatedColumns?.includes(schemaColumn.name) ?? false;
           const isEditing =
             editing !== null &&
             sameRef(editing.ref, rowRef) &&
@@ -725,7 +786,7 @@ export function RowGrid() {
             );
           }
 
-          const canOpenJson = rowRef !== null && isJsonCell(value, schemaColumn);
+          const canOpenJson = rowRef !== null && !isTruncated && isJsonCell(value, schemaColumn);
 
           return (
             <div className="flex h-8 min-w-0 items-center">
@@ -733,6 +794,14 @@ export function RowGrid() {
                 type="button"
                 onDoubleClick={() => {
                   if (readOnly || rowRef === null) return;
+                  if (isTruncated) {
+                    // Editar sobre preview truncado corromperia — carrega o
+                    // conteúdo completo (stream) antes de abrir a edição.
+                    void loadFullCellText(rowRef, schemaColumn.name).then((full) => {
+                      if (full !== null) onStartEdit(rowRef, schemaColumn.name, full);
+                    });
+                    return;
+                  }
                   onStartEdit(rowRef, schemaColumn.name, value === null ? "" : cellText(value));
                 }}
                 title={value === null ? "NULL" : cellText(value)}
@@ -759,6 +828,33 @@ export function RowGrid() {
                   className="mr-1 shrink-0 rounded p-1 text-text-subtle opacity-70 hover:bg-accent-wash hover:text-accent group-hover:opacity-100"
                 >
                   <Braces size={12} strokeWidth={1.5} />
+                </button>
+              )}
+              {isTruncated && rowRef !== null && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void loadFullCellText(rowRef, schemaColumn.name).then((full) => {
+                      if (full === null) return;
+                      try {
+                        JSON.parse(full);
+                        setJsonError(null);
+                        setJsonCell({
+                          ref: rowRef,
+                          column: schemaColumn.name,
+                          table: selectedTable ?? "",
+                          original: full,
+                          draft: jsonDraft(full),
+                        });
+                      } catch {
+                        if (!readOnly) onStartEdit(rowRef, schemaColumn.name, full);
+                      }
+                    });
+                  }}
+                  title="Célula grande (preview) — carregar conteúdo completo"
+                  className="mr-1 shrink-0 rounded px-1 py-0.5 font-mono text-[10px] text-accent opacity-80 hover:bg-accent-wash group-hover:opacity-100"
+                >
+                  …+
                 </button>
               )}
             </div>
@@ -839,6 +935,7 @@ export function RowGrid() {
       allVisibleSelected,
       confirmingDelete,
       editing,
+      loadFullCellText,
       onAskDelete,
       onCancelEdit,
       onCommitEdit,
@@ -1043,8 +1140,12 @@ export function RowGrid() {
       />
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
         <span className="font-mono text-[12px] font-semibold">{selectedTable}</span>
-        <span className="text-[11px] tabular-nums text-text-subtle">
-          {rows.length} de {total}
+        <span
+          className="text-[11px] tabular-nums text-text-subtle"
+          title={totalIsEstimate ? "Contagem estimada — o valor exato chega no próximo refresh" : undefined}
+        >
+          {rows.length} de {totalIsEstimate ? "~" : ""}
+          {total}
         </span>
         {selectedVisibleRows.length > 0 && (
           <>
@@ -1212,13 +1313,13 @@ export function RowGrid() {
           )}
           {rows.length < total && (
             <button
-              onClick={() => {
-                limitRef.current += PAGE;
-                void refresh(limitRef.current);
-              }}
-              className="m-3 rounded-md border border-border px-3 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+              className="m-3 rounded-md border border-border px-3 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover disabled:opacity-50"
             >
-              Carregar mais ({rows.length} de {total})
+              {loadingMore
+                ? "Carregando…"
+                : `Carregar mais (${rows.length} de ${totalIsEstimate ? "~" : ""}${total})`}
             </button>
           )}
         </div>

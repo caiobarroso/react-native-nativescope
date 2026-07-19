@@ -80,8 +80,22 @@ export interface DatabaseAdapter extends ProviderAdapter {
   rows(
     instanceId: string,
     table: string,
-    options: { limit: number; offset: number; orderBy?: string; direction?: "asc" | "desc" },
-  ): Promise<{ rows: Row[]; total: number }>;
+    options: {
+      limit: number;
+      offset: number;
+      /** Cursor keyset (rowid, sem orderBy) — quando presente, offset é ignorado. */
+      afterRowid?: number;
+      orderBy?: string;
+      direction?: "asc" | "desc";
+    },
+  ): Promise<{ rows: Row[]; total: number; totalIsEstimate?: boolean }>;
+  /** Conteúdo completo de UMA célula — serializado para streaming. */
+  cell(
+    instanceId: string,
+    table: string,
+    ref: RowRef,
+    column: string,
+  ): Promise<{ data: string; kind: "text" | "blob" | "number" } | null>;
   update(
     instanceId: string,
     table: string,

@@ -31,6 +31,7 @@ export {
   databaseTablesResultSchema,
   databaseRowsResultSchema,
   databaseExecuteResultSchema,
+  databaseCellResultSchema,
   type CellValue,
   type TableSchema,
   type RowRef,

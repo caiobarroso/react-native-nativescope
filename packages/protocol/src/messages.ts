@@ -113,8 +113,25 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
       table: z.string(),
       limit: z.number().int().positive().max(500),
       offset: z.number().int().nonnegative(),
+      /**
+       * Cursor keyset (tabelas rowid, sem orderBy): página N custa o mesmo
+       * que a página 1 — OFFSET degrada linearmente, rowid > ? não.
+       * Quando presente, offset é ignorado.
+       */
+      afterRowid: z.number().int().optional(),
       orderBy: z.string().optional(),
       direction: z.enum(["asc", "desc"]).optional(),
+    }),
+  }),
+  // Célula completa via stream — BLOBs/textos grandes nunca passam pelo rows.
+  z.object({
+    ...commandBase,
+    type: z.literal("database.cell"),
+    payload: z.object({
+      ...kvTarget,
+      table: z.string(),
+      ref: rowRefSchema,
+      column: z.string(),
     }),
   }),
   z.object({

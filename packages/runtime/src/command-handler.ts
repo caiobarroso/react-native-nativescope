@@ -152,10 +152,32 @@ export async function handleCommand(
       case "database.tables":
         return succeed({ tables: await adapter.tables(command.payload.instanceId) });
       case "database.rows": {
-        const { instanceId, table, limit, offset, orderBy, direction } = command.payload;
+        const { instanceId, table, limit, offset, afterRowid, orderBy, direction } =
+          command.payload;
         return succeed(
-          await adapter.rows(instanceId, table, { limit, offset, orderBy, direction }),
+          await adapter.rows(instanceId, table, {
+            limit,
+            offset,
+            afterRowid,
+            orderBy,
+            direction,
+          }),
         );
+      }
+      case "database.cell": {
+        if (!context?.streams) {
+          return fail("internal", "streaming indisponível neste runtime");
+        }
+        const { instanceId, table, ref, column } = command.payload;
+        const cell = await adapter.cell(instanceId, table, ref, column);
+        if (cell === null) {
+          return succeed({ streamId: null, kind: "text", totalSize: 0 });
+        }
+        return succeed({
+          streamId: context.streams.streamText(cell.data),
+          kind: cell.kind,
+          totalSize: cell.data.length,
+        });
       }
       case "database.update":
         await adapter.update(

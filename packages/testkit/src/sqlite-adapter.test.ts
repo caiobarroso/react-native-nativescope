@@ -71,6 +71,60 @@ describe("expo-sqlite adapter", () => {
     expect(rest.rows).toHaveLength(1);
   });
 
+  it("keyset: afterRowid pagina sem OFFSET e mantém ordem por rowid", async () => {
+    const { adapter } = setup();
+    const first = await adapter.rows("app.db", "visits", { limit: 2, offset: 0 });
+    expect(first.rows.map((r) => r.ref)).toEqual([{ rowid: 1 }, { rowid: 2 }]);
+
+    const lastRef = first.rows[first.rows.length - 1]?.ref;
+    if (!lastRef || !("rowid" in lastRef)) throw new Error("ref esperada");
+    const second = await adapter.rows("app.db", "visits", {
+      limit: 2,
+      offset: 0,
+      afterRowid: lastRef.rowid,
+    });
+    expect(second.rows.map((r) => r.ref)).toEqual([{ rowid: 3 }]);
+  });
+
+  it("contagem em duas fases: estimativa imediata, exata após o background", async () => {
+    const { adapter, db } = setup();
+    // Cria buraco de rowid: MAX(rowid) ≠ COUNT(*)
+    await db.runAsync("DELETE FROM visits WHERE id = 2");
+
+    const first = await adapter.rows("app.db", "visits", { limit: 10, offset: 0 });
+    expect(first.total).toBe(3); // MAX(rowid) — estimativa
+    expect(first.totalIsEstimate).toBe(true);
+
+    // O COUNT(*) exato roda em background e popula o cache.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const second = await adapter.rows("app.db", "visits", { limit: 10, offset: 0 });
+    expect(second.total).toBe(2);
+    expect(second.totalIsEstimate).toBe(false);
+  });
+
+  it("célula grande chega truncada e marcada; database.cell devolve 100%", async () => {
+    const { adapter, db } = setup();
+    const big = "x".repeat(10_000);
+    await db.runAsync("UPDATE visits SET pdv = ? WHERE id = 1", [big]);
+
+    const page = await adapter.rows("app.db", "visits", { limit: 10, offset: 0 });
+    const row = page.rows.find((r) => r.ref && "rowid" in r.ref && r.ref.rowid === 1);
+    expect(row?.truncatedColumns).toEqual(["pdv"]);
+    expect((row?.cells["pdv"] as string).length).toBe(4096);
+
+    const cell = await adapter.cell("app.db", "visits", { rowid: 1 }, "pdv");
+    expect(cell?.kind).toBe("text");
+    expect(cell?.data).toBe(big);
+  });
+
+  it("cell devolve null para NULL e rejeita coluna desconhecida", async () => {
+    const { adapter } = setup();
+    expect(await adapter.cell("app.db", "visits", { rowid: 2 }, "startedAt")).toBeNull();
+    await expect(
+      adapter.cell("app.db", "visits", { rowid: 1 }, "nope; DROP TABLE visits"),
+    ).rejects.toThrow("coluna desconhecida");
+  });
+
   it("rejeita orderBy que não é coluna — sem injeção", async () => {
     const { adapter } = setup();
     await expect(

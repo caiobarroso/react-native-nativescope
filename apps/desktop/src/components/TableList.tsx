@@ -43,6 +43,7 @@ export function TableList() {
               />
             )}
             <span className="shrink-0 text-[10px] tabular-nums text-text-subtle">
+              {table.rowCountIsEstimate ? "~" : ""}
               {table.rowCount}
             </span>
           </button>

@@ -1,4 +1,11 @@
-import type { CellValue, ChangeSource, RowRef, TableSchema, Row } from "@rnsi/protocol";
+import {
+  CELL_PREVIEW_LIMIT,
+  type CellValue,
+  type ChangeSource,
+  type RowRef,
+  type TableSchema,
+  type Row,
+} from "@rnsi/protocol";
 import type { DatabaseAdapter, DatabaseChange } from "../adapter.ts";
 
 /**
@@ -29,6 +36,8 @@ const ECHO_TTL_MS = 800;
 const RECENT_EVENT_TTL_MS = 250;
 const DEFAULT_SELECT_LIMIT = 200;
 const ROWID_ALIAS = "__rnsi_rowid__";
+/** Contagem cacheada vale por este tempo além da invalidação por evento. */
+const COUNT_TTL_MS = 3000;
 
 /** Identificadores SQL sempre entre aspas duplas, escapadas. */
 function quoteIdent(name: string): string {
@@ -65,7 +74,14 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     /** Eventos recentes do hook/fallback, para não duplicar nativo + fallback. */
     recentEvents: Map<string, number>;
     /** Cache de identidade/colunas por tabela — ver tableInfo. */
-    schemaCache: Map<string, { identity: TableSchema["identity"]; columnNames: string[]; pkColumns: string[] }>;
+    schemaCache: Map<string, TableInfo>;
+    /**
+     * Contagem em duas fases (plano de grandes volumes §A3): estimativa
+     * imediata via MAX(rowid), COUNT(*) exato em background populando o
+     * cache. Um COUNT(*) numa tabela de milhões de linhas nunca fica no
+     * caminho crítico de uma resposta.
+     */
+    countCache: Map<string, { value: number; exact: boolean; expiresAt: number }>;
   }
 
   const tracked = new Map<string, Tracked>();
@@ -123,6 +139,7 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     operation: DatabaseChange["operation"],
     rowId: number | null,
   ): void {
+    invalidateCount(t, table);
     if (t.hasChangeListener) {
       t.pendingStudioWrites.set(table, Date.now() + ECHO_TTL_MS);
     } else {
@@ -145,6 +162,7 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     identity: TableSchema["identity"];
     columnNames: string[];
     pkColumns: string[];
+    columns: TableSchema["columns"];
   }
 
   /**
@@ -165,9 +183,63 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
         .filter((c) => Number(c["pk"]) > 0)
         .sort((a, b) => Number(a["pk"]) - Number(b["pk"]))
         .map((c) => String(c["name"])),
+      columns: columns.map((c) => ({
+        name: String(c["name"]),
+        declaredType: String(c["type"] ?? ""),
+        notNull: Number(c["notnull"]) === 1,
+        pkIndex: Number(c["pk"]),
+      })),
     };
     t.schemaCache.set(table, info);
     return info;
+  }
+
+  /**
+   * Contagem em duas fases. Tabela rowid sem cache: devolve MAX(rowid)
+   * (custo ~O(log n)) como estimativa AGORA e dispara o COUNT(*) exato em
+   * background — o refresh seguinte pega o valor exato do cache.
+   */
+  async function tableCount(
+    t: Tracked,
+    table: string,
+    identity: TableSchema["identity"],
+  ): Promise<{ total: number; exact: boolean }> {
+    const cached = t.countCache.get(table);
+    if (cached && cached.expiresAt > Date.now()) {
+      return { total: cached.value, exact: cached.exact };
+    }
+    if (identity === "rowid") {
+      const maxRow = await t.db.getAllAsync(
+        `SELECT MAX(rowid) AS m FROM ${quoteIdent(table)}`,
+      );
+      const estimate = Number(maxRow[0]?.["m"] ?? 0);
+      t.countCache.set(table, {
+        value: estimate,
+        exact: false,
+        expiresAt: Date.now() + COUNT_TTL_MS,
+      });
+      void t.db
+        .getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`)
+        .then((row) => {
+          t.countCache.set(table, {
+            value: Number(row[0]?.["n"] ?? 0),
+            exact: true,
+            expiresAt: Date.now() + COUNT_TTL_MS,
+          });
+        })
+        .catch(() => {});
+      return { total: estimate, exact: false };
+    }
+    const row = await t.db.getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`);
+    const total = Number(row[0]?.["n"] ?? 0);
+    t.countCache.set(table, { value: total, exact: true, expiresAt: Date.now() + COUNT_TTL_MS });
+    return { total, exact: true };
+  }
+
+  /** Mudança na tabela: a contagem cacheada deixou de valer. */
+  function invalidateCount(t: Tracked, table: string): void {
+    if (table === "*") t.countCache.clear();
+    else t.countCache.delete(table);
   }
 
   function refToWhere(ref: RowRef): { clause: string; params: Array<string | number | null> } {
@@ -201,6 +273,7 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
         pendingStudioWrites: new Map(),
         recentEvents: new Map(),
         schemaCache: new Map(),
+        countCache: new Map(),
       });
       for (const listener of registrationListeners) listener();
     },
@@ -213,6 +286,7 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     notifyNativeChange(instanceId, table, rowId) {
       const t = tracked.get(instanceId);
       if (!t) return;
+      invalidateCount(t, table);
       const source: ChangeSource = consumeStudioEcho(t, table) ? "studio" : "app";
       // O hook do expo-sqlite entrega {table, rowId} mas NÃO a operação.
       emitOnce(t, { table, rowId, operation: "unknown", source });
@@ -221,6 +295,7 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     notifyAppMutation(instanceId, table, rowId) {
       const t = tracked.get(instanceId);
       if (!t) return;
+      invalidateCount(t, table);
       const source: ChangeSource = consumeStudioEcho(t, table) ? "studio" : "app";
       emitOnce(t, { table, rowId, operation: "unknown", source });
     },
@@ -233,27 +308,23 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
     },
 
     async tables(instanceId) {
-      const { db } = get(instanceId);
-      const names = await db.getAllAsync(
+      const t = get(instanceId);
+      const names = await t.db.getAllAsync(
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
       );
       const result: TableSchema[] = [];
       for (const row of names) {
         const name = String(row["name"]);
-        const columnsRaw = await db.getAllAsync(`PRAGMA table_info(${quoteIdent(name)})`);
-        const countRow = await db.getAllAsync(
-          `SELECT COUNT(*) AS n FROM ${quoteIdent(name)}`,
-        );
+        // Colunas e identidade vêm do cache; contagem em duas fases — o
+        // refresh de schema não custa um COUNT(*) full-scan por tabela.
+        const info = await tableInfo(t, name);
+        const count = await tableCount(t, name, info.identity);
         result.push({
           name,
-          columns: columnsRaw.map((c) => ({
-            name: String(c["name"]),
-            declaredType: String(c["type"] ?? ""),
-            notNull: Number(c["notnull"]) === 1,
-            pkIndex: Number(c["pk"]),
-          })),
-          rowCount: Number(countRow[0]?.["n"] ?? 0),
-          identity: (await tableInfo(get(instanceId), name)).identity,
+          columns: info.columns,
+          rowCount: count.total,
+          rowCountIsEstimate: !count.exact,
+          identity: info.identity,
         });
       }
       return result;
@@ -277,20 +348,54 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
         identity === "rowid"
           ? `SELECT rowid AS ${ROWID_ALIAS}, * FROM ${quoteIdent(table)}`
           : `SELECT * FROM ${quoteIdent(table)}`;
-      const raw = await db.getAllAsync(`${select}${orderClause} LIMIT ? OFFSET ?`, [
-        options.limit,
-        options.offset,
-      ]);
-      const countRow = await db.getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`);
+
+      // Keyset (rowid, sem orderBy): página 100.000 custa o mesmo que a
+      // página 1 — OFFSET percorre e descarta linhas, rowid > ? não.
+      const useKeyset = identity === "rowid" && !options.orderBy;
+      let raw: Array<Record<string, unknown>>;
+      if (useKeyset && options.afterRowid !== undefined) {
+        raw = await db.getAllAsync(
+          `${select} WHERE rowid > ? ORDER BY rowid LIMIT ?`,
+          [options.afterRowid, options.limit],
+        );
+      } else if (useKeyset) {
+        raw = await db.getAllAsync(`${select} ORDER BY rowid LIMIT ? OFFSET ?`, [
+          options.limit,
+          options.offset,
+        ]);
+      } else {
+        raw = await db.getAllAsync(`${select}${orderClause} LIMIT ? OFFSET ?`, [
+          options.limit,
+          options.offset,
+        ]);
+      }
+      const count = await tableCount(t, table, identity);
 
       const rows: Row[] = raw.map((record) => {
         const cells: Record<string, CellValue> = {};
+        const truncatedColumns: string[] = [];
         let rowid: number | null = null;
         for (const [column, value] of Object.entries(record)) {
           if (column === ROWID_ALIAS) {
             rowid = Number(value);
+            continue;
+          }
+          // Células grandes viajam truncadas — o conteúdo completo vem por
+          // database.cell via stream. A listagem nunca carrega um BLOB de
+          // 200 MB ou um JSON gigante inteiro.
+          const cell = toCell(value);
+          if (typeof cell === "string" && cell.length > CELL_PREVIEW_LIMIT) {
+            cells[column] = cell.slice(0, CELL_PREVIEW_LIMIT);
+            truncatedColumns.push(column);
+          } else if (
+            cell !== null &&
+            typeof cell === "object" &&
+            cell.blobBase64.length > CELL_PREVIEW_LIMIT
+          ) {
+            cells[column] = { blobBase64: cell.blobBase64.slice(0, CELL_PREVIEW_LIMIT) };
+            truncatedColumns.push(column);
           } else {
-            cells[column] = toCell(value);
+            cells[column] = cell;
           }
         }
         let ref: Row["ref"] = null;
@@ -301,10 +406,30 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
           for (const column of pkColumns) pk[column] = cells[column] ?? null;
           ref = { pk };
         }
-        return { ref, cells };
+        return truncatedColumns.length > 0 ? { ref, cells, truncatedColumns } : { ref, cells };
       });
 
-      return { rows, total: Number(countRow[0]?.["n"] ?? 0) };
+      return { rows, total: count.total, totalIsEstimate: !count.exact };
+    },
+
+    async cell(instanceId, table, ref, column) {
+      const t = get(instanceId);
+      const { columnNames } = await tableInfo(t, table);
+      if (!columnNames.includes(column)) {
+        throw new Error(`coluna desconhecida: ${column}`);
+      }
+      const where = refToWhere(ref);
+      const raw = await t.db.getAllAsync(
+        `SELECT ${quoteIdent(column)} AS v FROM ${quoteIdent(table)} WHERE ${where.clause} LIMIT 1`,
+        where.params,
+      );
+      const value = raw[0]?.["v"];
+      if (value === undefined || value === null) return null;
+      const cell = toCell(value);
+      if (cell === null) return null;
+      if (typeof cell === "number") return { data: String(cell), kind: "number" };
+      if (typeof cell === "string") return { data: cell, kind: "text" };
+      return { data: cell.blobBase64, kind: "blob" };
     },
 
     async update(instanceId, table, ref, set) {
@@ -377,8 +502,9 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       }
       // Mutação manual: o eco vem como "app"… a menos que marquemos. Sem
       // saber a tabela afetada, marcamos como studio via evento direto.
-      // Mutação manual pode ser DDL — invalida o cache de schema inteiro.
+      // Mutação manual pode ser DDL — invalida schema e contagens inteiros.
       t.schemaCache.clear();
+      t.countCache.clear();
       const result = await t.db.runAsync(trimmed);
       if (!t.hasChangeListener) {
         emit(t, { table: "*", rowId: null, operation: "unknown", source: "studio" });
