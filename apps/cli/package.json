@@ -15,7 +15,9 @@
   ],
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/cli.mjs --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.mjs",
+    "build": "pnpm build:cli && pnpm build:runtime-bundle",
+    "build:cli": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/cli.mjs --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.mjs",
+    "build:runtime-bundle": "esbuild ../../packages/runtime/src/index.ts --bundle --format=cjs --platform=neutral --main-fields=module,main --outfile=metro/shims/runtime-bundle.js --banner:js=\"/* gerado — @rnsi/runtime bundlado para os shims (__RNSI_SHIM__) */\"",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

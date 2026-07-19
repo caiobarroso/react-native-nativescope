@@ -4,71 +4,59 @@
  * Shim do AsyncStorage (marcador de bundle: __RNSI_SHIM__).
  *
  * Entregue pelo resolver do Metro no lugar de
- * `@react-native-async-storage/async-storage` em bundles de DEV. Embrulha os
- * métodos de escrita para emitir eventos ao Studio e re-exporta o resto.
+ * `@react-native-async-storage/async-storage` em bundles de DEV. Usa o
+ * adapter real do @rnsi/runtime (o mesmo dos contract tests) e instrumenta
+ * os métodos de escrita para notificar mudanças feitas pelo app.
  *
- * Este arquivo nunca pode aparecer num bundle de release — o resolver não o
- * entrega com `dev === false`, e o guard de CI varre o bundle atrás do
- * marcador acima.
+ * Nunca aparece em release: o resolver não entrega com dev === false, e o
+ * guard de CI varre o bundle pelo marcador.
  */
 
 // Resolvido pelo anti-loop para o módulo REAL:
 const real = require("@react-native-async-storage/async-storage");
-const session = require("__rnsi_session__");
+const { getRuntime, rnsi } = require("./_bootstrap.js");
 
 const AsyncStorage = real.default ?? real;
+const runtime = getRuntime();
 
-if (session && typeof session.port === "number" && typeof session.token === "string") {
+if (runtime) {
   try {
-    instrument(AsyncStorage, session);
-  } catch (error) {
-    // Ferramenta de dev nunca derruba o app do usuário.
-    console.warn("[storage-inspector] falha ao instrumentar AsyncStorage:", error);
-  }
-}
+    const adapter = rnsi.createAsyncStorageAdapter(AsyncStorage);
 
-function instrument(storage, { port, token }) {
-  const { startRuntime } = require("./_runtime-bridge.js");
-  const runtime = startRuntime({ port, token, platform: detectPlatform() });
-
-  /** Notifica o Studio de uma escrita feita PELO APP. Escritas vindas do
-   * Studio chegam pelo adapter (source: "studio") — aqui é a via do app. */
-  const notify = (key, change, value) => {
-    runtime.emitAppChange({ key, change, value });
-  };
-
-  const wrap = (name, fn) => {
-    const original = storage[name].bind(storage);
-    storage[name] = async (...args) => {
-      const result = await original(...args);
-      try {
-        fn(...args);
-      } catch {
-        /* nunca propaga erro de instrumentação */
-      }
-      return result;
+    // A notificação PRECISA ser síncrona logo após o método real — é o que
+    // torna a supressão de eco determinística (ver adapter).
+    const wrap = (name, notify) => {
+      if (typeof AsyncStorage[name] !== "function") return;
+      const original = AsyncStorage[name].bind(AsyncStorage);
+      AsyncStorage[name] = async (...args) => {
+        const result = await original(...args);
+        try {
+          notify(...args);
+        } catch {
+          /* instrumentação nunca propaga erro para o app */
+        }
+        return result;
+      };
     };
-  };
 
-  wrap("setItem", (key, value) => notify(key, "set", value));
-  wrap("removeItem", (key) => notify(key, "removed", null));
-  wrap("multiSet", (pairs) => {
-    for (const [key, value] of pairs) notify(key, "set", value);
-  });
-  wrap("multiRemove", (keys) => {
-    for (const key of keys) notify(key, "removed", null);
-  });
-  wrap("mergeItem", (key) => notify(key, "merged", null));
-  wrap("clear", () => notify("*", "cleared", null));
+    const note = (key, kind) => void adapter.notifyAppWrite(key, kind);
 
-  runtime.registerAsyncStorage(storage);
-}
+    wrap("setItem", (key) => note(key, "set"));
+    wrap("removeItem", (key) => note(key, "removed"));
+    wrap("mergeItem", (key) => note(key, "set"));
+    wrap("multiSet", (pairs) => {
+      for (const [key] of pairs) note(key, "set");
+    });
+    wrap("multiMerge", (pairs) => {
+      for (const [key] of pairs) note(key, "set");
+    });
+    wrap("multiRemove", (keys) => {
+      for (const key of keys) note(key, "removed");
+    });
 
-function detectPlatform() {
-  try {
-    return require("react-native").Platform.OS;
-  } catch {
-    return "unknown";
+    runtime.registry.register(adapter);
+  } catch (error) {
+    console.warn("[storage-inspector] falha ao instrumentar AsyncStorage:", error);
   }
 }
 

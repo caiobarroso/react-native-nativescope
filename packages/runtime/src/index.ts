@@ -14,3 +14,8 @@ export {
   type AsyncStorageAdapter,
   type AsyncStorageApi,
 } from "./adapters/async-storage.ts";
+export {
+  createMMKVAdapter,
+  type MMKVAdapter,
+  type MMKVInstanceLike,
+} from "./adapters/mmkv.ts";

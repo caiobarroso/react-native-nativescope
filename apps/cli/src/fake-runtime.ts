@@ -32,6 +32,24 @@ export function startFakeRuntime(options: { port: number; sessionToken: string }
     },
   });
 
+  // MMKV simulado: duas instâncias, valores tipados de verdade.
+  const mmkv = createMemoryAdapter({
+    providerId: "mmkv",
+    label: "MMKV",
+    instances: ["default", "user-cache"],
+    seed: {
+      default: {
+        "app.launchCount": { type: "number", value: 41 },
+        "app.lastVersion": { type: "string", value: "2.7.1" },
+        "flags.newNavigation": { type: "boolean", value: true },
+      },
+      "user-cache": {
+        "cache.avatarUrl": { type: "string", value: "https://cdn.example/u/caio.png" },
+        "cache.ttl": { type: "number", value: 3600 },
+      },
+    },
+  });
+
   const runtime = startRuntime({
     url: `ws://127.0.0.1:${options.port}`,
     sessionToken: options.sessionToken,
@@ -40,8 +58,10 @@ export function startFakeRuntime(options: { port: number; sessionToken: string }
   });
 
   runtime.registry.register(adapter);
+  runtime.registry.register(mmkv);
 
   let sessionCount = 7;
+  let launchCount = 41;
   let queue: string[] = [];
 
   const timers = [
@@ -74,6 +94,15 @@ export function startFakeRuntime(options: { port: number; sessionToken: string }
         value: sessionCount,
       });
     }, 13000),
+
+    // MMKV: launch count subindo — atividade em outro provider
+    setInterval(() => {
+      launchCount += 1;
+      mmkv.writeFromApp("default", "app.launchCount", {
+        type: "number",
+        value: launchCount,
+      });
+    }, 11000),
   ];
 
   return {

@@ -22,7 +22,7 @@ const SHIM_DIR = path.join(__dirname, "shims");
 /** módulo interceptado → arquivo de shim */
 const SHIM_TARGETS = {
   "@react-native-async-storage/async-storage": "async-storage.js",
-  // "react-native-mmkv": "mmkv.js",      // Fase 2
+  "react-native-mmkv": "mmkv.js",
   // "expo-sqlite": "expo-sqlite.js",     // Fase 3
 };
 

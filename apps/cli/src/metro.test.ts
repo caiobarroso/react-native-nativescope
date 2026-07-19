@@ -68,6 +68,13 @@ describe("withStorageInspector", () => {
     expect(result.filePath).toBe("/real/react");
   });
 
+  it("intercepta react-native-mmkv com o shim de auto-discovery", () => {
+    const wrapped = withStorageInspector({});
+    const { context } = fakeContext();
+    const result = wrapped.resolver.resolveRequest(context, "react-native-mmkv", "android");
+    expect(result.filePath).toBe(join(SHIM_DIR, "mmkv.js"));
+  });
+
   it("compõe resolveRequest existente do projeto em vez de substituir", () => {
     const custom: string[] = [];
     const wrapped = withStorageInspector({
