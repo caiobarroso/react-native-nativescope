@@ -21,8 +21,10 @@ export const KEY_VALUE_SNAPSHOT_KEY_LIMIT = 2000;
 
 export interface KeyValueSnapshotItem {
   key: string;
+  /** Pode ser um preview truncado (valor > limite do get) — ver `truncated`. */
   value: StorageValue;
   entry: KeyEntry;
+  truncated: boolean;
 }
 
 export interface RowSnapshotItem {
@@ -65,6 +67,8 @@ export interface KeyValueDiff {
   key: string;
   before: StorageValue | null;
   after: StorageValue | null;
+  /** true quando algum dos lados é preview truncado — restauração bloqueada. */
+  truncated: boolean;
 }
 
 export interface DatabaseTableDiff {
@@ -154,6 +158,10 @@ export async function restoreKeyDiff(diff: KeyValueDiff): Promise<void> {
     await removeKey(diff.providerId, diff.instanceId, diff.key);
     return;
   }
+  if (diff.truncated) {
+    // Escrever um preview truncado corromperia o dado real.
+    throw new Error("valor grande capturado como preview — restauração indisponível");
+  }
   if (diff.before) {
     await setValue(diff.providerId, diff.instanceId, diff.key, diff.before);
   }
@@ -199,8 +207,12 @@ async function captureKeyValueStore(
     }
     const values = await mapLimit(entries, 8, async (entry) => {
       try {
-        const value = await getValue(provider.providerId, instanceId, entry.key);
-        return value ? { key: entry.key, value, entry } : null;
+        // O snapshot guarda o preview (nunca puxa valores GB inteiros);
+        // um item truncado fica marcado e não é restaurável.
+        const preview = await getValue(provider.providerId, instanceId, entry.key);
+        return preview.value
+          ? { key: entry.key, value: preview.value, entry, truncated: preview.truncated }
+          : null;
       } catch (cause) {
         errors.push(`${entry.key}: ${errorMessage(cause)}`);
         return null;
@@ -296,14 +308,35 @@ function diffKeyValueStores(before: StorageSnapshot, after: StorageSnapshot): Ke
       const afterItem = afterKeys.get(id);
       const base = meta.get(id);
       if (!base) return [];
+      const truncated = (beforeItem?.truncated ?? false) || (afterItem?.truncated ?? false);
       if (!beforeItem && afterItem) {
-        return [{ kind: "key", change: "created", ...base, before: null, after: afterItem.value }];
+        return [
+          { kind: "key", change: "created", ...base, before: null, after: afterItem.value, truncated },
+        ];
       }
       if (beforeItem && !afterItem) {
-        return [{ kind: "key", change: "removed", ...base, before: beforeItem.value, after: null }];
+        return [
+          { kind: "key", change: "removed", ...base, before: beforeItem.value, after: null, truncated },
+        ];
       }
-      if (beforeItem && afterItem && stableStringify(beforeItem.value) !== stableStringify(afterItem.value)) {
-        return [{ kind: "key", change: "updated", ...base, before: beforeItem.value, after: afterItem.value }];
+      if (
+        beforeItem &&
+        afterItem &&
+        // O tamanho real entra na comparação: dois valores truncados com o
+        // mesmo prefixo de preview ainda diferem se o tamanho mudou.
+        (beforeItem.entry.approxSize !== afterItem.entry.approxSize ||
+          stableStringify(beforeItem.value) !== stableStringify(afterItem.value))
+      ) {
+        return [
+          {
+            kind: "key",
+            change: "updated",
+            ...base,
+            before: beforeItem.value,
+            after: afterItem.value,
+            truncated,
+          },
+        ];
       }
       return [];
     })

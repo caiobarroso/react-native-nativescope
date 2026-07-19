@@ -7,6 +7,7 @@ import {
 } from "@rnsi/protocol";
 import { createRegistry, type AdapterRegistry } from "./registry.ts";
 import { handleCommand } from "./command-handler.ts";
+import { createStreamHub } from "./streams.ts";
 import { createTransport, type Transport, type WebSocketLike } from "./transport.ts";
 import { isDatabaseAdapter, isKeyValueAdapter, type ProviderAdapter } from "./adapter.ts";
 import { emitAppDevtoolsChange } from "./app-devtools.ts";
@@ -44,6 +45,9 @@ export function startRuntime(options: RuntimeOptions): Runtime {
   function sendEvent(event: EventMessage): void {
     if (handshakeDone) send(event);
   }
+
+  // Valores grandes saem em chunks — ver streams.ts.
+  const streams = createStreamHub(sendEvent);
 
   function providerDescriptor(adapter: ProviderAdapter) {
     return {
@@ -169,7 +173,7 @@ export function startRuntime(options: RuntimeOptions): Runtime {
         return;
       }
       if (message.kind === "command") {
-        send(await handleCommand(registry, message));
+        send(await handleCommand(registry, message, { streams }));
       }
     },
   });

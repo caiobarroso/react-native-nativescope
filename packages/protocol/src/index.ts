@@ -1,4 +1,5 @@
 export { PROTOCOL_VERSION, DEFAULT_PORT } from "./version.ts";
+export { KEY_VALUE_PREVIEW_LIMIT, STREAM_CHUNK_SIZE, CELL_PREVIEW_LIMIT } from "./limits.ts";
 export {
   storageValueSchema,
   keyEntrySchema,
@@ -46,6 +47,7 @@ export {
   providerListResultSchema,
   keyValueListResultSchema,
   keyValueGetResultSchema,
+  keyValueGetFullResultSchema,
   eventMessageSchema,
   anyMessageSchema,
   parseMessage,

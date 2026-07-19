@@ -5,6 +5,7 @@ import {
   providerListResultSchema,
   keyValueListResultSchema,
   keyValueGetResultSchema,
+  keyValueGetFullResultSchema,
   databaseTablesResultSchema,
   databaseRowsResultSchema,
   databaseExecuteResultSchema,
@@ -17,7 +18,7 @@ import {
   type RowRef,
   type StorageValue,
 } from "@rnsi/protocol";
-import { createTransport, type Transport } from "@rnsi/runtime";
+import { createTransport, fnv1a32, type Transport } from "@rnsi/runtime";
 import { useStudio, keysId } from "./store.ts";
 
 /**
@@ -40,6 +41,95 @@ let transport: Transport | null = null;
 const pending = new Map<string, Pending>();
 let nextRequestId = 1;
 const tableRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Montagem de streams (valores grandes chegam em chunks — plano §B).
+ * O hash roda incrementalmente por chunk; nada aqui percorre o payload
+ * inteiro de uma vez na main thread.
+ */
+interface ActiveStream {
+  parts: string[];
+  received: number;
+  total: number;
+  hash: number;
+  onProgress?: (received: number, total: number) => void;
+  resolve: (data: string) => void;
+  reject: (error: Error) => void;
+  idleTimer: ReturnType<typeof setTimeout>;
+}
+
+const STREAM_IDLE_TIMEOUT_MS = 15_000;
+const activeStreams = new Map<string, ActiveStream>();
+
+function awaitStream(
+  streamId: string,
+  total: number,
+  onProgress?: (received: number, total: number) => void,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fail = (message: string) => {
+      activeStreams.delete(streamId);
+      reject(new Error(message));
+    };
+    const stream: ActiveStream = {
+      parts: [],
+      received: 0,
+      total,
+      hash: 0x811c9dc5,
+      onProgress,
+      resolve: (data) => {
+        activeStreams.delete(streamId);
+        resolve(data);
+      },
+      reject: (error) => {
+        activeStreams.delete(streamId);
+        reject(error);
+      },
+      idleTimer: setTimeout(() => fail("stream parado — o app parou de responder"), STREAM_IDLE_TIMEOUT_MS),
+    };
+    activeStreams.set(streamId, stream);
+  });
+}
+
+function handleStreamChunk(streamId: string, data: string): void {
+  const stream = activeStreams.get(streamId);
+  if (!stream) return;
+  clearTimeout(stream.idleTimer);
+  stream.idleTimer = setTimeout(
+    () => stream.reject(new Error("stream parado — o app parou de responder")),
+    STREAM_IDLE_TIMEOUT_MS,
+  );
+  stream.parts.push(data);
+  stream.received += data.length;
+  stream.hash = fnv1a32(data, stream.hash);
+  stream.onProgress?.(stream.received, stream.total);
+}
+
+function handleStreamEnd(payload: {
+  streamId: string;
+  ok: boolean;
+  checksum?: string | undefined;
+  error?: string | undefined;
+}): void {
+  const stream = activeStreams.get(payload.streamId);
+  if (!stream) return;
+  clearTimeout(stream.idleTimer);
+  if (!payload.ok) {
+    stream.reject(new Error(payload.error ?? "stream falhou no device"));
+    return;
+  }
+  if (payload.checksum && payload.checksum !== stream.hash.toString(16)) {
+    stream.reject(new Error("checksum divergente — transferência corrompida"));
+    return;
+  }
+  stream.resolve(stream.parts.join(""));
+}
+
+/** Cancela um stream: avisa o device (para de ler) e rejeita o lado local. */
+export function cancelStream(streamId: string): void {
+  void sendCommand({ type: "stream.cancel", payload: { streamId } }).catch(() => {});
+  activeStreams.get(streamId)?.reject(new Error("cancelado"));
+}
 
 function sessionToken(): string | null {
   return new URLSearchParams(window.location.search).get("token");
@@ -182,6 +272,14 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       return;
     }
 
+    case "stream.chunk":
+      handleStreamChunk(event.payload.streamId, event.payload.data);
+      return;
+
+    case "stream.end":
+      handleStreamEnd(event.payload);
+      return;
+
     case "database.changed": {
       const provider = store.providers.find(
         (p) => p.providerId === event.payload.providerId,
@@ -257,17 +355,86 @@ export async function loadMoreKeys(providerId: string, instanceId: string): Prom
   }
 }
 
+export interface ValuePreview {
+  value: StorageValue | null;
+  /** true quando o valor foi cortado no device — o completo vem via getFullValue. */
+  truncated: boolean;
+  totalSize: number;
+}
+
 export async function getValue(
   providerId: string,
   instanceId: string,
   key: string,
-): Promise<StorageValue | null> {
+): Promise<ValuePreview> {
   const result = await sendCommand({
     type: "key-value.get",
     payload: { providerId, instanceId, key },
   });
   const parsed = keyValueGetResultSchema.safeParse(result);
-  return parsed.success ? parsed.data.value : null;
+  return parsed.success ? parsed.data : { value: null, truncated: false, totalSize: 0 };
+}
+
+function materializeValue(type: StorageValue["type"], data: string): StorageValue {
+  switch (type) {
+    case "number":
+      return { type: "number", value: Number(data) };
+    case "boolean":
+      return { type: "boolean", value: data === "true" };
+    case "null":
+      return { type: "null", value: null };
+    case "string":
+    case "json":
+    case "buffer":
+      return { type, value: data };
+  }
+}
+
+/**
+ * Valor COMPLETO de uma chave, por streaming chunked — o caminho de
+ * "100% dos dados" para valores grandes. Cancelável via AbortSignal.
+ */
+export async function getFullValue(
+  providerId: string,
+  instanceId: string,
+  key: string,
+  options?: {
+    onProgress?: (received: number, total: number) => void;
+    signal?: AbortSignal;
+  },
+): Promise<StorageValue | null> {
+  const result = await sendCommand({
+    type: "key-value.get-full",
+    payload: { providerId, instanceId, key },
+  });
+  const parsed = keyValueGetFullResultSchema.safeParse(result);
+  if (!parsed.success) throw new Error("resposta inválida do runtime");
+  if (parsed.data.streamId === null) return null;
+
+  const streamId = parsed.data.streamId;
+  const onAbort = () => cancelStream(streamId);
+  options?.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const data = await awaitStream(streamId, parsed.data.totalSize, options?.onProgress);
+    return materializeValue(parsed.data.valueType, data);
+  } finally {
+    options?.signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
+ * get + get-full transparente: devolve sempre o valor íntegro. Use em fluxos
+ * que ESCREVEM a partir do valor lido (duplicar, restaurar) — nunca escreva
+ * a partir de um preview truncado.
+ */
+export async function getValueComplete(
+  providerId: string,
+  instanceId: string,
+  key: string,
+): Promise<StorageValue | null> {
+  const preview = await getValue(providerId, instanceId, key);
+  if (!preview.truncated) return preview.value;
+  return getFullValue(providerId, instanceId, key);
 }
 
 export async function setValue(

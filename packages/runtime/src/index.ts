@@ -17,7 +17,8 @@ export {
   KEY_READ_BATCH,
 } from "./key-pagination.ts";
 export { createRegistry, type AdapterRegistry } from "./registry.ts";
-export { handleCommand } from "./command-handler.ts";
+export { handleCommand, type CommandContext } from "./command-handler.ts";
+export { createStreamHub, fnv1a32, type StreamHub } from "./streams.ts";
 export {
   createTransport,
   type Transport,

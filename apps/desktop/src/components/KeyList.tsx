@@ -1,7 +1,13 @@
 import { Copy, Files, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import type { KeyEntry, StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
-import { getValue, loadKeys, loadMoreKeys, removeKey, setValue } from "../lib/studio-client.ts";
+import {
+  getValueComplete,
+  loadKeys,
+  loadMoreKeys,
+  removeKey,
+  setValue,
+} from "../lib/studio-client.ts";
 import { generateTypeScript } from "./ValueEditor.tsx";
 import { useState } from "react";
 
@@ -75,7 +81,8 @@ export function KeyList() {
 
   async function duplicateEntry(key: string): Promise<void> {
     if (!selection) return;
-    const value = await getValue(selection.providerId, selection.instanceId, key);
+    // Valor íntegro sempre — duplicar a partir de preview truncado corromperia.
+    const value = await getValueComplete(selection.providerId, selection.instanceId, key);
     if (!value) return;
     const nextKey = nextDuplicateName(key, keys);
     await setValue(selection.providerId, selection.instanceId, nextKey, value);
@@ -86,7 +93,7 @@ export function KeyList() {
 
   async function copySchema(key: string): Promise<void> {
     if (!selection) return;
-    const value = await getValue(selection.providerId, selection.instanceId, key);
+    const value = await getValueComplete(selection.providerId, selection.instanceId, key);
     if (!value) return;
     copyText(storageTypeSchema(key, value));
     setOpenMenu(null);

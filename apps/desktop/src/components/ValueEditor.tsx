@@ -27,13 +27,20 @@ import {
 } from "@tanstack/react-table";
 import type { StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
-import { getValue, setValue, removeKey } from "../lib/studio-client.ts";
+import { getFullValue, getValue, setValue, removeKey } from "../lib/studio-client.ts";
 
 const HISTORY_LABEL = {
   created: "criado",
   updated: "atualizado",
   removed: "removido",
 } as const;
+
+export function formatSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 type JsonRoot = Record<string, unknown> | unknown[];
 
@@ -1329,24 +1336,35 @@ export function ValueEditor() {
   const [boolDraft, setBoolDraft] = useState(false);
   const [state, setState] = useState<"loading" | "ready" | "saving">("loading");
   const [error, setError] = useState<string | null>(null);
+  /** Valor cortado no device (preview): tamanho real + progresso do load-full. */
+  const [truncatedInfo, setTruncatedInfo] = useState<{ totalSize: number } | null>(null);
+  const [fullLoad, setFullLoad] = useState<{ received: number; total: number } | null>(null);
+
+  function applyValue(value: StorageValue): void {
+    setDraftType(value.type);
+    if (value.type === "boolean") setBoolDraft(value.value);
+    else if (value.type === "json") {
+      try {
+        setDraft(JSON.stringify(JSON.parse(value.value), null, 2));
+      } catch {
+        // JSON truncado não parseia — mostra cru; o banner explica.
+        setDraft(value.value);
+      }
+    } else setDraft(value.type === "null" ? "" : String(value.value));
+  }
 
   useEffect(() => {
     if (!selection || !selectedKey) return;
     let cancelled = false;
     setState("loading");
     setError(null);
-    void getValue(selection.providerId, selection.instanceId, selectedKey).then((value) => {
+    setTruncatedInfo(null);
+    setFullLoad(null);
+    void getValue(selection.providerId, selection.instanceId, selectedKey).then((preview) => {
       if (cancelled) return;
-      if (value) {
-        setDraftType(value.type);
-        if (value.type === "boolean") setBoolDraft(value.value);
-        else if (value.type === "json") {
-          try {
-            setDraft(JSON.stringify(JSON.parse(value.value), null, 2));
-          } catch {
-            setDraft(value.value);
-          }
-        } else setDraft(value.type === "null" ? "" : String(value.value));
+      if (preview.value) {
+        applyValue(preview.value);
+        setTruncatedInfo(preview.truncated ? { totalSize: preview.totalSize } : null);
       }
       setState("ready");
     });
@@ -1354,6 +1372,25 @@ export function ValueEditor() {
       cancelled = true;
     };
   }, [selection, selectedKey]);
+
+  async function loadFullValue(): Promise<void> {
+    if (!selection || !selectedKey || fullLoad) return;
+    setFullLoad({ received: 0, total: truncatedInfo?.totalSize ?? 0 });
+    setError(null);
+    try {
+      const value = await getFullValue(selection.providerId, selection.instanceId, selectedKey, {
+        onProgress: (received, total) => setFullLoad({ received, total }),
+      });
+      if (value) {
+        applyValue(value);
+        setTruncatedInfo(null);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setFullLoad(null);
+    }
+  }
 
   if (selection && creating) {
     return <CreateKeyForm providerId={selection.providerId} instanceId={selection.instanceId} />;
@@ -1431,7 +1468,7 @@ export function ValueEditor() {
           {selectedKey}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-3 text-[11px] text-text-subtle">
-          {entry && <span>{entry.approxSize} B</span>}
+          {entry && <span>{formatSize(entry.approxSize)}</span>}
           <select
             value={draftType}
             onChange={(e) => {
@@ -1449,6 +1486,28 @@ export function ValueEditor() {
           </select>
         </span>
       </div>
+
+      {truncatedInfo && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-accent-wash px-4 py-1.5 text-[12px]">
+          <span className="text-text-muted">
+            Valor grande — mostrando um preview de 64 KB de{" "}
+            {formatSize(truncatedInfo.totalSize)}. Edição bloqueada até carregar tudo.
+          </span>
+          <button
+            onClick={() => void loadFullValue()}
+            disabled={fullLoad !== null}
+            className="ml-auto shrink-0 rounded-md border border-accent px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-accent hover:text-white disabled:opacity-60"
+          >
+            {fullLoad
+              ? `Carregando… ${
+                  fullLoad.total > 0
+                    ? `${Math.round((fullLoad.received / fullLoad.total) * 100)}%`
+                    : formatSize(fullLoad.received)
+                }`
+              : `Carregar tudo (${formatSize(truncatedInfo.totalSize)})`}
+          </button>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
         {state === "loading" ? (
@@ -1486,7 +1545,12 @@ export function ValueEditor() {
       <div className="flex h-11 shrink-0 items-center gap-2 border-t border-border px-4">
         <button
           onClick={() => void save()}
-          disabled={state !== "ready"}
+          disabled={state !== "ready" || truncatedInfo !== null}
+          title={
+            truncatedInfo
+              ? "Preview truncado — carregue o valor completo antes de salvar"
+              : undefined
+          }
           className="rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-50"
         >
           {state === "saving" ? "Salvando…" : "Salvar"}

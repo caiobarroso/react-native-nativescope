@@ -1,10 +1,59 @@
 import {
+  KEY_VALUE_PREVIEW_LIMIT,
   protocolError,
   type CommandMessage,
   type CommandResultMessage,
+  type StorageValue,
 } from "@rnsi/protocol";
 import type { AdapterRegistry } from "./registry.ts";
 import { isDatabaseAdapter, isKeyValueAdapter } from "./adapter.ts";
+import type { StreamHub } from "./streams.ts";
+
+/** Dependências opcionais de execução — streaming quando o transporte suporta. */
+export interface CommandContext {
+  streams?: StreamHub;
+}
+
+/**
+ * key-value.get devolve no máximo KEY_VALUE_PREVIEW_LIMIT chars — valor
+ * maior chega truncado com o tamanho real anunciado, e o completo vem por
+ * key-value.get-full via stream. Nenhuma resposta de get estoura o orçamento
+ * de mensagem, não importa o tamanho do dado no device.
+ */
+function withPreviewLimit(value: StorageValue | null): {
+  value: StorageValue | null;
+  truncated: boolean;
+  totalSize: number;
+} {
+  if (value === null) return { value: null, truncated: false, totalSize: 0 };
+  if (value.type === "string" || value.type === "json" || value.type === "buffer") {
+    const text = value.value;
+    if (text.length > KEY_VALUE_PREVIEW_LIMIT) {
+      return {
+        value: { ...value, value: text.slice(0, KEY_VALUE_PREVIEW_LIMIT) },
+        truncated: true,
+        totalSize: text.length,
+      };
+    }
+    return { value, truncated: false, totalSize: text.length };
+  }
+  return { value, truncated: false, totalSize: String(value.value).length };
+}
+
+/** Forma serializada que trafega nos chunks de get-full. */
+function serializeForStream(value: StorageValue): string {
+  switch (value.type) {
+    case "string":
+    case "json":
+    case "buffer":
+      return value.value;
+    case "number":
+    case "boolean":
+      return String(value.value);
+    case "null":
+      return "";
+  }
+}
 
 /**
  * Executa um command contra o registry e devolve o resultado.
@@ -13,6 +62,7 @@ import { isDatabaseAdapter, isKeyValueAdapter } from "./adapter.ts";
 export async function handleCommand(
   registry: AdapterRegistry,
   command: CommandMessage,
+  context?: CommandContext,
 ): Promise<CommandResultMessage> {
   const fail = (
     code: Parameters<typeof protocolError>[0],
@@ -36,6 +86,11 @@ export async function handleCommand(
       return succeed({ providers: registry.describe() });
     }
 
+    if (command.type === "stream.cancel") {
+      context?.streams?.cancel(command.payload.streamId);
+      return succeed({});
+    }
+
     const adapter = registry.get(command.payload.providerId);
     if (!adapter) {
       return fail("unknown-provider", `provider não registrado: ${command.payload.providerId}`);
@@ -44,6 +99,7 @@ export async function handleCommand(
     switch (command.type) {
       case "key-value.list":
       case "key-value.get":
+      case "key-value.get-full":
       case "key-value.set":
       case "key-value.remove": {
         if (!isKeyValueAdapter(adapter)) {
@@ -55,9 +111,26 @@ export async function handleCommand(
             return succeed(await adapter.listKeys(instanceId, { afterKey, limit }));
           }
           case "key-value.get":
+            return succeed(
+              withPreviewLimit(
+                await adapter.get(command.payload.instanceId, command.payload.key),
+              ),
+            );
+          case "key-value.get-full": {
+            if (!context?.streams) {
+              return fail("internal", "streaming indisponível neste runtime");
+            }
+            const value = await adapter.get(command.payload.instanceId, command.payload.key);
+            if (value === null) {
+              return succeed({ streamId: null, valueType: "null", totalSize: 0 });
+            }
+            const data = serializeForStream(value);
             return succeed({
-              value: await adapter.get(command.payload.instanceId, command.payload.key),
+              streamId: context.streams.streamText(data),
+              valueType: value.type,
+              totalSize: data.length,
             });
+          }
           case "key-value.set":
             await adapter.set(
               command.payload.instanceId,

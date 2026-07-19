@@ -76,6 +76,19 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("key-value.get"),
     payload: z.object({ ...kvTarget, key: z.string() }),
   }),
+  // Valor completo de uma chave, entregue via stream.* em chunks — é o
+  // caminho de "100% dos dados acessíveis" para valores grandes.
+  z.object({
+    ...commandBase,
+    type: z.literal("key-value.get-full"),
+    payload: z.object({ ...kvTarget, key: z.string() }),
+  }),
+  // Cancela um stream em andamento (usuário fechou o viewer, por exemplo).
+  z.object({
+    ...commandBase,
+    type: z.literal("stream.cancel"),
+    payload: z.object({ streamId: z.string() }),
+  }),
   z.object({
     ...commandBase,
     type: z.literal("key-value.set"),
@@ -177,6 +190,16 @@ export const keyValueListResultSchema = z.object({
 });
 export const keyValueGetResultSchema = z.object({
   value: storageValueSchema.nullable(),
+  /** true quando o valor foi cortado no limite de preview — o completo vem via get-full. */
+  truncated: z.boolean(),
+  /** Tamanho real do valor serializado (chars), truncado ou não. */
+  totalSize: z.number().int().nonnegative(),
+});
+export const keyValueGetFullResultSchema = z.object({
+  /** null quando a chave não existe. Os chunks chegam como events stream.*. */
+  streamId: z.string().nullable(),
+  valueType: z.enum(["string", "number", "boolean", "json", "buffer", "null"]),
+  totalSize: z.number().int().nonnegative(),
 });
 
 // ---------------------------------------------------------------------------
@@ -219,6 +242,29 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
       /** O hook do expo-sqlite não entrega a operação — "unknown" é honesto. */
       operation: z.enum(["insert", "update", "delete", "unknown"]),
       source: changeSourceSchema,
+    }),
+  }),
+  // Streaming chunked (plano de grandes volumes §B): valores grandes nunca
+  // viajam numa mensagem só. Ordem garantida pelo WS; seq é cinto extra.
+  z.object({
+    ...eventBase,
+    type: z.literal("stream.chunk"),
+    payload: z.object({
+      streamId: z.string(),
+      seq: z.number().int().nonnegative(),
+      data: z.string(),
+    }),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("stream.end"),
+    payload: z.object({
+      streamId: z.string(),
+      ok: z.boolean(),
+      chunkCount: z.number().int().nonnegative(),
+      /** FNV-1a 32-bit (hex) do conteúdo — integridade, não criptografia. */
+      checksum: z.string().optional(),
+      error: z.string().optional(),
     }),
   }),
   // Emitidos pelo serviço local, não pelo runtime:

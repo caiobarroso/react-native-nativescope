@@ -1,16 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  KEY_VALUE_PREVIEW_LIMIT,
   PROTOCOL_VERSION,
+  STREAM_CHUNK_SIZE,
   parseMessage,
   serializeMessage,
   type AnyMessage,
   type CommandMessage,
+  type EventMessage,
 } from "@rnsi/protocol";
 import { createMemoryAdapter } from "./memory-adapter.ts";
 import { createMMKVAdapter, type MMKVInstanceLike } from "./adapters/mmkv.ts";
 import { createRegistry } from "./registry.ts";
 import { startRuntime } from "./bootstrap.ts";
 import { handleCommand } from "./command-handler.ts";
+import { createStreamHub, fnv1a32 } from "./streams.ts";
 import type { WebSocketLike } from "./transport.ts";
 
 function command(partial: Pick<CommandMessage, "type" | "payload">): CommandMessage {
@@ -109,7 +113,11 @@ describe("command handler", () => {
     );
     expect(get.ok).toBe(true);
     if (get.ok) {
-      expect(get.result).toEqual({ value: { type: "json", value: '{"n":1}' } });
+      expect(get.result).toEqual({
+        value: { type: "json", value: '{"n":1}' },
+        truncated: false,
+        totalSize: 7,
+      });
     }
 
     const list = await handleCommand(
@@ -121,6 +129,93 @@ describe("command handler", () => {
       const { entries } = list.result as { entries: Array<{ key: string }> };
       expect(entries.map((e) => e.key)).toEqual(["user"]);
     }
+  });
+
+  it("get trunca valores acima do limite e anuncia o tamanho real", async () => {
+    const registry = createRegistry();
+    registry.register(createMemoryAdapter());
+    const target = { providerId: "memory", instanceId: "default" };
+    const big = "x".repeat(KEY_VALUE_PREVIEW_LIMIT + 10);
+
+    await handleCommand(
+      registry,
+      command({
+        type: "key-value.set",
+        payload: { ...target, key: "big", value: { type: "string", value: big } },
+      }),
+    );
+    const get = await handleCommand(
+      registry,
+      command({ type: "key-value.get", payload: { ...target, key: "big" } }),
+    );
+    expect(get.ok).toBe(true);
+    if (get.ok) {
+      const result = get.result as { value: { value: string }; truncated: boolean; totalSize: number };
+      expect(result.truncated).toBe(true);
+      expect(result.totalSize).toBe(big.length);
+      expect(result.value.value).toHaveLength(KEY_VALUE_PREVIEW_LIMIT);
+    }
+  });
+
+  it("get-full entrega 100% do valor em chunks com checksum válido", async () => {
+    const registry = createRegistry();
+    registry.register(createMemoryAdapter());
+    const target = { providerId: "memory", instanceId: "default" };
+    const big = "abc123".repeat(30_000); // ~180 KB → 3 chunks
+
+    await handleCommand(
+      registry,
+      command({
+        type: "key-value.set",
+        payload: { ...target, key: "big", value: { type: "string", value: big } },
+      }),
+    );
+
+    const events: EventMessage[] = [];
+    const streams = createStreamHub((event) => events.push(event));
+    const result = await handleCommand(
+      registry,
+      command({ type: "key-value.get-full", payload: { ...target, key: "big" } }),
+      { streams },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { streamId, totalSize } = result.result as { streamId: string; totalSize: number };
+    expect(totalSize).toBe(big.length);
+
+    // Espera o job de streaming (breathe entre chunks) terminar.
+    await vi.waitFor(() => {
+      expect(
+        events.some((e) => e.type === "stream.end" && e.payload.streamId === streamId),
+      ).toBe(true);
+    });
+
+    const chunks = events.filter(
+      (e): e is Extract<EventMessage, { type: "stream.chunk" }> => e.type === "stream.chunk",
+    );
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.payload.data.length).toBeLessThanOrEqual(STREAM_CHUNK_SIZE);
+    }
+    const data = chunks.map((c) => c.payload.data).join("");
+    expect(data).toBe(big);
+
+    const end = events.find(
+      (e): e is Extract<EventMessage, { type: "stream.end" }> => e.type === "stream.end",
+    );
+    expect(end?.payload.ok).toBe(true);
+    expect(end?.payload.checksum).toBe(fnv1a32(big).toString(16));
+  });
+
+  it("stream.cancel interrompe a transmissão", async () => {
+    const events: EventMessage[] = [];
+    const streams = createStreamHub((event) => events.push(event));
+    const streamId = streams.streamText("y".repeat(STREAM_CHUNK_SIZE * 5));
+    streams.cancel(streamId);
+    // Dá tempo para o job rodar (e provar que NÃO emitiu nada).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.filter((e) => e.type === "stream.chunk")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "stream.end")).toHaveLength(0);
   });
 
   it("erro estruturado para provider desconhecido — nunca lança", async () => {
