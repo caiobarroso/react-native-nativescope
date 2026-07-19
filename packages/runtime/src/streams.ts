@@ -18,6 +18,12 @@ export interface StreamHub {
    * O primeiro chunk só sai num tick futuro — o command-result que anuncia
    * o streamId sempre chega ao Studio antes dos chunks. */
   streamText(data: string): string;
+  /**
+   * Transmite uma FONTE incremental (export de GB): os pedaços produzidos
+   * são agregados em chunks de 64 KB e enviados conforme saem — nada é
+   * materializado inteiro na memória do device. Cancelar para a fonte.
+   */
+  streamFrom(source: () => AsyncIterable<string>): string;
   cancel(streamId: string): void;
 }
 
@@ -57,42 +63,65 @@ export function createStreamHub(emit: (event: EventMessage) => void): StreamHub 
     };
   }
 
+  function runStream(streamId: string, source: () => AsyncIterable<string>): void {
+    active.add(streamId);
+    void (async () => {
+      let seq = 0;
+      let hash = 0x811c9dc5;
+      let buffer = "";
+      const sendChunk = async (chunk: string): Promise<boolean> => {
+        await breathe();
+        if (cancelled.has(streamId)) return false;
+        hash = fnv1a32(chunk, hash);
+        emit(chunkEvent(streamId, seq++, chunk));
+        return true;
+      };
+      try {
+        for await (const piece of source()) {
+          if (cancelled.has(streamId)) return;
+          // Consumo por offset, nunca re-fatiando o restante a cada chunk —
+          // um piece de 100 MB custa O(n), não O(n²).
+          const combined = buffer.length > 0 ? buffer + piece : piece;
+          let offset = 0;
+          while (combined.length - offset >= STREAM_CHUNK_SIZE) {
+            const chunk = combined.slice(offset, offset + STREAM_CHUNK_SIZE);
+            offset += STREAM_CHUNK_SIZE;
+            if (!(await sendChunk(chunk))) return;
+          }
+          buffer = offset > 0 ? combined.slice(offset) : combined;
+        }
+        if (buffer.length > 0 && !(await sendChunk(buffer))) return;
+        await breathe();
+        if (cancelled.has(streamId)) return;
+        emit(endEvent({ streamId, ok: true, chunkCount: seq, checksum: hash.toString(16) }));
+      } catch (cause) {
+        emit(
+          endEvent({
+            streamId,
+            ok: false,
+            chunkCount: seq,
+            error: cause instanceof Error ? cause.message : String(cause),
+          }),
+        );
+      } finally {
+        active.delete(streamId);
+        cancelled.delete(streamId);
+      }
+    })();
+  }
+
   return {
     streamText(data) {
       const streamId = `stream-${nextId++}`;
-      active.add(streamId);
-      void (async () => {
-        let seq = 0;
-        let hash = 0x811c9dc5;
-        try {
-          for (let offset = 0; offset < data.length; offset += STREAM_CHUNK_SIZE) {
-            // Yield ANTES de cada chunk (inclusive o primeiro — garante a
-            // ordem result → chunks e fatia o trabalho de hash/serialização).
-            await breathe();
-            if (cancelled.has(streamId)) return;
-            const chunk = data.slice(offset, offset + STREAM_CHUNK_SIZE);
-            hash = fnv1a32(chunk, hash);
-            emit(chunkEvent(streamId, seq++, chunk));
-          }
-          await breathe();
-          if (cancelled.has(streamId)) return;
-          emit(
-            endEvent({ streamId, ok: true, chunkCount: seq, checksum: hash.toString(16) }),
-          );
-        } catch (cause) {
-          emit(
-            endEvent({
-              streamId,
-              ok: false,
-              chunkCount: seq,
-              error: cause instanceof Error ? cause.message : String(cause),
-            }),
-          );
-        } finally {
-          active.delete(streamId);
-          cancelled.delete(streamId);
-        }
-      })();
+      runStream(streamId, async function* () {
+        yield data;
+      });
+      return streamId;
+    },
+
+    streamFrom(source) {
+      const streamId = `stream-${nextId++}`;
+      runStream(streamId, source);
       return streamId;
     },
 

@@ -96,6 +96,23 @@ export interface DatabaseAdapter extends ProviderAdapter {
     ref: RowRef,
     column: string,
   ): Promise<{ data: string; kind: "text" | "blob" | "number" } | null>;
+  /**
+   * Busca executada no device: LIKE sobre as colunas das tabelas, devolvendo
+   * só matches. Buscar em GB sem transferir GB (plano §D).
+   */
+  search(
+    instanceId: string,
+    query: string,
+    limit: number,
+  ): Promise<{
+    matches: Array<{ table: string; ref: RowRef | null; snippet: string }>;
+    complete: boolean;
+  }>;
+  /**
+   * Itera TODAS as linhas de uma tabela com células íntegras, em páginas
+   * keyset — memória O(página). Alimenta o export streaming.
+   */
+  exportRows(instanceId: string, table: string): AsyncIterable<Record<string, CellValue>>;
   update(
     instanceId: string,
     table: string,

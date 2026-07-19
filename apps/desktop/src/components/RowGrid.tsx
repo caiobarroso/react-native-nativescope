@@ -5,6 +5,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Braces,
+  Download,
   Plus,
   RefreshCw,
   Table2,
@@ -36,7 +37,15 @@ import {
 } from "@tanstack/react-table";
 import type { CellValue, Row, RowRef, TableSchema } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
-import { deleteRow, getFullCell, insertRow, loadRows, updateCell } from "../lib/studio-client.ts";
+import {
+  deleteRow,
+  exportInstance,
+  getFullCell,
+  insertRow,
+  loadRows,
+  updateCell,
+} from "../lib/studio-client.ts";
+import { createFileSink } from "../lib/export.ts";
 import { JsonWorkspace } from "./ValueEditor.tsx";
 
 const PAGE = 50;
@@ -477,6 +486,7 @@ export function RowGrid() {
   const [total, setTotal] = useState(0);
   const [totalIsEstimate, setTotalIsEstimate] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [exporting, setExporting] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ ref: RowRef; column: string; draft: string } | null>(
@@ -1007,6 +1017,32 @@ export function RowGrid() {
     );
   }
 
+  async function exportTable(): Promise<void> {
+    if (!selection || !selectedTable || exporting !== null) return;
+    const sink = await createFileSink(`${selection.instanceId}-${selectedTable}.ndjson`);
+    if (!sink) return; // usuário cancelou
+    setExporting(0);
+    try {
+      await exportInstance(
+        {
+          kind: "database",
+          providerId: selection.providerId,
+          instanceId: selection.instanceId,
+          table: selectedTable,
+        },
+        sink,
+        (received) => setExporting(received),
+      );
+      await sink.close();
+      showToast({ message: `Tabela ${selectedTable} exportada` });
+    } catch (cause) {
+      await sink.abort();
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setExporting(null);
+    }
+  }
+
   async function deleteSelectedRows(): Promise<void> {
     if (!selection || !selectedTable || selectedVisibleRows.length === 0) return;
     const deletedRows = selectedVisibleRows.map((row) => ({ cells: row.cells }));
@@ -1212,6 +1248,22 @@ export function RowGrid() {
           className={`${readOnly ? "ml-auto" : ""} inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40`}
         >
           <RefreshCw size={14} strokeWidth={1.5} />
+        </button>
+        <button
+          onClick={() => void exportTable()}
+          disabled={exporting !== null}
+          title={
+            exporting !== null
+              ? `Exportando… ${Math.round(exporting / 1024)} KB`
+              : "Exportar tabela inteira (NDJSON, 100% das linhas via stream)"
+          }
+          className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${
+            exporting !== null
+              ? "text-accent"
+              : "text-text-subtle hover:bg-surface-hover hover:text-text"
+          } disabled:opacity-70`}
+        >
+          <Download size={14} strokeWidth={1.5} />
         </button>
       </div>
       {readOnly && (

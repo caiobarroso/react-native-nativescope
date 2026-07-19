@@ -125,6 +125,35 @@ describe("expo-sqlite adapter", () => {
     ).rejects.toThrow("coluna desconhecida");
   });
 
+  it("busca no device: LIKE nas tabelas devolve só matches com ref e snippet", async () => {
+    const { adapter } = setup();
+    const result = await adapter.search("app.db", "Carrefour", 10);
+    expect(result.complete).toBe(true);
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]).toMatchObject({
+      table: "visits",
+      ref: { rowid: 1 },
+    });
+    expect(result.matches[0]?.snippet).toContain("Carrefour");
+  });
+
+  it("busca escapa curingas do LIKE — '%' literal não vira match-tudo", async () => {
+    const { adapter } = setup();
+    const result = await adapter.search("app.db", "%", 10);
+    expect(result.matches).toHaveLength(0);
+  });
+
+  it("exportRows itera 100% das linhas com células íntegras (sem truncar)", async () => {
+    const { adapter, db } = setup();
+    const big = "z".repeat(10_000);
+    await db.runAsync("UPDATE visits SET pdv = ? WHERE id = 2", [big]);
+
+    const rows: Array<Record<string, unknown>> = [];
+    for await (const row of adapter.exportRows("app.db", "visits")) rows.push(row);
+    expect(rows).toHaveLength(3);
+    expect(rows[1]?.["pdv"]).toBe(big); // íntegro — export nunca trunca
+  });
+
   it("rejeita orderBy que não é coluna — sem injeção", async () => {
     const { adapter } = setup();
     await expect(

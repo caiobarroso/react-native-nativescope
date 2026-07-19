@@ -432,6 +432,106 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       return { data: cell.blobBase64, kind: "blob" };
     },
 
+    async search(instanceId, query, limit) {
+      const t = get(instanceId);
+      const names = await t.db.getAllAsync(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+      );
+      const matches: Array<{ table: string; ref: RowRef | null; snippet: string }> = [];
+      const pattern = `%${query.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+      let complete = true;
+      for (const row of names) {
+        if (matches.length >= limit) {
+          complete = false;
+          break;
+        }
+        const table = String(row["name"]);
+        const info = await tableInfo(t, table);
+        if (info.columnNames.length === 0) continue;
+        // LIKE roda NO device (thread nativa do SQLite): buscar em milhões
+        // de linhas não transfere milhões de linhas — só os matches.
+        const where = info.columnNames
+          .map((c) => `${quoteIdent(c)} LIKE ? ESCAPE '\\'`)
+          .join(" OR ");
+        const params = info.columnNames.map(() => pattern);
+        const select =
+          info.identity === "rowid"
+            ? `SELECT rowid AS ${ROWID_ALIAS}, * FROM ${quoteIdent(table)}`
+            : `SELECT * FROM ${quoteIdent(table)}`;
+        const remaining = limit - matches.length;
+        const raw = await t.db.getAllAsync(`${select} WHERE ${where} LIMIT ?`, [
+          ...params,
+          remaining + 1,
+        ]);
+        if (raw.length > remaining) complete = false;
+        for (const record of raw.slice(0, remaining)) {
+          let ref: RowRef | null = null;
+          if (info.identity === "rowid" && record[ROWID_ALIAS] !== undefined) {
+            ref = { rowid: Number(record[ROWID_ALIAS]) };
+          } else if (info.identity === "pk") {
+            const pk: Record<string, CellValue> = {};
+            for (const column of info.pkColumns) pk[column] = toCell(record[column]);
+            ref = { pk };
+          }
+          const q = query.toLowerCase();
+          const hit = Object.entries(record).find(
+            ([column, value]) =>
+              column !== ROWID_ALIAS &&
+              typeof value !== "object" &&
+              String(value ?? "").toLowerCase().includes(q),
+          );
+          const snippet = hit ? `${hit[0]}: ${String(hit[1])}` : table;
+          matches.push({
+            table,
+            ref,
+            snippet: snippet.length > 120 ? `${snippet.slice(0, 120)}…` : snippet,
+          });
+        }
+      }
+      return { matches, complete };
+    },
+
+    async *exportRows(instanceId, table) {
+      const t = get(instanceId);
+      const info = await tableInfo(t, table);
+      // Keyset quando há rowid; OFFSET como fallback — sempre O(página).
+      if (info.identity === "rowid") {
+        let after: number | null = null;
+        for (;;) {
+          const raw: Array<Record<string, unknown>> = await t.db.getAllAsync(
+            after === null
+              ? `SELECT rowid AS ${ROWID_ALIAS}, * FROM ${quoteIdent(table)} ORDER BY rowid LIMIT 200`
+              : `SELECT rowid AS ${ROWID_ALIAS}, * FROM ${quoteIdent(table)} WHERE rowid > ? ORDER BY rowid LIMIT 200`,
+            after === null ? [] : [after],
+          );
+          for (const record of raw) {
+            const cells: Record<string, CellValue> = {};
+            for (const [column, value] of Object.entries(record)) {
+              if (column !== ROWID_ALIAS) cells[column] = toCell(value);
+            }
+            yield cells;
+          }
+          const last = raw[raw.length - 1];
+          if (raw.length < 200 || last === undefined) return;
+          after = Number(last[ROWID_ALIAS]);
+        }
+      }
+      let offset = 0;
+      for (;;) {
+        const raw: Array<Record<string, unknown>> = await t.db.getAllAsync(
+          `SELECT * FROM ${quoteIdent(table)} LIMIT 200 OFFSET ?`,
+          [offset],
+        );
+        for (const record of raw) {
+          const cells: Record<string, CellValue> = {};
+          for (const [column, value] of Object.entries(record)) cells[column] = toCell(value);
+          yield cells;
+        }
+        if (raw.length < 200) return;
+        offset += raw.length;
+      }
+    },
+
     async update(instanceId, table, ref, set) {
       const t = get(instanceId);
       const columns = Object.keys(set);

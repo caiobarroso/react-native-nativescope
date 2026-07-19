@@ -89,6 +89,38 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("stream.cancel"),
     payload: z.object({ streamId: z.string() }),
   }),
+  // Busca executada NO DEVICE (plano de grandes volumes §D): buscar em GB
+  // sem transferir GB — só os matches viajam.
+  z.object({
+    ...commandBase,
+    type: z.literal("key-value.search"),
+    payload: z.object({
+      ...kvTarget,
+      query: z.string().min(1),
+      limit: z.number().int().positive().max(200).optional(),
+    }),
+  }),
+  z.object({
+    ...commandBase,
+    type: z.literal("database.search"),
+    payload: z.object({
+      ...kvTarget,
+      query: z.string().min(1),
+      limit: z.number().int().positive().max(200).optional(),
+    }),
+  }),
+  // Export integral via stream: é o cumprimento literal de "100% dos dados"
+  // — NDJSON flui device → arquivo sem nunca residir inteiro em memória.
+  z.object({
+    ...commandBase,
+    type: z.literal("key-value.export"),
+    payload: z.object({ ...kvTarget }),
+  }),
+  z.object({
+    ...commandBase,
+    type: z.literal("database.export"),
+    payload: z.object({ ...kvTarget, table: z.string() }),
+  }),
   z.object({
     ...commandBase,
     type: z.literal("key-value.set"),
@@ -211,6 +243,27 @@ export const keyValueGetResultSchema = z.object({
   truncated: z.boolean(),
   /** Tamanho real do valor serializado (chars), truncado ou não. */
   totalSize: z.number().int().nonnegative(),
+});
+export const keyValueSearchResultSchema = z.object({
+  entries: z.array(keyEntrySchema),
+  /** false quando a busca parou no limite antes de varrer tudo. */
+  complete: z.boolean(),
+  /** Quantas chaves foram varridas no device. */
+  scanned: z.number().int().nonnegative(),
+});
+export const databaseSearchResultSchema = z.object({
+  matches: z.array(
+    z.object({
+      table: z.string(),
+      ref: rowRefSchema.nullable(),
+      snippet: z.string(),
+    }),
+  ),
+  complete: z.boolean(),
+});
+export const exportResultSchema = z.object({
+  /** Os dados chegam como stream.* NDJSON; tamanho total desconhecido a priori. */
+  streamId: z.string(),
 });
 export const keyValueGetFullResultSchema = z.object({
   /** null quando a chave não existe. Os chunks chegam como events stream.*. */

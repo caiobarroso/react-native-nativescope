@@ -219,6 +219,86 @@ describe("command handler", () => {
     expect(events.filter((e) => e.type === "stream.end")).toHaveLength(0);
   });
 
+  it("key-value.search varre no device e devolve só matches", async () => {
+    const registry = createRegistry();
+    registry.register(createMemoryAdapter());
+    const target = { providerId: "memory", instanceId: "default" };
+    for (let i = 0; i < 20; i += 1) {
+      await handleCommand(
+        registry,
+        command({
+          type: "key-value.set",
+          payload: {
+            ...target,
+            key: `item.${i}`,
+            value: { type: "string", value: i === 7 ? "agulha no palheiro" : `valor ${i}` },
+          },
+        }),
+      );
+    }
+    const result = await handleCommand(
+      registry,
+      command({ type: "key-value.search", payload: { ...target, query: "agulha" } }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const { entries, complete, scanned } = result.result as {
+        entries: Array<{ key: string }>;
+        complete: boolean;
+        scanned: number;
+      };
+      expect(entries.map((e) => e.key)).toEqual(["item.7"]);
+      expect(complete).toBe(true);
+      expect(scanned).toBe(20);
+    }
+  });
+
+  it("key-value.export flui NDJSON com 100% dos valores via stream", async () => {
+    const registry = createRegistry();
+    registry.register(createMemoryAdapter());
+    const target = { providerId: "memory", instanceId: "default" };
+    const big = "b".repeat(STREAM_CHUNK_SIZE + 100); // força mais de um chunk
+    await handleCommand(
+      registry,
+      command({
+        type: "key-value.set",
+        payload: { ...target, key: "big", value: { type: "string", value: big } },
+      }),
+    );
+    await handleCommand(
+      registry,
+      command({
+        type: "key-value.set",
+        payload: { ...target, key: "small", value: { type: "number", value: 42 } },
+      }),
+    );
+
+    const events: EventMessage[] = [];
+    const streams = createStreamHub((event) => events.push(event));
+    const result = await handleCommand(
+      registry,
+      command({ type: "key-value.export", payload: { ...target } }),
+      { streams },
+    );
+    expect(result.ok).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.type === "stream.end")).toBe(true);
+    });
+    const data = events
+      .filter((e): e is Extract<EventMessage, { type: "stream.chunk" }> => e.type === "stream.chunk")
+      .map((e) => e.payload.data)
+      .join("");
+    const lines = data.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toEqual({ key: "big", type: "string", value: big });
+    expect(lines[1]).toEqual({ key: "small", type: "number", value: 42 });
+    const end = events.find(
+      (e): e is Extract<EventMessage, { type: "stream.end" }> => e.type === "stream.end",
+    );
+    expect(end?.payload.ok).toBe(true);
+  });
+
   it("erro estruturado para provider desconhecido — nunca lança", async () => {
     const registry = createRegistry();
     const result = await handleCommand(

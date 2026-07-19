@@ -1,13 +1,15 @@
-import { Copy, Files, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import { Copy, Download, Files, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import type { KeyEntry, StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
 import {
+  exportInstance,
   getValueComplete,
   loadKeys,
   loadMoreKeys,
   removeKey,
   setValue,
 } from "../lib/studio-client.ts";
+import { createFileSink } from "../lib/export.ts";
 import { generateTypeScript } from "./ValueEditor.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -69,6 +71,28 @@ export function KeyList() {
   );
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [exporting, setExporting] = useState<number | null>(null);
+
+  async function exportKeys(): Promise<void> {
+    if (!selection || exporting !== null) return;
+    const sink = await createFileSink(
+      `${selection.providerId}-${selection.instanceId}.ndjson`,
+    );
+    if (!sink) return; // usuário cancelou
+    setExporting(0);
+    try {
+      await exportInstance(
+        { kind: "key-value", providerId: selection.providerId, instanceId: selection.instanceId },
+        sink,
+        (received) => setExporting(received),
+      );
+      await sink.close();
+    } catch {
+      await sink.abort();
+    } finally {
+      setExporting(null);
+    }
+  }
 
   const filtered = useMemo(
     () =>
@@ -150,6 +174,22 @@ export function KeyList() {
           placeholder="Filtrar chaves e valores"
           className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-text-subtle"
         />
+        <button
+          onClick={() => void exportKeys()}
+          disabled={exporting !== null}
+          title={
+            exporting !== null
+              ? `Exportando… ${Math.round(exporting / 1024)} KB`
+              : "Exportar tudo (NDJSON, 100% dos dados via stream)"
+          }
+          className={`shrink-0 rounded p-1 ${
+            exporting !== null
+              ? "text-accent"
+              : "text-text-subtle hover:bg-surface-hover hover:text-text"
+          }`}
+        >
+          <Download size={13} strokeWidth={1.5} />
+        </button>
         <button
           onClick={() => setCreating(true)}
           title="Nova chave"

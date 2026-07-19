@@ -10,6 +10,9 @@ import {
   databaseRowsResultSchema,
   databaseExecuteResultSchema,
   databaseCellResultSchema,
+  keyValueSearchResultSchema,
+  databaseSearchResultSchema,
+  exportResultSchema,
   type AnyMessage,
   type CellValue,
   type CommandMessage,
@@ -53,7 +56,10 @@ interface ActiveStream {
   received: number;
   total: number;
   hash: number;
-  onProgress?: (received: number, total: number) => void;
+  onProgress?: ((received: number, total: number) => void) | undefined;
+  /** Modo pipe: chunks vão direto ao consumidor (arquivo) e NÃO são retidos —
+   * um export de GB nunca reside inteiro na memória da aba. */
+  onChunk?: ((chunk: string) => void) | undefined;
   resolve: (data: string) => void;
   reject: (error: Error) => void;
   idleTimer: ReturnType<typeof setTimeout>;
@@ -65,7 +71,10 @@ const activeStreams = new Map<string, ActiveStream>();
 function awaitStream(
   streamId: string,
   total: number,
-  onProgress?: (received: number, total: number) => void,
+  options?: {
+    onProgress?: (received: number, total: number) => void;
+    onChunk?: (chunk: string) => void;
+  },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const fail = (message: string) => {
@@ -77,7 +86,8 @@ function awaitStream(
       received: 0,
       total,
       hash: 0x811c9dc5,
-      onProgress,
+      onProgress: options?.onProgress,
+      onChunk: options?.onChunk,
       resolve: (data) => {
         activeStreams.delete(streamId);
         resolve(data);
@@ -100,7 +110,8 @@ function handleStreamChunk(streamId: string, data: string): void {
     () => stream.reject(new Error("stream parado — o app parou de responder")),
     STREAM_IDLE_TIMEOUT_MS,
   );
-  stream.parts.push(data);
+  if (stream.onChunk) stream.onChunk(data);
+  else stream.parts.push(data);
   stream.received += data.length;
   stream.hash = fnv1a32(data, stream.hash);
   stream.onProgress?.(stream.received, stream.total);
@@ -422,7 +433,9 @@ export async function getFullValue(
   const onAbort = () => cancelStream(streamId);
   options?.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    const data = await awaitStream(streamId, parsed.data.totalSize, options?.onProgress);
+    const data = await awaitStream(streamId, parsed.data.totalSize, {
+      ...(options?.onProgress ? { onProgress: options.onProgress } : {}),
+    });
     return materializeValue(parsed.data.valueType, data);
   } finally {
     options?.signal?.removeEventListener("abort", onAbort);
@@ -496,6 +509,73 @@ export async function fetchAllKeys(
   }
 }
 
+/** Busca de chaves executada NO device — só matches viajam (plano §D). */
+export async function searchKeys(
+  providerId: string,
+  instanceId: string,
+  query: string,
+  limit = 50,
+): Promise<{ entries: KeyEntry[]; complete: boolean; scanned: number }> {
+  const result = await sendCommand({
+    type: "key-value.search",
+    payload: { providerId, instanceId, query, limit },
+  });
+  const parsed = keyValueSearchResultSchema.safeParse(result);
+  return parsed.success ? parsed.data : { entries: [], complete: false, scanned: 0 };
+}
+
+/** Busca LIKE nas tabelas SQLite, executada no device. */
+export async function searchDatabase(
+  providerId: string,
+  instanceId: string,
+  query: string,
+  limit = 50,
+): Promise<{
+  matches: Array<{ table: string; ref: RowRef | null; snippet: string }>;
+  complete: boolean;
+}> {
+  const result = await sendCommand({
+    type: "database.search",
+    payload: { providerId, instanceId, query, limit },
+  });
+  const parsed = databaseSearchResultSchema.safeParse(result);
+  return parsed.success ? parsed.data : { matches: [], complete: false };
+}
+
+/**
+ * Export integral NDJSON via stream: chunks vão direto ao sink (arquivo),
+ * nunca acumulados na aba. GB fluem device → disco.
+ */
+export async function exportInstance(
+  payload:
+    | { kind: "key-value"; providerId: string; instanceId: string }
+    | { kind: "database"; providerId: string; instanceId: string; table: string },
+  sink: { write(chunk: string): void },
+  onProgress?: (receivedChars: number) => void,
+): Promise<void> {
+  const result = await sendCommand(
+    payload.kind === "key-value"
+      ? {
+          type: "key-value.export",
+          payload: { providerId: payload.providerId, instanceId: payload.instanceId },
+        }
+      : {
+          type: "database.export",
+          payload: {
+            providerId: payload.providerId,
+            instanceId: payload.instanceId,
+            table: payload.table,
+          },
+        },
+  );
+  const parsed = exportResultSchema.safeParse(result);
+  if (!parsed.success) throw new Error("resposta inválida do runtime");
+  await awaitStream(parsed.data.streamId, 0, {
+    onChunk: (chunk) => sink.write(chunk),
+    ...(onProgress ? { onProgress: (received) => onProgress(received) } : {}),
+  });
+}
+
 export async function fetchAllTables(providerId: string, instanceId: string) {
   const result = await sendCommand({
     type: "database.tables",
@@ -555,7 +635,9 @@ export async function getFullCell(
   const parsed = databaseCellResultSchema.safeParse(result);
   if (!parsed.success) throw new Error("resposta inválida do runtime");
   if (parsed.data.streamId === null) return null;
-  const data = await awaitStream(parsed.data.streamId, parsed.data.totalSize, options?.onProgress);
+  const data = await awaitStream(parsed.data.streamId, parsed.data.totalSize, {
+    ...(options?.onProgress ? { onProgress: options.onProgress } : {}),
+  });
   return { data, kind: parsed.data.kind };
 }
 

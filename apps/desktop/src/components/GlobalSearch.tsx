@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Database, KeyRound, Search } from "lucide-react";
-import type { KeyEntry, ProviderDescriptor, TableSchema } from "@rnsi/protocol";
+import type { ProviderDescriptor } from "@rnsi/protocol";
 import { useStudio } from "../lib/store.ts";
-import { loadKeys, loadTables, fetchAllKeys, fetchAllTables } from "../lib/studio-client.ts";
+import {
+  loadKeys,
+  loadTables,
+  fetchAllTables,
+  searchDatabase,
+  searchKeys,
+} from "../lib/studio-client.ts";
 
 interface SearchHit {
   kind: "key" | "table";
@@ -16,8 +22,9 @@ interface SearchHit {
 
 /**
  * Busca global ⌘K — cross-storage (plano §5.2). Responde "onde diabos está
- * guardado esse valor?": varre chaves de todos os providers key-value e
- * tabelas de todos os bancos, simultaneamente, num campo só.
+ * guardado esse valor?". A busca roda NO DEVICE (plano de grandes volumes
+ * §D): chaves via varredura paginada de previews, linhas SQLite via LIKE —
+ * buscar em GB não transfere GB, só os matches viajam.
  */
 export function GlobalSearch() {
   const [open, setOpen] = useState(false);
@@ -26,7 +33,6 @@ export function GlobalSearch() {
   const [cursor, setCursor] = useState(0);
   const [loading, setLoading] = useState(false);
   const providers = useStudio((s) => s.providers);
-  const indexRef = useRef<SearchHit[] | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // ⌘K abre; Esc fecha.
@@ -43,44 +49,38 @@ export function GlobalSearch() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Ao abrir: monta o índice varrendo tudo (datasets de dev são pequenos).
   useEffect(() => {
     if (!open) {
       setQuery("");
       setCursor(0);
-      indexRef.current = null;
-      return;
-    }
-    inputRef.current?.focus();
-    let cancelled = false;
-    setLoading(true);
-    void buildIndex(providers).then((index) => {
-      if (cancelled) return;
-      indexRef.current = index;
-      setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, providers]);
-
-  useEffect(() => {
-    const index = indexRef.current;
-    if (!index || query.trim() === "") {
       setHits([]);
       return;
     }
-    const q = query.toLowerCase();
-    setHits(
-      index
-        .filter(
-          (hit) =>
-            hit.name.toLowerCase().includes(q) || hit.preview.toLowerCase().includes(q),
-        )
-        .slice(0, 30),
-    );
-    setCursor(0);
-  }, [query, loading]);
+    inputRef.current?.focus();
+  }, [open]);
+
+  // Cada consulta roda no device, com debounce — nada de índice local.
+  useEffect(() => {
+    if (!open || query.trim() === "") {
+      setHits([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const timer = setTimeout(() => {
+      void searchEverywhere(providers, query.trim()).then((results) => {
+        if (cancelled) return;
+        setHits(results.slice(0, 30));
+        setCursor(0);
+        setLoading(false);
+      });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [open, query, providers]);
 
   const navigate = useCallback((hit: SearchHit) => {
     const store = useStudio.getState();
@@ -130,7 +130,7 @@ export function GlobalSearch() {
             placeholder="Buscar em todos os storages…"
             className="h-11 flex-1 bg-transparent text-[13px] outline-none placeholder:text-text-subtle"
           />
-          {loading && <span className="text-[11px] text-text-subtle">indexando…</span>}
+          {loading && <span className="text-[11px] text-text-subtle">buscando no device…</span>}
         </div>
 
         <ol className="max-h-80 overflow-y-auto p-1">
@@ -140,7 +140,7 @@ export function GlobalSearch() {
             </li>
           )}
           {grouped.map((hit, i) => (
-            <li key={`${hit.providerId}-${hit.instanceId}-${hit.kind}-${hit.name}`}>
+            <li key={`${hit.providerId}-${hit.instanceId}-${hit.kind}-${hit.name}-${i}`}>
               <button
                 onClick={() => navigate(hit)}
                 onMouseEnter={() => setCursor(i)}
@@ -169,15 +169,19 @@ export function GlobalSearch() {
   );
 }
 
-async function buildIndex(providers: ProviderDescriptor[]): Promise<SearchHit[]> {
+async function searchEverywhere(
+  providers: ProviderDescriptor[],
+  query: string,
+): Promise<SearchHit[]> {
+  const q = query.toLowerCase();
   const jobs: Array<Promise<SearchHit[]>> = [];
 
   for (const provider of providers) {
     for (const instance of provider.instances) {
       if (provider.capabilities.includes("key-value.read")) {
         jobs.push(
-          fetchAllKeys(provider.providerId, instance.instanceId).then(({ entries }) =>
-            entries.map((entry: KeyEntry) => ({
+          searchKeys(provider.providerId, instance.instanceId, query, 30).then(({ entries }) =>
+            entries.map((entry) => ({
               kind: "key" as const,
               providerId: provider.providerId,
               providerLabel: provider.label,
@@ -189,16 +193,31 @@ async function buildIndex(providers: ProviderDescriptor[]): Promise<SearchHit[]>
         );
       }
       if (provider.capabilities.includes("database.query")) {
+        // Nomes de tabela (barato) + conteúdo de linhas via LIKE no device.
         jobs.push(
-          fetchAllTables(provider.providerId, instance.instanceId).then(
-            (tables: TableSchema[]) =>
-              tables.map((table) => ({
+          fetchAllTables(provider.providerId, instance.instanceId).then((tables) =>
+            tables
+              .filter((table) => table.name.toLowerCase().includes(q))
+              .map((table) => ({
                 kind: "table" as const,
                 providerId: provider.providerId,
                 providerLabel: provider.label,
                 instanceId: instance.instanceId,
                 name: table.name,
-                preview: `${table.rowCount} linhas · ${table.columns.map((c) => c.name).join(", ")}`,
+                preview: `${table.rowCountIsEstimate ? "~" : ""}${table.rowCount} linhas · ${table.columns.map((c) => c.name).join(", ")}`,
+              })),
+          ),
+        );
+        jobs.push(
+          searchDatabase(provider.providerId, instance.instanceId, query, 20).then(
+            ({ matches }) =>
+              matches.map((match) => ({
+                kind: "table" as const,
+                providerId: provider.providerId,
+                providerLabel: provider.label,
+                instanceId: instance.instanceId,
+                name: match.table,
+                preview: match.snippet,
               })),
           ),
         );

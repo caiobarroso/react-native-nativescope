@@ -6,8 +6,13 @@ import {
   type StorageValue,
 } from "@rnsi/protocol";
 import type { AdapterRegistry } from "./registry.ts";
-import { isDatabaseAdapter, isKeyValueAdapter } from "./adapter.ts";
+import {
+  isDatabaseAdapter,
+  isKeyValueAdapter,
+  type KeyValueAdapter,
+} from "./adapter.ts";
 import type { StreamHub } from "./streams.ts";
+import { breathe } from "./key-pagination.ts";
 
 /** Dependências opcionais de execução — streaming quando o transporte suporta. */
 export interface CommandContext {
@@ -38,6 +43,73 @@ function withPreviewLimit(value: StorageValue | null): {
     return { value, truncated: false, totalSize: text.length };
   }
   return { value, truncated: false, totalSize: String(value.value).length };
+}
+
+const SEARCH_SCAN_PAGE = 500;
+const SEARCH_DEFAULT_LIMIT = 50;
+const SEARCH_MAX_SCAN = 100_000;
+
+/**
+ * Busca de key-value executada NO DEVICE, varrendo páginas do listKeys
+ * (nomes + previews) com yield entre páginas. Só matches viajam — buscar em
+ * milhões de chaves não transfere milhões de entries. Genérico para todo
+ * KeyValueAdapter: nenhum adapter precisa implementar nada.
+ */
+async function searchKeyValue(
+  adapter: KeyValueAdapter,
+  instanceId: string,
+  query: string,
+  limit: number,
+): Promise<{ entries: unknown[]; complete: boolean; scanned: number }> {
+  const q = query.toLowerCase();
+  const entries: unknown[] = [];
+  let afterKey: string | undefined;
+  let scanned = 0;
+  for (;;) {
+    const page = await adapter.listKeys(instanceId, {
+      ...(afterKey !== undefined ? { afterKey } : {}),
+      limit: SEARCH_SCAN_PAGE,
+    });
+    scanned += page.entries.length;
+    for (const entry of page.entries) {
+      if (
+        entry.key.toLowerCase().includes(q) ||
+        entry.preview.toLowerCase().includes(q)
+      ) {
+        entries.push(entry);
+        if (entries.length >= limit) {
+          return { entries, complete: page.nextAfterKey === null, scanned };
+        }
+      }
+    }
+    if (page.nextAfterKey === null) return { entries, complete: true, scanned };
+    if (scanned >= SEARCH_MAX_SCAN) return { entries, complete: false, scanned };
+    afterKey = page.nextAfterKey;
+    await breathe();
+  }
+}
+
+/** Export NDJSON de uma instância key-value: uma linha por chave, valor íntegro. */
+async function* exportKeyValueLines(
+  adapter: KeyValueAdapter,
+  instanceId: string,
+): AsyncGenerator<string> {
+  let afterKey: string | undefined;
+  for (;;) {
+    const page = await adapter.listKeys(instanceId, {
+      ...(afterKey !== undefined ? { afterKey } : {}),
+      limit: SEARCH_SCAN_PAGE,
+    });
+    for (const entry of page.entries) {
+      const value = await adapter.get(instanceId, entry.key);
+      if (value !== null) {
+        yield `${JSON.stringify({ key: entry.key, type: value.type, value: value.value })}\n`;
+      }
+    }
+    if (page.nextAfterKey === null) return;
+    afterKey = page.nextAfterKey;
+    await breathe();
+  }
 }
 
 /** Forma serializada que trafega nos chunks de get-full. */
@@ -101,7 +173,9 @@ export async function handleCommand(
       case "key-value.get":
       case "key-value.get-full":
       case "key-value.set":
-      case "key-value.remove": {
+      case "key-value.remove":
+      case "key-value.search":
+      case "key-value.export": {
         if (!isKeyValueAdapter(adapter)) {
           return fail("unsupported-capability", `${adapter.providerId} não é key-value`);
         }
@@ -141,6 +215,26 @@ export async function handleCommand(
           case "key-value.remove":
             await adapter.remove(command.payload.instanceId, command.payload.key);
             return succeed({});
+          case "key-value.search":
+            return succeed(
+              await searchKeyValue(
+                adapter,
+                command.payload.instanceId,
+                command.payload.query,
+                command.payload.limit ?? SEARCH_DEFAULT_LIMIT,
+              ),
+            );
+          case "key-value.export": {
+            if (!context?.streams) {
+              return fail("internal", "streaming indisponível neste runtime");
+            }
+            const { instanceId } = command.payload;
+            return succeed({
+              streamId: context.streams.streamFrom(() =>
+                exportKeyValueLines(adapter, instanceId),
+              ),
+            });
+          }
         }
       }
     }
@@ -206,6 +300,27 @@ export async function handleCommand(
         return succeed({
           result: await adapter.execute(command.payload.instanceId, command.payload.sql),
         });
+      case "database.search":
+        return succeed(
+          await adapter.search(
+            command.payload.instanceId,
+            command.payload.query,
+            command.payload.limit ?? SEARCH_DEFAULT_LIMIT,
+          ),
+        );
+      case "database.export": {
+        if (!context?.streams) {
+          return fail("internal", "streaming indisponível neste runtime");
+        }
+        const { instanceId, table } = command.payload;
+        return succeed({
+          streamId: context.streams.streamFrom(async function* () {
+            for await (const row of adapter.exportRows(instanceId, table)) {
+              yield `${JSON.stringify(row)}\n`;
+            }
+          }),
+        });
+      }
     }
   } catch (cause) {
     return fail("internal", cause instanceof Error ? cause.message : String(cause));
