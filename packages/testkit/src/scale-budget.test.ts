@@ -6,16 +6,25 @@ import {
   createRegistry,
   KEY_READ_BATCH,
 } from "@rnsi/runtime";
-import { KEY_VALUE_PREVIEW_LIMIT, PROTOCOL_VERSION, type CommandMessage } from "@rnsi/protocol";
+import {
+  KEY_VALUE_PREVIEW_LIMIT,
+  PROTOCOL_VERSION,
+  WIRE_MESSAGE_BUDGET,
+  exceedsWireBudget,
+  serializeMessage,
+  wireByteSize,
+  type CommandMessage,
+} from "@rnsi/protocol";
 import { createFakeAsyncStorage } from "./fakes/async-storage.ts";
 import { createNodeSqlite } from "./fakes/sqlite.ts";
 
 /**
  * Testes de ORÇAMENTO (plano de grandes volumes §1/§E): garantem que os
  * limites que sustentam "GB sem desespero" não regridem em silêncio.
+ *
+ * O orçamento de fio é medido em BYTES (wireByteSize), não em chars — um
+ * valor multibyte não pode furar o teto de 256 KB por baixo do radar.
  */
-
-const RESPONSE_BUDGET = 256 * 1024;
 
 function command(partial: Pick<CommandMessage, "type" | "payload">): CommandMessage {
   return {
@@ -71,7 +80,7 @@ describe("orçamentos de escala", () => {
     );
     expect(result.ok).toBe(true);
     // 100 valores de 1 MB no device → resposta de previews, não de dados.
-    expect(JSON.stringify(result).length).toBeLessThan(RESPONSE_BUDGET);
+    expect(exceedsWireBudget(serializeMessage(result))).toBe(false);
   });
 
   it("resposta de key-value.get nunca excede o orçamento de mensagem", async () => {
@@ -88,7 +97,7 @@ describe("orçamentos de escala", () => {
       }),
     );
     expect(result.ok).toBe(true);
-    expect(JSON.stringify(result).length).toBeLessThan(RESPONSE_BUDGET);
+    expect(exceedsWireBudget(serializeMessage(result))).toBe(false);
     if (result.ok) {
       const { truncated, totalSize } = result.result as { truncated: boolean; totalSize: number };
       expect(truncated).toBe(true);
@@ -145,5 +154,86 @@ describe("orçamentos de escala", () => {
     expect(secondIds.filter((id) => firstIds.includes(id))).toHaveLength(0);
     // …sem pular nenhuma linha antiga restante, e a nova aparece.
     expect(secondIds).toEqual([5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it("NENHUMA resposta de comando estoura o orçamento de fio, nem com valores de MB", async () => {
+    // O guard de transporte (bootstrap.send / server.sendTo) usa exatamente
+    // este predicado. Aqui provamos, contra os comandos patológicos, que a
+    // resposta é preview + metadados — nunca o dado inteiro (a falha Flipper).
+    const storage = createFakeAsyncStorage();
+    for (let i = 0; i < 100; i += 1) {
+      await storage.setItem(`big.${String(i).padStart(3, "0")}`, "v".repeat(1024 * 1024));
+    }
+    await storage.setItem("dump", "x".repeat(8 * 1024 * 1024));
+    const registry = createRegistry();
+    registry.register(createAsyncStorageAdapter(storage));
+
+    const commands: CommandMessage[] = [
+      command({
+        type: "key-value.list",
+        payload: { providerId: "async-storage", instanceId: "default", limit: 100 },
+      }),
+      command({
+        type: "key-value.get",
+        payload: { providerId: "async-storage", instanceId: "default", key: "dump" },
+      }),
+    ];
+    for (const cmd of commands) {
+      const result = await handleCommand(registry, cmd);
+      expect(result.ok).toBe(true);
+      expect(exceedsWireBudget(serializeMessage(result))).toBe(false);
+    }
+  });
+
+  it("o orçamento é medido em bytes: um valor multibyte não fura o teto por baixo do radar", () => {
+    // '💥' = 2 unidades UTF-16, 4 bytes UTF-8. Uma string logo abaixo do teto
+    // em CHARS mas acima em BYTES tem de ser detectada como estouro.
+    const almost = "a".repeat(WIRE_MESSAGE_BUDGET - 10); // ASCII: chars ≈ bytes
+    expect(exceedsWireBudget(almost)).toBe(false);
+
+    const multibyte = "€".repeat(WIRE_MESSAGE_BUDGET / 2); // 3 bytes/char → ~1.5×
+    expect(multibyte.length).toBeLessThan(WIRE_MESSAGE_BUDGET); // caberia por chars…
+    expect(wireByteSize(multibyte)).toBeGreaterThan(WIRE_MESSAGE_BUDGET); // …mas não por bytes
+    expect(exceedsWireBudget(multibyte)).toBe(true);
+
+    // Par surrogate conta 4 bytes, não 6: 2 unidades × 2 bytes/unidade.
+    expect(wireByteSize("💥")).toBe(4);
+  });
+
+  it("a JS thread é solta ENTRE os lotes — trabalho do app roda no meio da varredura", async () => {
+    const storage = createFakeAsyncStorage();
+    for (let i = 0; i < 150; i += 1) {
+      await storage.setItem(`k.${String(i).padStart(3, "0")}`, `v${i}`);
+    }
+    // 150 chaves / KEY_READ_BATCH(50) = 3 lotes, com breathe() entre eles.
+    let batchesRun = 0;
+    const instrumented = {
+      ...storage,
+      multiGet: async (keys: readonly string[]) => {
+        batchesRun += 1;
+        return storage.multiGet(keys);
+      },
+    };
+    const adapter = createAsyncStorageAdapter(instrumented);
+
+    // "Trabalho do app": um timer agendado ANTES da varredura. Ele só roda se a
+    // JS thread for devolvida ao event loop no meio da leitura — que é a
+    // garantia de fatia curta (§1). Registramos em qual lote isso aconteceu.
+    let appRanAtBatch = -1;
+    const appWork = new Promise<void>((resolve) =>
+      setTimeout(() => {
+        appRanAtBatch = batchesRun;
+        resolve();
+      }, 0),
+    );
+
+    await adapter.listKeys("default", { limit: 150 });
+    await appWork;
+
+    expect(batchesRun).toBe(3);
+    // O timer do app rodou depois do 1º lote e antes do último — ou seja, a
+    // thread não ficou presa a varredura inteira num bloco síncrono.
+    expect(appRanAtBatch).toBeGreaterThanOrEqual(1);
+    expect(appRanAtBatch).toBeLessThan(3);
   });
 });

@@ -64,7 +64,7 @@ Estes números são o contrato. Todo PR desta iniciativa deve respeitá-los:
 - Paginação por cursor de key (ordenação lexicográfica): `{afterKey, limit}`.
 
 **A2. `key-value.get` devolve preview; valor completo é streaming**
-- `get` → `{preview: 64KB, size, truncated, sha256}`.
+- `get` → `{preview: 64KB, size, truncated}`.
 - Valor completo via **streaming chunked** (Camada B), nunca numa mensagem só.
 
 **A3. SQLite: keyset pagination + counts em duas fases + células lazy**
@@ -96,16 +96,21 @@ Novo envelope no protocolo v1 (aditivo, não quebra nada):
 
 ```
 stream.begin { streamId, kind, totalSize?, mime? }
-stream.chunk { streamId, seq, data (base64, ≤ 64KB) }
-stream.end   { streamId, sha256 }
+stream.chunk { streamId, seq, data (≤ 64KB) }
+stream.end   { streamId, ok, chunkCount, checksum }
 stream.cancel{ streamId }            // Studio pode desistir a qualquer momento
 ```
 
 - Usado por: `key-value.get-full`, `database.cell`, export de tabela/keys.
 - Cancelável: usuário fechou o viewer → `stream.cancel` → device para de ler.
 - Device envia chunks com yields entre leituras (respeita orçamento A).
-- `sha256` no `end` valida integridade (é a garantia técnica do
-  "100% dos dados": o que chegou é bit a bit o que está no device).
+- `checksum` no `end` é um **FNV-1a 32-bit** acumulado sobre o fluxo (não
+  sha256 — calcular sha256 sobre GB na JS thread estouraria o próprio
+  orçamento de fatia). O Studio recomputa e **compara** ao receber
+  (`studio-client.ts`): divergência → "transferência corrompida". É detecção
+  de corrupção **acidental** de transporte ponta-a-ponta — não é cripto nem
+  garantia adversária. O "100% dos dados" vem da arquitetura (nada é truncado
+  no caminho do stream), não do algoritmo de hash.
 
 ### Camada C — Studio: virtualizar tudo, pesado vai pra Worker
 
@@ -178,5 +183,7 @@ inspector de "copia dados para mostrar" em "janela sobre dados que não se
 movem": previews truncados na origem, paginação por cursor, streaming
 chunked cancelável para acesso integral, virtualização e workers na UI,
 busca e export executados onde o dado mora. Os orçamentos da §1 são o
-contrato objetivo de "100% leve", e o export por stream com hash é a
-garantia literal de "100% dos dados".
+contrato objetivo de "100% leve" — verificados no CI, inclusive o guard de
+fio e a fatia de thread. O "100% dos dados" é garantido pela arquitetura do
+stream (nada truncado no caminho), e o checksum FNV-1a acumulado, comparado
+no Studio, protege contra corrupção acidental de transporte.

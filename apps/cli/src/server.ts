@@ -4,6 +4,8 @@ import { extname, join, normalize } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   PROTOCOL_VERSION,
+  WIRE_MESSAGE_BUDGET,
+  exceedsWireBudget,
   parseMessage,
   serializeMessage,
   protocolError,
@@ -56,7 +58,17 @@ export function startLocalServer(options: LocalServerOptions) {
 
   function sendTo(session: Session | null, message: AnyMessage): void {
     if (session && session.socket.readyState === WebSocket.OPEN) {
-      session.socket.send(serializeMessage(message));
+      const raw = serializeMessage(message);
+      // Defesa em profundidade do orçamento de fio (§1): o device já guarda na
+      // origem, mas o hub também relaya e origina frames. Diagnóstico, nunca
+      // fatal — um frame gordo é logado, não derruba a bridge.
+      if (exceedsWireBudget(raw)) {
+        log(
+          `⚠ frame acima do orçamento de fio (${WIRE_MESSAGE_BUDGET} bytes): ` +
+            `${message.kind} ~${raw.length} chars — deveria ir por stream.*`,
+        );
+      }
+      session.socket.send(raw);
     }
   }
 
