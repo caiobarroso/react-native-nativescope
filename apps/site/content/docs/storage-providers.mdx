@@ -1,0 +1,61 @@
+---
+title: Storage providers
+description: How AsyncStorage, MMKV and expo-sqlite are detected, and what the studio can do with each.
+---
+
+NativeScope groups everything it can read into **providers**. Each provider exposes one or more
+**instances** — a single AsyncStorage store, each named MMKV instance, each opened SQLite database.
+
+## AsyncStorage
+
+Detected from `@react-native-async-storage/async-storage`. It exposes a single instance, `default`,
+because AsyncStorage is a process-wide singleton.
+
+Everything in AsyncStorage is a string. NativeScope infers whether a value is JSON by parsing it,
+and labels it accordingly, so JSON values get a structured editor instead of a text box. The stored
+bytes are never rewritten by that inference — it only affects presentation.
+
+## MMKV
+
+Detected from `react-native-mmkv`. Instances are discovered **automatically as your app constructs
+them**, so an app with a `default` store and a separate `cache` store shows both without any
+registration step.
+
+MMKV exposes typed getters rather than a schema. NativeScope probes string, number, boolean, then
+buffer, and promotes strings that parse as JSON. The inferred type is always visible. Changing it is
+an explicit **Convert type** action in the key menu, never a silent rewrite.
+
+<Callout kind="warning">
+Writing buffer values is not supported yet. Reading and inspecting them is.
+</Callout>
+
+## SQLite
+
+Detected from `expo-sqlite`. Every database your app opens becomes an instance.
+
+For each database you get the table list with row counts, a schema view, an editable row grid, and
+a SQL console that runs arbitrary statements against the live database on the device.
+
+Two behaviours are worth knowing about:
+
+**Row counts can be estimates.** For a large table, an exact `COUNT(*)` is slow enough to stall the
+UI, so NativeScope shows an immediate estimate and replaces it with the exact count once it has been
+computed in the background. An estimate is always rendered with a `~` prefix, never presented as
+exact.
+
+**Large cells are truncated for display.** A cell over 4 KB arrives cut, marked, and expandable. The
+full contents stream on demand. If a row contains a truncated cell, destructive shortcuts that would
+need to reconstruct it — like undoing a delete — are disabled rather than allowed to silently write
+back a shortened value.
+
+## Change attribution
+
+Every change the studio shows is tagged with its origin: `app` when your code wrote it, `studio`
+when you did. Rapid bursts of writes to the same key are coalesced into a single event carrying a
+count, so a tight write loop cannot flood the activity feed or the JS thread.
+
+## Adding another provider
+
+The adapter interface is generic across key/value stores, and the search and export paths are
+implemented once on top of it rather than per adapter. A new key/value provider needs to implement
+listing, reading, writing and subscribing — it does not need to touch the protocol.

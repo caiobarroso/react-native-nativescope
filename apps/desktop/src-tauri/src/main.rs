@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    react_native_storage_inspector_lib::run()
+    nativescope_lib::run()
 }

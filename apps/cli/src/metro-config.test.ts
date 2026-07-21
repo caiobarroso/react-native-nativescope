@@ -20,7 +20,7 @@ describe("ensureMetroConfig", () => {
     expect(result.status).toBe("created");
     const source = readFileSync(join(dir, "metro.config.js"), "utf8");
     expect(source).toContain("expo/metro-config");
-    expect(source).toContain("withStorageInspector");
+    expect(source).toContain("withNativeScope");
   });
 
   it("cria config novo para projeto bare RN", () => {
@@ -43,7 +43,7 @@ module.exports = getDefaultConfig(__dirname);
     // delegate requer o original e embrulha
     const delegate = readFileSync(join(dir, "metro.config.js"), "utf8");
     expect(delegate).toContain('require("./metro.config.original.js")');
-    expect(delegate).toContain("withStorageInspector");
+    expect(delegate).toContain("withNativeScope");
   });
 
   it("é idempotente: segunda chamada não toca em nada", () => {
@@ -57,8 +57,8 @@ module.exports = getDefaultConfig(__dirname);
   });
 
   it("config já embrulhado manualmente não é tocado", () => {
-    const source = `const { withStorageInspector } = require("react-native-storage-inspector/metro");
-module.exports = withStorageInspector({});
+    const source = `const { withNativeScope } = require("react-native-nativescope/metro");
+module.exports = withNativeScope({});
 `;
     writeFileSync(join(dir, "metro.config.js"), source);
     const result = ensureMetroConfig(dir, "expo");

@@ -1,87 +1,13 @@
 @import "tailwindcss";
-
-@custom-variant dark (&:where(.dark, .dark *));
+@import "@rnsi/tokens/tokens.css";
 
 /*
- * Design system — plano §4.
- * Paleta quente e papel. Coral é acento, não cor de marca em tudo:
- * estado ativo, foco, mudança recente, ação primária — e nada mais.
+ * Design system do Studio — plano §4.
+ *
+ * As CORES e a tipografia moram em packages/tokens (fonte única, compartilhada
+ * com apps/site). Aqui fica só o chrome específico deste app: densidade de
+ * devtool, animações de dado mudando e o switch.
  */
-:root {
-  /* superfícies */
-  --surface: #faf9f5;
-  --surface-sunken: #f0eee6;
-  --surface-raised: #ffffff;
-  --surface-hover: #f0eee6;
-
-  /* traço */
-  --border: #e5e2d9;
-  --border-strong: #d6d2c6;
-
-  /* texto */
-  --text: #1f1e1d;
-  --text-muted: #6b6862;
-  --text-subtle: #9a968c;
-
-  /* acento */
-  --accent: #d97757;
-  --accent-hover: #c4623f;
-  --accent-wash: #f5e6df;
-
-  /* semântica de dados */
-  --created: #5c8a5c;
-  --updated: #d97757;
-  --deleted: #c4544f;
-  --created-wash: #e8f0e8;
-  --deleted-wash: #f7e4e3;
-}
-
-.dark {
-  --surface: #1f1e1d;
-  --surface-sunken: #191817;
-  --surface-raised: #262624;
-  --surface-hover: #30302e;
-
-  --border: #3e3d3a;
-  --border-strong: #4e4c48;
-
-  --text: #f5f4ef;
-  --text-muted: #a8a49b;
-  --text-subtle: #6b6862;
-
-  --accent: #e08a6b;
-  --accent-hover: #eda184;
-  --accent-wash: #3a2a24;
-
-  --created: #7fa87f;
-  --updated: #e08a6b;
-  --deleted: #d97570;
-  --created-wash: #24301f;
-  --deleted-wash: #3a2422;
-}
-
-@theme inline {
-  --color-surface: var(--surface);
-  --color-surface-sunken: var(--surface-sunken);
-  --color-surface-raised: var(--surface-raised);
-  --color-surface-hover: var(--surface-hover);
-  --color-border: var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-text: var(--text);
-  --color-text-muted: var(--text-muted);
-  --color-text-subtle: var(--text-subtle);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-wash: var(--accent-wash);
-  --color-created: var(--created);
-  --color-updated: var(--updated);
-  --color-deleted: var(--deleted);
-  --color-created-wash: var(--created-wash);
-  --color-deleted-wash: var(--deleted-wash);
-
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-}
 
 html,
 body,
@@ -93,6 +19,7 @@ body {
   background: var(--surface);
   color: var(--text);
   font-family: var(--font-sans);
+  /* 13px é densidade de devtool — deliberadamente NÃO é o tamanho do site. */
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
 }
@@ -109,6 +36,22 @@ body {
 
 .rnsi-flash {
   animation: rnsi-flash 900ms ease-out;
+}
+
+@keyframes rnsi-activity-focus {
+  0%,
+  38% {
+    background-color: var(--accent-wash);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 3px 0 0 transparent;
+  }
+}
+
+.rnsi-activity-focus {
+  animation: rnsi-activity-focus 1600ms ease-out;
 }
 
 @keyframes rnsi-snackbar-in {

@@ -1,6 +1,11 @@
 import type { KeyEntry, StorageValue, ChangeSource } from "@rnsi/protocol";
 import type { KeyValueAdapter, KeyValueChange } from "../adapter.ts";
-import { KEY_READ_BATCH, breathe, pageOfKeys } from "../key-pagination.ts";
+import {
+  KEY_READ_BATCH,
+  breathe,
+  pageOfSortedKeys,
+  sortKeys,
+} from "../key-pagination.ts";
 
 /**
  * Interface mínima do AsyncStorage que o adapter precisa. Igual à API real —
@@ -17,6 +22,7 @@ export interface AsyncStorageApi {
 const PREVIEW_MAX = 120;
 const ECHO_TTL_MS = 500;
 const INSTANCE_ID = "default";
+const PENDING_WRITE_LIMIT = 2_000;
 
 /** Tudo no AsyncStorage é string; JSON é inferido pelo conteúdo. */
 function classify(raw: string): { type: "string" | "json"; value: string } {
@@ -32,13 +38,13 @@ function classify(raw: string): { type: "string" | "json"; value: string } {
   return { type: "string", value: raw };
 }
 
-function toEntry(key: string, raw: string): KeyEntry {
+function toEntry(key: string, raw: string, lean = false): KeyEntry {
   const { type } = classify(raw);
   return {
     key,
     valueType: type,
     approxSize: raw.length,
-    preview: raw.length > PREVIEW_MAX ? `${raw.slice(0, PREVIEW_MAX)}…` : raw,
+    preview: lean ? "" : raw.length > PREVIEW_MAX ? `${raw.slice(0, PREVIEW_MAX)}…` : raw,
   };
 }
 
@@ -71,6 +77,7 @@ export function createAsyncStorageAdapter(storage: AsyncStorageApi): AsyncStorag
   /** Chaves que o adapter conhece — para distinguir created de updated. */
   const knownKeys = new Set<string>();
   let primed = false;
+  let sortedKeys: string[] | null = null;
 
   /** Supressão de eco (plano §3.4): escritas do Studio pendentes por chave. */
   const pendingStudioWrites = new Map<string, number>();
@@ -81,10 +88,21 @@ export function createAsyncStorageAdapter(storage: AsyncStorageApi): AsyncStorag
     }
   }
 
-  async function primeKnownKeys(): Promise<void> {
-    if (primed) return;
-    for (const key of await storage.getAllKeys()) knownKeys.add(key);
+  async function refreshKnownKeys(): Promise<void> {
+    const keys = await storage.getAllKeys();
+    knownKeys.clear();
+    for (const key of keys) knownKeys.add(key);
+    sortedKeys = sortKeys(keys);
     primed = true;
+  }
+
+  async function primeKnownKeys(): Promise<void> {
+    if (!primed) await refreshKnownKeys();
+  }
+
+  function keyIndex(): string[] {
+    if (sortedKeys === null) sortedKeys = sortKeys([...knownKeys]);
+    return sortedKeys;
   }
 
   /**
@@ -102,6 +120,20 @@ export function createAsyncStorageAdapter(storage: AsyncStorageApi): AsyncStorag
     return false;
   }
 
+  function markStudioWrite(key: string): void {
+    const now = Date.now();
+    for (const [pendingKey, expiresAt] of pendingStudioWrites) {
+      if (expiresAt <= now) pendingStudioWrites.delete(pendingKey);
+    }
+    pendingStudioWrites.delete(key);
+    pendingStudioWrites.set(key, now + ECHO_TTL_MS);
+    while (pendingStudioWrites.size > PENDING_WRITE_LIMIT) {
+      const oldest = pendingStudioWrites.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      pendingStudioWrites.delete(oldest);
+    }
+  }
+
   function emit(change: KeyValueChange): void {
     for (const listener of listeners) listener(change);
   }
@@ -115,6 +147,7 @@ export function createAsyncStorageAdapter(storage: AsyncStorageApi): AsyncStorag
       source,
       entry: toEntry(key, raw),
     };
+    if (!knownKeys.has(key)) sortedKeys = null;
     knownKeys.add(key);
     emit(change);
   }
@@ -122,6 +155,7 @@ export function createAsyncStorageAdapter(storage: AsyncStorageApi): AsyncStorag
   function emitRemove(key: string, source: ChangeSource): void {
     if (!knownKeys.has(key)) return;
     knownKeys.delete(key);
+    sortedKeys = null;
     emit({ key, change: "removed", source, entry: null });
   }
 
@@ -136,15 +170,19 @@ export function createAsyncStorageAdapter(storage: AsyncStorageApi): AsyncStorag
 
     async listKeys(instanceId, options) {
       assertInstance(instanceId);
-      await primeKnownKeys();
+      // A primeira página abre um novo snapshot dos nomes. Páginas seguintes
+      // reutilizam o mesmo índice ordenado até alguma escrita invalidá-lo.
+      if (options?.afterKey === undefined) await refreshKnownKeys();
+      else await primeKnownKeys();
       // Só nomes primeiro (barato). Valores: apenas os da página, em lotes
       // curtos com yield — um dataset de GB nunca é materializado inteiro.
-      const { pageKeys, nextAfterKey, total } = pageOfKeys(await storage.getAllKeys(), options);
+      const { pageKeys, nextAfterKey, total } = pageOfSortedKeys(keyIndex(), options);
+      const lean = options?.lean ?? false;
       const entries: KeyEntry[] = [];
       for (let i = 0; i < pageKeys.length; i += KEY_READ_BATCH) {
         const pairs = await storage.multiGet(pageKeys.slice(i, i + KEY_READ_BATCH));
         for (const [key, raw] of pairs) {
-          if (raw !== null) entries.push(toEntry(key, raw));
+          if (raw !== null) entries.push(toEntry(key, raw, lean));
         }
         if (i + KEY_READ_BATCH < pageKeys.length) await breathe();
       }
@@ -163,18 +201,24 @@ export function createAsyncStorageAdapter(storage: AsyncStorageApi): AsyncStorag
       // O evento de escrita do Studio sai SEMPRE por aqui, uma vez só.
       // Se o storage estiver instrumentado pelo shim, o eco chega em
       // notifyAppWrite e é engolido pelo consumeStudioEcho.
-      pendingStudioWrites.set(key, Date.now() + ECHO_TTL_MS);
-      await storage.setItem(key, serialize(value));
-      pendingStudioWrites.delete(key);
+      markStudioWrite(key);
+      try {
+        await storage.setItem(key, serialize(value));
+      } finally {
+        pendingStudioWrites.delete(key);
+      }
       await emitWrite(key, "studio");
     },
 
     async remove(instanceId, key) {
       assertInstance(instanceId);
       await primeKnownKeys();
-      pendingStudioWrites.set(key, Date.now() + ECHO_TTL_MS);
-      await storage.removeItem(key);
-      pendingStudioWrites.delete(key);
+      markStudioWrite(key);
+      try {
+        await storage.removeItem(key);
+      } finally {
+        pendingStudioWrites.delete(key);
+      }
       emitRemove(key, "studio");
     },
 

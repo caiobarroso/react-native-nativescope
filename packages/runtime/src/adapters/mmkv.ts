@@ -1,6 +1,11 @@
 import type { KeyEntry, StorageValue, ChangeSource } from "@rnsi/protocol";
 import type { KeyValueAdapter, KeyValueChange } from "../adapter.ts";
-import { KEY_READ_BATCH, breathe, pageOfKeys } from "../key-pagination.ts";
+import {
+  KEY_READ_BATCH,
+  breathe,
+  pageOfSortedKeys,
+  sortKeys,
+} from "../key-pagination.ts";
 
 /**
  * Interface mínima de uma instância MMKV (react-native-mmkv v2/v3).
@@ -20,6 +25,7 @@ export interface MMKVInstanceLike {
 
 const PREVIEW_MAX = 120;
 const ECHO_TTL_MS = 500;
+const PENDING_WRITE_LIMIT = 2_000;
 
 /**
  * MMKV não tem introspecção de tipo: `"123"` e `123` são indistinguíveis
@@ -71,14 +77,17 @@ function toBase64(binary: string): string {
   return out;
 }
 
-function toEntry(key: string, value: StorageValue): KeyEntry {
+function toEntry(key: string, value: StorageValue, lean = false): KeyEntry {
   const serialized = value.type === "null" ? "null" : String(value.value);
   return {
     key,
     valueType: value.type,
     approxSize: serialized.length,
-    preview:
-      serialized.length > PREVIEW_MAX ? `${serialized.slice(0, PREVIEW_MAX)}…` : serialized,
+    preview: lean
+      ? ""
+      : serialized.length > PREVIEW_MAX
+        ? `${serialized.slice(0, PREVIEW_MAX)}…`
+        : serialized,
   };
 }
 
@@ -93,6 +102,7 @@ export function createMMKVAdapter(): MMKVAdapter {
   interface Tracked {
     instance: MMKVInstanceLike;
     knownKeys: Set<string>;
+    sortedKeys: string[] | null;
     listeners: Set<(change: KeyValueChange) => void>;
     pendingStudioWrites: Map<string, number>;
     subscription: { remove(): void } | null;
@@ -116,6 +126,20 @@ export function createMMKVAdapter(): MMKVAdapter {
     return false;
   }
 
+  function markStudioWrite(t: Tracked, key: string): void {
+    const now = Date.now();
+    for (const [pendingKey, expiresAt] of t.pendingStudioWrites) {
+      if (expiresAt <= now) t.pendingStudioWrites.delete(pendingKey);
+    }
+    t.pendingStudioWrites.delete(key);
+    t.pendingStudioWrites.set(key, now + ECHO_TTL_MS);
+    while (t.pendingStudioWrites.size > PENDING_WRITE_LIMIT) {
+      const oldest = t.pendingStudioWrites.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      t.pendingStudioWrites.delete(oldest);
+    }
+  }
+
   function emit(t: Tracked, change: KeyValueChange): void {
     for (const listener of t.listeners) listener(change);
   }
@@ -124,12 +148,14 @@ export function createMMKVAdapter(): MMKVAdapter {
     if (!t.instance.contains(key)) {
       if (!t.knownKeys.has(key)) return;
       t.knownKeys.delete(key);
+      t.sortedKeys = null;
       emit(t, { key, change: "removed", source, entry: null });
       return;
     }
     const value = readValue(t.instance, key);
     if (value === null) return;
     const change: KeyValueChange["change"] = t.knownKeys.has(key) ? "updated" : "created";
+    if (change === "created") t.sortedKeys = null;
     t.knownKeys.add(key);
     emit(t, { key, change, source, entry: toEntry(key, value) });
   }
@@ -157,9 +183,11 @@ export function createMMKVAdapter(): MMKVAdapter {
 
     registerInstance(instanceId, instance) {
       if (tracked.has(instanceId)) return;
+      const keys = [...instance.getAllKeys()];
       const t: Tracked = {
         instance,
-        knownKeys: new Set(instance.getAllKeys()),
+        knownKeys: new Set(keys),
+        sortedKeys: sortKeys(keys),
         listeners: new Set(),
         pendingStudioWrites: new Map(),
         subscription: null,
@@ -186,16 +214,22 @@ export function createMMKVAdapter(): MMKVAdapter {
 
     async listKeys(instanceId, options) {
       const t = get(instanceId);
+      if (options?.afterKey === undefined || t.sortedKeys === null) {
+        const keys = [...t.instance.getAllKeys()];
+        t.knownKeys = new Set(keys);
+        t.sortedKeys = sortKeys(keys);
+      }
       // Recorta a janela sobre os NOMES; valores só da página, em lotes
       // curtos com yield (leituras MMKV são síncronas — o yield impede que
       // uma página presa em valores grandes monopolize a JS thread).
-      const { pageKeys, nextAfterKey, total } = pageOfKeys(t.instance.getAllKeys(), options);
+      const { pageKeys, nextAfterKey, total } = pageOfSortedKeys(t.sortedKeys ?? [], options);
+      const lean = options?.lean ?? false;
       const entries: KeyEntry[] = [];
       for (let i = 0; i < pageKeys.length; i += KEY_READ_BATCH) {
         for (const key of pageKeys.slice(i, i + KEY_READ_BATCH)) {
           const value = readValue(t.instance, key);
           if (value !== null) {
-            entries.push(toEntry(key, value));
+            entries.push(toEntry(key, value, lean));
             t.knownKeys.add(key);
           }
         }
@@ -210,23 +244,30 @@ export function createMMKVAdapter(): MMKVAdapter {
 
     async set(instanceId, key, value) {
       const t = get(instanceId);
-      t.pendingStudioWrites.set(key, Date.now() + ECHO_TTL_MS);
-      switch (value.type) {
-        case "string":
-        case "json":
-          t.instance.set(key, value.value);
-          break;
-        case "number":
-          t.instance.set(key, value.value);
-          break;
-        case "boolean":
-          t.instance.set(key, value.value);
-          break;
-        case "null":
-          t.instance.delete(key);
-          break;
-        case "buffer":
-          throw new Error("escrita de buffer não suportada no MVP");
+      if (value.type === "buffer") {
+        throw new Error("buffer writes are not supported");
+      }
+      markStudioWrite(t, key);
+      try {
+        switch (value.type) {
+          case "string":
+          case "json":
+            t.instance.set(key, value.value);
+            break;
+          case "number":
+            t.instance.set(key, value.value);
+            break;
+          case "boolean":
+            t.instance.set(key, value.value);
+            break;
+          case "null":
+            t.instance.delete(key);
+            break;
+        }
+        t.sortedKeys = null;
+      } catch (error) {
+        t.pendingStudioWrites.delete(key);
+        throw error;
       }
       // Ao contrário do AsyncStorage, o MMKV TEM listener nativo e ele
       // dispara para qualquer escrita — inclusive esta. O evento sai por
@@ -239,8 +280,14 @@ export function createMMKVAdapter(): MMKVAdapter {
 
     async remove(instanceId, key) {
       const t = get(instanceId);
-      t.pendingStudioWrites.set(key, Date.now() + ECHO_TTL_MS);
-      t.instance.delete(key);
+      markStudioWrite(t, key);
+      try {
+        t.instance.delete(key);
+        t.sortedKeys = null;
+      } catch (error) {
+        t.pendingStudioWrites.delete(key);
+        throw error;
+      }
       if (!t.subscription && t.pendingStudioWrites.delete(key)) {
         emitChange(t, key, "studio");
       }

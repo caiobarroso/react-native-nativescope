@@ -34,6 +34,7 @@ export interface ExpoSqliteAdapter extends DatabaseAdapter {
 
 const ECHO_TTL_MS = 800;
 const RECENT_EVENT_TTL_MS = 250;
+const RECENT_EVENT_LIMIT = 2_000;
 const DEFAULT_SELECT_LIMIT = 200;
 const ROWID_ALIAS = "__rnsi_rowid__";
 /** Contagem cacheada vale por este tempo além da invalidação por evento. */
@@ -46,7 +47,7 @@ function quoteIdent(name: string): string {
 
 function toParam(value: CellValue): string | number | null {
   if (value !== null && typeof value === "object") {
-    throw new Error("escrita de BLOB não suportada no MVP");
+    throw new Error("BLOB writes are not supported");
   }
   return value;
 }
@@ -120,6 +121,11 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       change.rowId === null ? `${change.table}:*` : `${change.table}:${change.rowId}`,
       now + RECENT_EVENT_TTL_MS,
     );
+    while (t.recentEvents.size > RECENT_EVENT_LIMIT) {
+      const oldest = t.recentEvents.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      t.recentEvents.delete(oldest);
+    }
     emit(t, change);
   }
 
@@ -245,7 +251,7 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
   function refToWhere(ref: RowRef): { clause: string; params: Array<string | number | null> } {
     if ("rowid" in ref) return { clause: "rowid = ?", params: [ref.rowid] };
     const columns = Object.keys(ref.pk);
-    if (columns.length === 0) throw new Error("ref de PK vazia");
+    if (columns.length === 0) throw new Error("primary-key reference is empty");
     return {
       clause: columns.map((c) => `${quoteIdent(c)} = ?`).join(" AND "),
       params: columns.map((c) => toParam(ref.pk[c] ?? null)),
@@ -339,7 +345,7 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       let orderClause = "";
       if (options.orderBy) {
         if (!columnNames.includes(options.orderBy)) {
-          throw new Error(`coluna desconhecida: ${options.orderBy}`);
+          throw new Error(`unknown column: ${options.orderBy}`);
         }
         orderClause = ` ORDER BY ${quoteIdent(options.orderBy)} ${options.direction === "desc" ? "DESC" : "ASC"}`;
       }
@@ -416,7 +422,7 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       const t = get(instanceId);
       const { columnNames } = await tableInfo(t, table);
       if (!columnNames.includes(column)) {
-        throw new Error(`coluna desconhecida: ${column}`);
+        throw new Error(`unknown column: ${column}`);
       }
       const where = refToWhere(ref);
       const raw = await t.db.getAllAsync(
@@ -538,10 +544,15 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       if (columns.length === 0) return;
       const where = refToWhere(ref);
       markStudioMutation(t, table, "update", "rowid" in ref ? ref.rowid : null);
-      await t.db.runAsync(
-        `UPDATE ${quoteIdent(table)} SET ${columns.map((c) => `${quoteIdent(c)} = ?`).join(", ")} WHERE ${where.clause}`,
-        [...columns.map((c) => toParam(set[c] ?? null)), ...where.params],
-      );
+      try {
+        await t.db.runAsync(
+          `UPDATE ${quoteIdent(table)} SET ${columns.map((c) => `${quoteIdent(c)} = ?`).join(", ")} WHERE ${where.clause}`,
+          [...columns.map((c) => toParam(set[c] ?? null)), ...where.params],
+        );
+      } catch (error) {
+        t.pendingStudioWrites.delete(table);
+        throw error;
+      }
     },
 
     async insert(instanceId, table, values) {
@@ -550,15 +561,20 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       const info = await tableInfo(t, table);
       markStudioMutation(t, table, "insert", null);
       let lastInsertRowId: number | null = null;
-      if (columns.length === 0) {
-        const result = await t.db.runAsync(`INSERT INTO ${quoteIdent(table)} DEFAULT VALUES`);
-        lastInsertRowId = Number(result.lastInsertRowId);
-      } else {
-        const result = await t.db.runAsync(
-          `INSERT INTO ${quoteIdent(table)} (${columns.map(quoteIdent).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
-          columns.map((c) => toParam(values[c] ?? null)),
-        );
-        lastInsertRowId = Number(result.lastInsertRowId);
+      try {
+        if (columns.length === 0) {
+          const result = await t.db.runAsync(`INSERT INTO ${quoteIdent(table)} DEFAULT VALUES`);
+          lastInsertRowId = Number(result.lastInsertRowId);
+        } else {
+          const result = await t.db.runAsync(
+            `INSERT INTO ${quoteIdent(table)} (${columns.map(quoteIdent).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+            columns.map((c) => toParam(values[c] ?? null)),
+          );
+          lastInsertRowId = Number(result.lastInsertRowId);
+        }
+      } catch (error) {
+        t.pendingStudioWrites.delete(table);
+        throw error;
       }
       if (info.identity === "rowid" && Number.isFinite(lastInsertRowId)) {
         return { ref: { rowid: lastInsertRowId } };
@@ -577,7 +593,12 @@ export function createExpoSqliteAdapter(): ExpoSqliteAdapter {
       const t = get(instanceId);
       const where = refToWhere(ref);
       markStudioMutation(t, table, "delete", "rowid" in ref ? ref.rowid : null);
-      await t.db.runAsync(`DELETE FROM ${quoteIdent(table)} WHERE ${where.clause}`, where.params);
+      try {
+        await t.db.runAsync(`DELETE FROM ${quoteIdent(table)} WHERE ${where.clause}`, where.params);
+      } catch (error) {
+        t.pendingStudioWrites.delete(table);
+        throw error;
+      }
     },
 
     async execute(instanceId, sql) {

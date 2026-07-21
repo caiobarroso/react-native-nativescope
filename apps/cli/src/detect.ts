@@ -28,12 +28,12 @@ export function detectProject(projectDir: string): DetectedProject {
   try {
     pkg = JSON.parse(readFileSync(join(projectDir, "package.json"), "utf8"));
   } catch {
-    return { name: "projeto", flavor: "unknown", providers: [] };
+    return { name: "project", flavor: "unknown", providers: [] };
   }
 
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
   return {
-    name: pkg.name ?? "projeto",
+    name: pkg.name ?? "project",
     flavor: deps["expo"] ? "expo" : deps["react-native"] ? "react-native" : "unknown",
     providers: KNOWN_PROVIDERS.filter((p) => deps[p.dependency]),
   };

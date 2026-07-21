@@ -18,18 +18,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
-      - run: pnpm --filter @rnsi/desktop build
-      - name: D5 — UI é cliente web puro (zero @tauri-apps)
+      - run: pnpm --filter react-native-nativescope build
+      - run: pnpm --filter @rnsi/site build
+      - name: Published package is self-contained
+        working-directory: apps/cli
         run: |
-          if grep -rn "@tauri-apps" apps/desktop/src; then
-            echo "violação de D5: a UI não pode importar @tauri-apps" >&2
+          tarball=$(npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" --silent)
+          tar -tzf "$RUNNER_TEMP/$tarball" | grep -q '^package/dist/ui/index.html$'
+          tar -xOf "$RUNNER_TEMP/$tarball" package/package.json > "$RUNNER_TEMP/nativescope-package.json"
+          if grep -q 'workspace:' "$RUNNER_TEMP/nativescope-package.json"; then
+            echo "published package contains a workspace dependency" >&2
             exit 1
           fi
-          echo "✓ nenhum import de @tauri-apps na UI"
+      - name: D5 — Studio is a pure web client (zero @tauri-apps)
+        run: |
+          if grep -rn "@tauri-apps" apps/desktop/src; then
+            echo "D5 violation: the Studio cannot import @tauri-apps" >&2
+            exit 1
+          fi
+          echo "No @tauri-apps imports in the Studio"
 
-  # O guard que impede o shim de vazar para bundles de produção.
-  # Exporta um bundle de RELEASE do playground e varre pelo marcador
-  # __RNSI_SHIM__. Se aparecer, o build quebra — sem exceção.
+  # Prevent instrumentation shims from leaking into production bundles.
   release-bundle-guard:
     runs-on: ubuntu-latest
     steps:
@@ -40,19 +49,19 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter react-native-storage-inspector build
+      - run: pnpm --filter react-native-nativescope build
       - name: Install playground deps
         working-directory: apps/playground
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Export release bundle
         working-directory: apps/playground
         run: npx expo export --platform android --output-dir dist
       - name: Scan bundle for shim leakage
         run: |
           shopt -s globstar nullglob
-          bundles=(apps/playground/dist/**/*.js)
+          bundles=(apps/playground/dist/**/*.js apps/playground/dist/**/*.hbc)
           if [ ${#bundles[@]} -eq 0 ]; then
-            echo "nenhum bundle encontrado — export falhou?" >&2
+            echo "no release bundle found" >&2
             exit 1
           fi
           node scripts/check-release-bundle.mjs "${bundles[@]}"

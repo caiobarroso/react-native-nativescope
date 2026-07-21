@@ -51,11 +51,28 @@ export interface StoreSnapshot {
   errors: string[];
 }
 
+/**
+ * Recorte de captura. `null` (ou ausente) = tudo — comportamento padrão.
+ * Quando definido, só os stores listados entram. A granularidade é o
+ * store/instância — não a tabela: o diff de SQLite já quebra por tabela no
+ * resultado, então capturar o banco inteiro não gera ruído.
+ */
+export interface CaptureScope {
+  stores: string[];
+}
+
 export interface StorageSnapshot {
   id: string;
   timestamp: number;
   stores: StoreSnapshot[];
+  /** Recorte usado na captura; `null` = storage inteiro. Reusado no compare. */
+  scope: CaptureScope | null;
 }
+
+export function scopeStoreId(providerId: string, instanceId: string): string {
+  return `${providerId}\u0000${instanceId}`;
+}
+
 
 export interface KeyValueDiff {
   kind: "key";
@@ -95,7 +112,7 @@ export interface SnapshotDiff {
 }
 
 export function snapshotLabel(snapshot: StorageSnapshot): string {
-  return new Date(snapshot.timestamp).toLocaleTimeString("pt-BR");
+  return new Date(snapshot.timestamp).toLocaleTimeString("en-US");
 }
 
 export function snapshotStats(snapshot: StorageSnapshot): {
@@ -118,11 +135,15 @@ export function snapshotStats(snapshot: StorageSnapshot): {
 export async function captureSnapshot(
   providers: ProviderDescriptor[],
   onProgress?: (message: string) => void,
+  scope?: CaptureScope | null,
 ): Promise<StorageSnapshot> {
   const stores: StoreSnapshot[] = [];
+  const storeSet = scope ? new Set(scope.stores) : null;
 
   for (const provider of providers) {
     for (const instance of provider.instances) {
+      const storeId = scopeStoreId(provider.providerId, instance.instanceId);
+      if (storeSet && !storeSet.has(storeId)) continue;
       if (provider.capabilities.includes("key-value.read")) {
         onProgress?.(`${provider.label} · ${instance.label}`);
         stores.push(await captureKeyValueStore(provider, instance.instanceId, instance.label));
@@ -138,6 +159,7 @@ export async function captureSnapshot(
     id: `snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     timestamp: Date.now(),
     stores,
+    scope: scope ?? null,
   };
 }
 
@@ -160,7 +182,7 @@ export async function restoreKeyDiff(diff: KeyValueDiff): Promise<void> {
   }
   if (diff.truncated) {
     // Escrever um preview truncado corromperia o dado real.
-    throw new Error("valor grande capturado como preview — restauração indisponível");
+    throw new Error("large value captured as preview — restore unavailable");
   }
   if (diff.before) {
     await setValue(diff.providerId, diff.instanceId, diff.key, diff.before);
@@ -202,7 +224,7 @@ async function captureKeyValueStore(
     });
     if (!complete) {
       errors.push(
-        `instância com mais de ${KEY_VALUE_SNAPSHOT_KEY_LIMIT} chaves — snapshot parcial (${entries.length} capturadas)`,
+        `instance has more than ${KEY_VALUE_SNAPSHOT_KEY_LIMIT} keys — partial snapshot (${entries.length} captured)`,
       );
     }
     const values = await mapLimit(entries, 8, async (entry) => {

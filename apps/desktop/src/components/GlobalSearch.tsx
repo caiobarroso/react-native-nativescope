@@ -127,16 +127,16 @@ export function GlobalSearch() {
                 navigate(grouped[cursor]);
               }
             }}
-            placeholder="Buscar em todos os storages…"
+            placeholder="Search across all storage…"
             className="h-11 flex-1 bg-transparent text-[13px] outline-none placeholder:text-text-subtle"
           />
-          {loading && <span className="text-[11px] text-text-subtle">buscando no device…</span>}
+          {loading && <span className="text-[11px] text-text-subtle">searching on device…</span>}
         </div>
 
         <ol className="max-h-80 overflow-y-auto p-1">
           {query.trim() !== "" && !loading && grouped.length === 0 && (
             <li className="px-3 py-4 text-[12px] text-text-subtle">
-              Nada encontrado em nenhum storage.
+              Nothing found in any storage.
             </li>
           )}
           {grouped.map((hit, i) => (
@@ -204,7 +204,7 @@ async function searchEverywhere(
                 providerLabel: provider.label,
                 instanceId: instance.instanceId,
                 name: table.name,
-                preview: `${table.rowCountIsEstimate ? "~" : ""}${table.rowCount} linhas · ${table.columns.map((c) => c.name).join(", ")}`,
+                preview: `${table.rowCountIsEstimate ? `≈ ${table.rowCount}` : table.rowCount} rows · ${table.columns.map((c) => c.name).join(", ")}`,
               })),
           ),
         );

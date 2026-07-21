@@ -4,9 +4,11 @@ import {
   Database,
   GitCompare,
   KeyRound,
+  PlayCircle,
   RotateCcw,
   ShieldAlert,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { useStudio } from "../lib/store.ts";
@@ -19,16 +21,19 @@ import {
   snapshotLabel,
   snapshotStats,
   valuePreview,
+  type CaptureScope,
   type KeyValueDiff,
   type SnapshotDiff,
   type StorageSnapshot,
 } from "../lib/snapshots.ts";
 import { loadKeys } from "../lib/studio-client.ts";
+import { SnapshotStory } from "./SnapshotStory.tsx";
+import { SnapshotScopePicker } from "./SnapshotScopePicker.tsx";
 
 const CHANGE_LABEL = {
-  created: "criado",
-  updated: "alterado",
-  removed: "removido",
+  created: "created",
+  updated: "updated",
+  removed: "removed",
 } as const;
 
 const CHANGE_CLASS = {
@@ -47,8 +52,11 @@ export function SnapshotTool() {
   const [progress, setProgress] = useState<string | null>(null);
   const [restoreKey, setRestoreKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scope, setScope] = useState<CaptureScope | null>(null);
+  const [showStory, setShowStory] = useState(false);
 
   const selected = snapshots.find((snapshot) => snapshot.id === selectedId) ?? snapshots[0] ?? null;
+  const storyView = showStory || !selected;
   const summary = useMemo(() => {
     if (!diff) return null;
     const keyCreated = diff.keyDiffs.filter((item) => item.change === "created").length;
@@ -63,9 +71,10 @@ export function SnapshotTool() {
   async function capture(): Promise<void> {
     setBusy("capture");
     setError(null);
-    setProgress("preparando...");
+    setShowStory(false);
+    setProgress("preparing...");
     try {
-      const snapshot = await captureSnapshot(providers, setProgress);
+      const snapshot = await captureSnapshot(providers, setProgress, scope);
       setSnapshots((current) => [snapshot, ...current].slice(0, 12));
       setSelectedId(snapshot.id);
       setDiff(null);
@@ -77,13 +86,24 @@ export function SnapshotTool() {
     }
   }
 
+  function deleteSnapshot(id: string): void {
+    setSnapshots((current) => current.filter((snapshot) => snapshot.id !== id));
+    if (selectedId === id) {
+      setSelectedId(null);
+      setDiff(null);
+    }
+  }
+
   async function compare(): Promise<void> {
     if (!selected) return;
     setBusy("compare");
     setError(null);
-    setProgress("capturando estado atual...");
+    setShowStory(false);
+    setProgress("capturing current state...");
     try {
-      const current = await captureSnapshot(providers, setProgress);
+      // Recaptura com o MESMO recorte do baseline — senão o diff acusaria como
+      // "removido" tudo que ficou de fora de um dos lados.
+      const current = await captureSnapshot(providers, setProgress, selected.scope);
       setDiff(diffSnapshots(selected, current));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -111,7 +131,7 @@ export function SnapshotTool() {
     <>
       <button
         onClick={() => setOpen(true)}
-        title="Snapshots e diff"
+        title="Snapshots and diff"
         className="flex items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2.5 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover hover:text-text"
       >
         <Camera size={13} strokeWidth={1.5} />
@@ -129,7 +149,7 @@ export function SnapshotTool() {
           onClick={() => setOpen(false)}
         >
           <section
-            className="flex max-h-[82vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-xl"
+            className="flex max-h-[86vh] min-h-[560px] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-xl"
             onClick={(event) => event.stopPropagation()}
           >
             <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
@@ -137,28 +157,67 @@ export function SnapshotTool() {
               <div className="min-w-0">
                 <h2 className="text-[13px] font-semibold">Snapshots + Diff</h2>
                 <p className="text-[11px] text-text-subtle">
-                  Compare o estado do storage antes e depois de uma ação no app.
+                  Freeze storage, act in your app, see exactly what changed — undo any of it.
                 </p>
               </div>
-              <button
-                onClick={() => void capture()}
-                disabled={busy !== null || providers.length === 0}
-                className="ml-auto rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-50"
-              >
-                {busy === "capture" ? "Capturando..." : "Capturar"}
-              </button>
-              <button
-                onClick={() => void compare()}
-                disabled={busy !== null || !selected}
-                className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover disabled:opacity-50"
-              >
-                <GitCompare size={13} strokeWidth={1.5} />
-                Comparar atual
-              </button>
+
+              <div className="ml-auto flex items-center gap-2">
+                {snapshots.length > 0 && (
+                  <button
+                    onClick={() => setShowStory((v) => !v)}
+                    className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] ${
+                      showStory ? "text-accent" : "text-text-subtle hover:text-text"
+                    }`}
+                    title="How snapshots work"
+                  >
+                    <PlayCircle size={13} strokeWidth={1.5} />
+                    How it works
+                  </button>
+                )}
+
+                <SnapshotScopePicker
+                  providers={providers}
+                  value={scope}
+                  onChange={setScope}
+                  disabled={busy !== null || providers.length === 0}
+                />
+
+                {selected ? (
+                  <>
+                    <button
+                      onClick={() => void compare()}
+                      disabled={busy !== null}
+                      className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-50"
+                    >
+                      <GitCompare size={13} strokeWidth={1.5} />
+                      {busy === "compare" ? "Comparing..." : "Compare with now"}
+                    </button>
+                    <button
+                      onClick={() => void capture()}
+                      disabled={busy !== null}
+                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover disabled:opacity-50"
+                      title="Capture a fresh baseline"
+                    >
+                      <Camera size={13} strokeWidth={1.5} />
+                      {busy === "capture" ? "Capturing..." : "Recapture"}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => void capture()}
+                    disabled={busy !== null || providers.length === 0}
+                    className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-50"
+                  >
+                    <Camera size={13} strokeWidth={1.5} />
+                    {busy === "capture" ? "Capturing..." : "Capture baseline"}
+                  </button>
+                )}
+              </div>
+
               <button
                 onClick={() => setOpen(false)}
                 className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
-                title="Fechar"
+                title="Close"
               >
                 <X size={15} strokeWidth={1.5} />
               </button>
@@ -174,23 +233,24 @@ export function SnapshotTool() {
             <div className="grid min-h-0 flex-1 grid-cols-[260px_1fr]">
               <aside className="min-h-0 border-r border-border bg-surface-sunken">
                 <div className="border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-                  Capturas
+                  Captures
                 </div>
                 <ol className="max-h-full overflow-y-auto p-2">
                   {snapshots.length === 0 && (
                     <li className="rounded-md border border-border bg-surface px-3 py-3 text-[12px] text-text-subtle">
-                      Capture um snapshot, mexa no app, depois compare com o estado atual.
+                      Capture a snapshot, interact with the app, then compare it with the current state.
                     </li>
                   )}
                   {snapshots.map((snapshot) => {
                     const stats = snapshotStats(snapshot);
                     const active = selected?.id === snapshot.id;
                     return (
-                      <li key={snapshot.id} className="mb-2">
+                      <li key={snapshot.id} className="group relative mb-2">
                         <button
                           onClick={() => {
                             setSelectedId(snapshot.id);
                             setDiff(null);
+                            setShowStory(false);
                           }}
                           className={`w-full rounded-md border px-3 py-2 text-left ${
                             active
@@ -198,15 +258,27 @@ export function SnapshotTool() {
                               : "border-border bg-surface hover:bg-surface-hover"
                           }`}
                         >
-                          <div className="mb-1 flex items-center gap-2">
+                          <div className="mb-1 flex items-center gap-2 pr-6">
                             <span className="font-mono text-[12px]">{snapshotLabel(snapshot)}</span>
+                            {snapshot.scope && (
+                              <span className="rounded bg-accent-wash px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-accent">
+                                scoped
+                              </span>
+                            )}
                             {stats.errors > 0 && (
                               <ShieldAlert size={12} strokeWidth={1.5} className="ml-auto text-deleted" />
                             )}
                           </div>
                           <p className="text-[11px] text-text-subtle">
-                            {stats.keys} chaves · {stats.tables} tabelas · {stats.rows} rows
+                            {stats.keys} keys · {stats.tables} tables · {stats.rows} rows
                           </p>
+                        </button>
+                        <button
+                          onClick={() => deleteSnapshot(snapshot.id)}
+                          className="absolute right-1.5 top-1.5 rounded p-1 text-text-subtle opacity-0 transition hover:bg-surface-hover hover:text-deleted focus-visible:opacity-100 group-hover:opacity-100"
+                          title="Delete this capture"
+                        >
+                          <Trash2 size={12} strokeWidth={1.5} />
                         </button>
                       </li>
                     );
@@ -215,34 +287,62 @@ export function SnapshotTool() {
               </aside>
 
               <main className="min-h-0 overflow-y-auto p-4">
-                {!selected && (
-                  <div className="flex h-64 items-center justify-center text-text-subtle">
-                    Nenhum snapshot capturado ainda.
+                {storyView && (
+                  <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center gap-6">
+                    <div>
+                      <h3 className="text-[15px] font-semibold">
+                        See exactly what an action writes to storage
+                      </h3>
+                      <p className="mt-1.5 max-w-xl text-[12px] leading-relaxed text-text-muted">
+                        Freeze a baseline, do <em>one</em> thing in your app — a login, a purchase, a
+                        sync — then compare. Every created, updated and removed key or row is laid
+                        out side by side, and you can undo any of them.
+                      </p>
+                    </div>
+
+                    <SnapshotStory />
+
+                    {!selected ? (
+                      <p className="text-[12px] text-text-subtle">
+                        Hit <b className="text-text-muted">Capture baseline</b> above to start — or
+                        narrow the scope to a single table first.
+                      </p>
+                    ) : (
+                      <button
+                        onClick={() => setShowStory(false)}
+                        className="self-start rounded-md border border-border px-3 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover"
+                      >
+                        Back to snapshot
+                      </button>
+                    )}
                   </div>
                 )}
 
-                {selected && !diff && (
+                {!storyView && selected && !diff && (
                   <div className="rounded-md border border-border bg-surface-sunken p-4">
                     <div className="mb-2 flex items-center gap-2">
                       <Sparkles size={14} strokeWidth={1.5} className="text-accent" />
-                      <span className="font-semibold">Snapshot selecionado</span>
+                      <span className="font-semibold">Baseline ready</span>
                     </div>
                     <p className="text-[12px] text-text-muted">
-                      Snapshot de {new Date(selected.timestamp).toLocaleString("pt-BR")}. Clique em
-                      "Comparar atual" para capturar o estado de agora e ver o diff.
+                      Captured {new Date(selected.timestamp).toLocaleString("en-US")}. Go act in your
+                      app, then hit <b className="text-text">Compare with now</b> to see the diff.
                     </p>
                     <p className="mt-2 text-[11px] text-text-subtle">
-                      SQLite captura até {SQLITE_SNAPSHOT_ROW_LIMIT} rows por tabela para manter a UI responsiva.
+                      {selected.scope
+                        ? "Scoped capture — the comparison uses this same selection."
+                        : "Full-storage capture."}{" "}
+                      SQLite captures up to {SQLITE_SNAPSHOT_ROW_LIMIT} rows per table to keep the UI responsive.
                     </p>
                   </div>
                 )}
 
-                {diff && summary && (
+                {!storyView && diff && summary && (
                   <div className="flex flex-col gap-3">
                     <div className="grid grid-cols-6 gap-2">
-                      <Metric label="chaves +" value={summary.keyCreated} tone="created" />
-                      <Metric label="chaves ~" value={summary.keyUpdated} tone="updated" />
-                      <Metric label="chaves -" value={summary.keyRemoved} tone="removed" />
+                      <Metric label="keys +" value={summary.keyCreated} tone="created" />
+                      <Metric label="keys ~" value={summary.keyUpdated} tone="updated" />
+                      <Metric label="keys -" value={summary.keyRemoved} tone="removed" />
                       <Metric label="rows +" value={summary.rowAdded} tone="created" />
                       <Metric label="rows ~" value={summary.rowUpdated} tone="updated" />
                       <Metric label="rows -" value={summary.rowRemoved} tone="removed" />
@@ -258,7 +358,7 @@ export function SnapshotTool() {
 
                     {diff.keyDiffs.length === 0 && diff.tableDiffs.length === 0 && (
                       <div className="rounded-md border border-border bg-surface-sunken p-4 text-[12px] text-text-muted">
-                        Nada mudou entre o snapshot e o estado atual.
+                        Nothing changed between the snapshot and the current state.
                       </div>
                     )}
 
@@ -284,17 +384,17 @@ export function SnapshotTool() {
                                     </span>
                                   </div>
                                   <p className="truncate font-mono text-[11px] text-text-subtle">
-                                    antes: {valuePreview(item.before)}
+                                    before: {valuePreview(item.before)}
                                   </p>
                                   <p className="truncate font-mono text-[11px] text-text-muted">
-                                    depois: {valuePreview(item.after)}
+                                    after: {valuePreview(item.after)}
                                   </p>
                                 </div>
                                 <button
                                   onClick={() => void restore(item)}
                                   disabled={restoreKey === restoreId}
                                   className="self-center rounded-md border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-surface-hover disabled:opacity-50"
-                                  title="Restaurar valor do snapshot"
+                                  title="Restore snapshot value"
                                 >
                                   <RotateCcw size={12} strokeWidth={1.5} />
                                 </button>
@@ -329,7 +429,7 @@ export function SnapshotTool() {
                                 <span className="text-deleted">-{table.removed.length}</span>
                                 {table.truncated && (
                                   <span className="ml-2 text-text-subtle">
-                                    diff limitado às primeiras {SQLITE_SNAPSHOT_ROW_LIMIT} rows
+                                    diff limited to the first {SQLITE_SNAPSHOT_ROW_LIMIT} rows
                                   </span>
                                 )}
                               </p>

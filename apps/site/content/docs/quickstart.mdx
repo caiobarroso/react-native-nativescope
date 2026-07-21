@@ -1,0 +1,115 @@
+---
+title: Quickstart
+description: Install NativeScope, start your app through it, and open the studio.
+---
+
+## Install
+
+Add it as a development dependency. It must never be a runtime dependency.
+
+<InstallCommand install="react-native-nativescope" />
+
+## Run
+
+Start your project through NativeScope instead of starting Metro directly.
+
+<InstallCommand run="nativescope" />
+
+That single command does four things:
+
+1. Inspects your `package.json` and reports which storage libraries it found.
+2. Starts Metro with the NativeScope resolver attached.
+3. Sets up an `adb reverse` tunnel if an Android device is connected, and keeps it alive if the
+   cable drops or the adb server restarts.
+4. Opens the studio in your browser at `http://127.0.0.1:4782`.
+
+To attach the resolver, NativeScope creates `metro.config.js` when the project has none. If a
+JavaScript Metro config already exists, it is preserved as `metro.config.original.js` and a small
+delegate is generated in its place. This wrapper is safe to keep: release builds resolve the real
+storage modules directly. The generated file also includes exact rollback instructions.
+
+Now launch your app the way you normally would. The moment it connects, its storages appear in the
+sidebar.
+
+At this point, discovery, inspection and writes in both directions are working. No app file is
+required for that core workflow.
+
+## Keep cached screens in sync (optional)
+
+NativeScope changes the real storage value immediately. If your screen renders that value through
+React Query, its in-memory cache may continue showing the previous value until the query runs
+again. Add this root file when you want NativeScope to invalidate that cache automatically:
+
+```ts
+// nativescope.config.ts
+import { defineNativeScopeConfig } from "react-native-nativescope/app";
+
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      reactQuery: true,
+      indicator: true,
+    },
+  },
+});
+```
+
+`reactQuery: true` keeps React Query-backed screens reactive. `indicator: true` adds the small
+in-app confirmation when an edit arrives from the studio. Both are optional and neither is needed
+for storage discovery. See [Configuration](/docs/configuration) for individual options and filters.
+
+## Verify it worked
+
+The startup output tells you what was detected before anything else happens:
+
+```
+NativeScope
+
+Project: my-app
+Detected in package.json:
+  ✓ AsyncStorage
+  ✓ MMKV
+```
+
+This startup list is an informational dependency check. Runtime discovery follows the modules your
+app actually imports and the MMKV instances or SQLite databases it opens. If a direct dependency
+you expected is missing here, check the target project's `package.json` and the `--project` path.
+
+## Already running Metro?
+
+If you manage Metro yourself, start NativeScope without it and point your own Metro config at the
+NativeScope wrapper.
+
+<InstallCommand run="nativescope --no-metro" />
+
+```js
+// metro.config.js
+const { withNativeScope } = require("react-native-nativescope/metro");
+
+module.exports = withNativeScope(config);
+```
+
+NativeScope deliberately leaves `metro.config.cjs`, `.mjs`, and `.ts` files untouched because
+rewriting their module format would be unsafe. For those variants, add the wrapper manually as
+shown above; the CLI prints the same instruction and does not start a second Metro process.
+
+## Common adjustments
+
+Use a different port:
+
+<InstallCommand run="nativescope --port 5000" />
+
+Run against a project in another directory:
+
+<InstallCommand run="nativescope --project ../other-app" />
+
+Do not open the browser automatically:
+
+<InstallCommand run="nativescope --no-open" />
+
+The full list is in the [CLI reference](/docs/cli).
+
+## Next
+
+Read the [React Query bridge](/docs/react-query) for automatic discovery, custom QueryClient setup
+and precise invalidation filters.

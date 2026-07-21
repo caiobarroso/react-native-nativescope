@@ -43,18 +43,31 @@ export function createTransport(options: TransportOptions): Transport {
     socket = ws;
 
     ws.addEventListener("open", () => {
+      if (socket !== ws || closedByUser) {
+        ws.close();
+        return;
+      }
       connected = true;
       attempt = 0;
       options.onOpen();
     });
 
     ws.addEventListener("message", (event) => {
+      if (socket !== ws) return;
       if (typeof event.data === "string") options.onMessage(event.data);
     });
 
     const scheduleReconnect = () => {
       if (socket !== ws) return; // socket antigo, ignora
       socket = null;
+      // Some WebSocket implementations emit `error` without closing the
+      // underlying connection. Close it explicitly before replacing it so a
+      // reconnect cycle cannot leave stale native sockets behind.
+      try {
+        ws.close();
+      } catch {
+        // Already closed or closing.
+      }
       if (connected) {
         connected = false;
         options.onClose();

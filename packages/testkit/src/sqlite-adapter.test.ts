@@ -122,7 +122,7 @@ describe("expo-sqlite adapter", () => {
     expect(await adapter.cell("app.db", "visits", { rowid: 2 }, "startedAt")).toBeNull();
     await expect(
       adapter.cell("app.db", "visits", { rowid: 1 }, "nope; DROP TABLE visits"),
-    ).rejects.toThrow("coluna desconhecida");
+    ).rejects.toThrow("unknown column");
   });
 
   it("busca no device: LIKE nas tabelas devolve só matches com ref e snippet", async () => {
@@ -162,7 +162,7 @@ describe("expo-sqlite adapter", () => {
         offset: 0,
         orderBy: "pdv; DROP TABLE visits",
       }),
-    ).rejects.toThrow("coluna desconhecida");
+    ).rejects.toThrow("unknown column");
   });
 
   it("edita célula por rowid e emite evento studio", async () => {

@@ -165,7 +165,7 @@ export async function handleCommand(
 
     const adapter = registry.get(command.payload.providerId);
     if (!adapter) {
-      return fail("unknown-provider", `provider não registrado: ${command.payload.providerId}`);
+      return fail("unknown-provider", `provider is not registered: ${command.payload.providerId}`);
     }
 
     switch (command.type) {
@@ -177,12 +177,12 @@ export async function handleCommand(
       case "key-value.search":
       case "key-value.export": {
         if (!isKeyValueAdapter(adapter)) {
-          return fail("unsupported-capability", `${adapter.providerId} não é key-value`);
+          return fail("unsupported-capability", `${adapter.providerId} is not a key-value provider`);
         }
         switch (command.type) {
           case "key-value.list": {
-            const { instanceId, afterKey, limit } = command.payload;
-            return succeed(await adapter.listKeys(instanceId, { afterKey, limit }));
+            const { instanceId, afterKey, limit, lean } = command.payload;
+            return succeed(await adapter.listKeys(instanceId, { afterKey, limit, lean }));
           }
           case "key-value.get":
             return succeed(
@@ -240,7 +240,7 @@ export async function handleCommand(
     }
 
     if (!isDatabaseAdapter(adapter)) {
-      return fail("unsupported-capability", `${adapter.providerId} não é database`);
+      return fail("unsupported-capability", `${adapter.providerId} is not a database provider`);
     }
     switch (command.type) {
       case "database.tables":

@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { withStorageInspector, SHIM_DIR, SESSION_MODULE, APP_DIR } =
-  require("../metro/withStorageInspector.cjs") as {
+const { withNativeScope, SHIM_DIR, SESSION_MODULE, CONFIG_MODULE, APP_DIR } =
+  require("../metro/withNativeScope.cjs") as {
     APP_DIR: string;
-    withStorageInspector: (
+    withNativeScope: (
       config: Record<string, unknown>,
       options?: { sessionFile?: string; projectRoot?: string },
     ) => {
@@ -20,9 +22,11 @@ const { withStorageInspector, SHIM_DIR, SESSION_MODULE, APP_DIR } =
     };
     SHIM_DIR: string;
     SESSION_MODULE: string;
+    CONFIG_MODULE: string;
   };
 
 const ASYNC_STORAGE = "@react-native-async-storage/async-storage";
+const REACT_QUERY = "@tanstack/react-query";
 
 function fakeContext(overrides: Record<string, unknown> = {}) {
   const calls: Array<{ moduleName: string }> = [];
@@ -38,23 +42,23 @@ function fakeContext(overrides: Record<string, unknown> = {}) {
   return { context, calls };
 }
 
-describe("withStorageInspector", () => {
+describe("withNativeScope", () => {
   it("intercepta AsyncStorage em dev e entrega o shim", () => {
-    const wrapped = withStorageInspector({});
+    const wrapped = withNativeScope({});
     const { context } = fakeContext();
     const result = wrapped.resolver.resolveRequest(context, ASYNC_STORAGE, "ios");
     expect(result.filePath).toBe(join(SHIM_DIR, "async-storage.js"));
   });
 
   it("NÃO intercepta em bundle de produção (dev === false)", () => {
-    const wrapped = withStorageInspector({});
+    const wrapped = withNativeScope({});
     const { context } = fakeContext({ dev: false });
     const result = wrapped.resolver.resolveRequest(context, ASYNC_STORAGE, "ios");
     expect(result.filePath).toBe(`/real/${ASYNC_STORAGE}`);
   });
 
   it("anti-loop: pedido vindo do próprio shim resolve o módulo real", () => {
-    const wrapped = withStorageInspector({});
+    const wrapped = withNativeScope({});
     const { context } = fakeContext({
       originModulePath: join(SHIM_DIR, "async-storage.js"),
     });
@@ -63,14 +67,23 @@ describe("withStorageInspector", () => {
   });
 
   it("módulos não interceptados passam direto", () => {
-    const wrapped = withStorageInspector({});
+    const wrapped = withNativeScope({});
     const { context } = fakeContext();
     const result = wrapped.resolver.resolveRequest(context, "react", "ios");
     expect(result.filePath).toBe("/real/react");
   });
 
+  it("resolve React do /app a partir do projeto consumidor", () => {
+    const reactEntry = require.resolve("react");
+    const projectRoot = dirname(dirname(reactEntry));
+    const wrapped = withNativeScope({}, { projectRoot });
+    const { context } = fakeContext({ originModulePath: join(APP_DIR, "index.cjs") });
+    const result = wrapped.resolver.resolveRequest(context, "react", "android");
+    expect(result.filePath).toBe(reactEntry);
+  });
+
   it("estende watchFolders com a raiz do pacote e nodeModulesPaths com o do projeto", () => {
-    const wrapped = withStorageInspector(
+    const wrapped = withNativeScope(
       { watchFolders: ["/existente"] },
       { projectRoot: "/meu/app" },
     ) as unknown as {
@@ -84,15 +97,22 @@ describe("withStorageInspector", () => {
   });
 
   it("intercepta react-native-mmkv com o shim de auto-discovery", () => {
-    const wrapped = withStorageInspector({});
+    const wrapped = withNativeScope({});
     const { context } = fakeContext();
     const result = wrapped.resolver.resolveRequest(context, "react-native-mmkv", "android");
     expect(result.filePath).toBe(join(SHIM_DIR, "mmkv.js"));
   });
 
+  it("intercepta React Query em dev para auto-discovery de QueryClient", () => {
+    const wrapped = withNativeScope({});
+    const { context } = fakeContext();
+    const result = wrapped.resolver.resolveRequest(context, REACT_QUERY, "android");
+    expect(result.filePath).toBe(join(SHIM_DIR, "react-query.js"));
+  });
+
   it("compõe resolveRequest existente do projeto em vez de substituir", () => {
     const custom: string[] = [];
-    const wrapped = withStorageInspector({
+    const wrapped = withNativeScope({
       resolver: {
         resolveRequest: (_ctx: unknown, moduleName: string) => {
           custom.push(moduleName);
@@ -110,7 +130,7 @@ describe("withStorageInspector", () => {
   });
 
   it("require de storage ausente vindo do /app resolve para o stub, não quebra o bundle", () => {
-    const wrapped = withStorageInspector({});
+    const wrapped = withNativeScope({});
     const context = {
       dev: true,
       originModulePath: join(APP_DIR, "index.cjs"),
@@ -123,14 +143,14 @@ describe("withStorageInspector", () => {
   });
 
   it("require de storage PRESENTE vindo do /app segue o fluxo normal (shim em dev)", () => {
-    const wrapped = withStorageInspector({});
+    const wrapped = withNativeScope({});
     const { context } = fakeContext({ originModulePath: join(APP_DIR, "index.cjs") });
     const result = wrapped.resolver.resolveRequest(context, ASYNC_STORAGE, "android");
     expect(result.filePath).toBe(join(SHIM_DIR, "async-storage.js"));
   });
 
   it("resolve o módulo de sessão para o stub quando a CLI não escreveu o arquivo", () => {
-    const wrapped = withStorageInspector({}, { sessionFile: "/nope/nada.js" });
+    const wrapped = withNativeScope({}, { sessionFile: "/nope/nada.js" });
     const { context } = fakeContext({ originModulePath: join(SHIM_DIR, "async-storage.js") });
     const result = wrapped.resolver.resolveRequest(context, SESSION_MODULE, "ios");
     expect(result.filePath).toBe(join(SHIM_DIR, "no-session.js"));
@@ -139,9 +159,35 @@ describe("withStorageInspector", () => {
   it("resolve o módulo de sessão para o arquivo da CLI quando existe", () => {
     // usa um arquivo que certamente existe
     const sessionFile = join(SHIM_DIR, "no-session.js");
-    const wrapped = withStorageInspector({}, { sessionFile });
+    const wrapped = withNativeScope({}, { sessionFile });
     const { context } = fakeContext();
     const result = wrapped.resolver.resolveRequest(context, SESSION_MODULE, "ios");
     expect(result.filePath).toBe(sessionFile);
+  });
+
+  it("resolve o módulo de configuração para o stub quando o app não tem config", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "rnsi-no-config-"));
+    try {
+      const wrapped = withNativeScope({}, { projectRoot });
+      const { context } = fakeContext({ originModulePath: join(SHIM_DIR, "_bootstrap.js") });
+      const result = wrapped.resolver.resolveRequest(context, CONFIG_MODULE, "ios");
+      expect(result.filePath).toBe(join(SHIM_DIR, "no-config.js"));
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("resolve nativescope.config.ts do root do app", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "rnsi-config-"));
+    const configFile = join(projectRoot, "nativescope.config.ts");
+    try {
+      writeFileSync(configFile, "export default {};\n");
+      const wrapped = withNativeScope({}, { projectRoot });
+      const { context } = fakeContext({ originModulePath: join(SHIM_DIR, "_bootstrap.js") });
+      const result = wrapped.resolver.resolveRequest(context, CONFIG_MODULE, "ios");
+      expect(result.filePath).toBe(configFile);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });

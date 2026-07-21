@@ -1,0 +1,50 @@
+---
+title: Privacy & security
+description: Where your data goes, which is nowhere, and how the tool is kept out of production.
+---
+
+You are pointing this at real application data, possibly from a real user's device. That deserves a
+precise answer rather than a reassuring adjective.
+
+## Where data goes
+
+Nowhere. The studio is a local web client that connects to your app over `127.0.0.1` on port
+`4782`. Values are read on the device and rendered on your machine. There is no backend, no account,
+no telemetry, and no network hop that leaves your computer.
+
+The studio holds no database of app values. Closing it discards the inspected data; small interface
+preferences such as theme and panel layout may remain in that browser's local storage.
+
+## Session token
+
+Each run generates a random session token that the app must present to connect. It exists so that
+another process on your machine cannot attach to your app's inspection socket. It is generated for
+you; you never need to manage it.
+
+## Staying out of production
+
+Two independent mechanisms, because one is not enough for something that touches storage:
+
+**It is only ever a dev dependency.** The Metro wrapper may remain in your project, but its resolver
+checks Metro's `dev` flag. In a release build every supported import resolves to the real storage
+module; no NativeScope shim is selected.
+
+**The package repository verifies the invariant.** NativeScope's CI exports a release build of its
+real Expo playground and fails if the shim marker is found. This tests the release branch of the
+resolver on every change rather than relying only on convention.
+
+## What the app-facing module does in production
+
+The recommended `nativescope.config.ts` is loaded only from the development shim, so the app-facing
+module is not part of a normal release graph. If you install the API manually, guard it with
+`__DEV__` and `require`; the `/app` entry point is a real module and is not automatically erased from
+an unconditional production import.
+
+## Writes are real writes
+
+Editing a value in the studio writes to the actual storage on the device. There is no sandbox and no
+undo log at the storage layer. Treat it exactly as you would treat a database console pointed at the
+same data.
+
+The one protection that does exist: NativeScope refuses to write back a value it only holds a
+truncated preview of. See [Large datasets](/docs/large-datasets).

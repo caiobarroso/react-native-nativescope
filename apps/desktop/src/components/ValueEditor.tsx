@@ -1,5 +1,6 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Braces,
   Check,
@@ -13,26 +14,25 @@ import {
   ListTree,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Search,
   Table2,
   Trash2,
   X,
 } from "lucide-react";
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-} from "@tanstack/react-table";
 import type { StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
+import { useLayout } from "../lib/layout.ts";
 import { getFullValue, getValue, setValue, removeKey } from "../lib/studio-client.ts";
+import { ResizeHandle } from "./ResizeHandle.tsx";
 
 const HISTORY_LABEL = {
-  created: "criado",
-  updated: "atualizado",
-  removed: "removido",
+  created: "created",
+  updated: "updated",
+  removed: "removed",
 } as const;
 
 export function formatSize(size: number): string {
@@ -81,7 +81,7 @@ function parseJsonDraft(draft: string): { value: unknown; error: null } | { valu
   try {
     return { value: JSON.parse(draft), error: null };
   } catch (cause) {
-    return { value: null, error: cause instanceof Error ? cause.message : "JSON inválido" };
+    return { value: null, error: cause instanceof Error ? cause.message : "Invalid JSON" };
   }
 }
 
@@ -105,8 +105,8 @@ function countJsonNodes(value: unknown): number {
 }
 
 function rootLabel(value: unknown): string {
-  if (Array.isArray(value)) return `${value.length} itens`;
-  if (isJsonRoot(value)) return `${Object.keys(value).length} chaves`;
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (isJsonRoot(value)) return `${Object.keys(value).length} keys`;
   if (value === null) return "null";
   return typeof value;
 }
@@ -247,11 +247,41 @@ function indent(level: number): string {
 }
 
 type JsonPath = Array<string | number>;
+type JsonNewValueType = "string" | "number" | "boolean" | "object" | "array" | "null";
+type JsonChangeAction = "edited" | "row-created" | "field-created" | "deleted" | "duplicated";
 
 type JsonTableRow = {
   index: number;
   value: unknown;
 };
+
+type JsonObjectFieldRow = {
+  key: string;
+  value: unknown;
+};
+
+type JsonGridColumn<Row> = {
+  id: string;
+  width: string;
+  header: ReactNode;
+  cell: (row: Row) => ReactNode;
+  className?: string;
+};
+
+type JsonSchemaField = {
+  name: string;
+  type: JsonNewValueType;
+};
+
+type JsonAddModalState =
+  | { kind: "array"; path: JsonPath; array: unknown[] }
+  | { kind: "field"; path: JsonPath; keys: string[] };
+
+interface EditorToastState {
+  id: number;
+  message: string;
+  undo?: () => Promise<void>;
+}
 
 function pathLabel(segment: string | number): string {
   return typeof segment === "number" ? `#${segment + 1}` : segment;
@@ -263,14 +293,41 @@ function valueKind(value: unknown): string {
   return typeof value;
 }
 
+function valueType(value: unknown): JsonNewValueType {
+  if (Array.isArray(value)) return "array";
+  if (isPlainObject(value)) return "object";
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (value === null) return "null";
+  return "string";
+}
+
 function isCollection(value: unknown): value is JsonRoot {
   return typeof value === "object" && value !== null;
 }
 
+function collectionSize(value: unknown): number | null {
+  if (Array.isArray(value)) return value.length;
+  if (isPlainObject(value)) return Object.keys(value).length;
+  return null;
+}
+
+function isNavigableCollection(value: unknown): value is JsonRoot {
+  const size = collectionSize(value);
+  return size !== null && size > 0;
+}
+
 function collectionLabel(value: unknown): string {
-  if (Array.isArray(value)) return `${value.length} itens`;
-  if (isPlainObject(value)) return `${Object.keys(value).length} campos`;
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (isPlainObject(value)) return `${Object.keys(value).length} fields`;
   return valueKind(value);
+}
+
+function compactValueKind(values: unknown[]): string {
+  const kinds = [...new Set(values.map(valueKind).filter((kind) => kind !== "undefined"))];
+  if (kinds.length === 0) return "unknown";
+  if (kinds.length === 1) return kinds[0] ?? "unknown";
+  return "mixed";
 }
 
 function getAtPath(root: unknown, path: JsonPath): unknown {
@@ -289,22 +346,6 @@ function setAtPath(root: unknown, path: JsonPath, value: unknown): unknown {
   }
   if (isPlainObject(root) && typeof head === "string") {
     return { ...root, [head]: setAtPath(root[head], tail, value) };
-  }
-  return root;
-}
-
-function deleteAtPath(root: unknown, path: JsonPath): unknown {
-  if (path.length === 0) return root;
-  const parentPath = path.slice(0, -1);
-  const leaf = path[path.length - 1];
-  const parent = getAtPath(root, parentPath);
-  if (Array.isArray(parent) && typeof leaf === "number") {
-    return setAtPath(root, parentPath, parent.filter((_, index) => index !== leaf));
-  }
-  if (isPlainObject(parent) && typeof leaf === "string") {
-    const next = { ...parent };
-    delete next[leaf];
-    return setAtPath(root, parentPath, next);
   }
   return root;
 }
@@ -347,14 +388,86 @@ function stringifyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-function defaultValueForArray(array: unknown[]): unknown {
-  const sample = array[0];
-  if (isPlainObject(sample)) return {};
-  if (Array.isArray(sample)) return [];
-  if (typeof sample === "number") return 0;
-  if (typeof sample === "boolean") return false;
-  if (sample === null) return null;
-  return "";
+function storageValueSignature(value: StorageValue): string {
+  if (value.type === "json") {
+    try {
+      return JSON.stringify({ type: value.type, value: JSON.parse(value.value) });
+    } catch {
+      return JSON.stringify({ type: value.type, value: value.value });
+    }
+  }
+  return JSON.stringify(value);
+}
+
+function defaultValueForType(type: JsonNewValueType): unknown {
+  switch (type) {
+    case "string":
+      return "";
+    case "number":
+      return 0;
+    case "boolean":
+      return false;
+    case "object":
+      return {};
+    case "array":
+      return [];
+    case "null":
+      return null;
+  }
+}
+
+function inferTypeFromValues(values: unknown[]): JsonNewValueType {
+  const sample = values.find((value) => value !== undefined && value !== null);
+  return sample === undefined ? "string" : valueType(sample);
+}
+
+function inferArraySchema(array: unknown[]): JsonSchemaField[] {
+  const objectRows = array.filter(isPlainObject).slice(0, 300);
+  const keys = [...new Set(objectRows.flatMap((row) => Object.keys(row)))].slice(0, 24);
+  return keys.map((name) => ({
+    name,
+    type: inferTypeFromValues(objectRows.map((row) => row[name])),
+  }));
+}
+
+function rawDefaultForType(type: JsonNewValueType): string {
+  const value = defaultValueForType(type);
+  if (type === "object" || type === "array") return stringifyJson(value);
+  if (type === "null") return "";
+  return String(value);
+}
+
+function parseNewValue(type: JsonNewValueType, raw: string): { value: unknown } | { error: string } {
+  if (type === "string") return { value: raw };
+  if (type === "number") {
+    const n = Number(raw);
+    return Number.isFinite(n) ? { value: n } : { error: "Invalid number" };
+  }
+  if (type === "boolean") return { value: raw === "true" };
+  if (type === "null") return { value: null };
+  try {
+    const parsed = JSON.parse(raw);
+    if (type === "object" && !isPlainObject(parsed)) return { error: "Enter a JSON object" };
+    if (type === "array" && !Array.isArray(parsed)) return { error: "Enter a JSON array" };
+    return { value: parsed };
+  } catch {
+    return { error: "Invalid JSON" };
+  }
+}
+
+function jsonActionMessage(action: JsonChangeAction): string {
+  switch (action) {
+    case "row-created":
+      return "Row created";
+    case "field-created":
+      return "Field created";
+    case "deleted":
+      return "Removed";
+    case "duplicated":
+      return "Duplicated";
+    case "edited":
+      return "Change saved";
+  }
 }
 
 function searchPreview(value: unknown, budget = 1200): string {
@@ -384,11 +497,17 @@ function searchPreview(value: unknown, budget = 1200): string {
 function JsonPrimitiveEditor({
   value,
   onChange,
+  variant = "field",
 }: {
   value: unknown;
   onChange: (value: unknown) => void;
+  variant?: "field" | "cell";
 }) {
   const [draft, setDraft] = useState(value === null ? "" : String(value ?? ""));
+  const isCell = variant === "cell";
+  const inputClass = isCell
+    ? "h-8 w-full border-0 bg-transparent px-3 font-mono text-[12px] text-text outline-none focus:bg-surface-raised focus-visible:outline-none"
+    : "h-7 w-full rounded-sm border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent";
 
   useEffect(() => {
     setDraft(value === null ? "" : String(value ?? ""));
@@ -404,12 +523,15 @@ function JsonPrimitiveEditor({
     return (
       <button
         type="button"
-        role="switch"
-        aria-checked={value}
-        data-checked={value}
         onClick={() => onChange(!value)}
-        className="rnsi-switch"
-      />
+        className={`w-full text-left font-mono text-[12px] outline-none hover:bg-surface-hover focus-visible:outline-none ${
+          isCell ? "h-8 px-3" : "h-7 rounded-sm border border-transparent px-2 hover:border-border"
+        } ${
+          value ? "text-created" : "text-text-subtle"
+        }`}
+      >
+        {String(value)}
+      </button>
     );
   }
   if (typeof value === "number") {
@@ -423,12 +545,16 @@ function JsonPrimitiveEditor({
           if (event.key === "Enter") event.currentTarget.blur();
           if (event.key === "Escape") setDraft(String(value));
         }}
-        className="h-7 w-full rounded-sm border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent"
+        className={inputClass}
       />
     );
   }
   if (value === null) {
-    return <span className="font-mono text-[12px] text-deleted">null</span>;
+    return (
+      <span className={`block font-mono text-[12px] text-deleted ${isCell ? "px-3 py-2" : ""}`}>
+        null
+      </span>
+    );
   }
   return (
     <input
@@ -439,8 +565,406 @@ function JsonPrimitiveEditor({
         if (event.key === "Enter") event.currentTarget.blur();
         if (event.key === "Escape") setDraft(value === null ? "" : String(value ?? ""));
       }}
-      className="h-7 w-full rounded-sm border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent"
+      className={inputClass}
     />
+  );
+}
+
+function JsonColumnHeader({ label, type }: { label: string; type?: string }) {
+  return (
+    <div className="flex h-full min-w-0 items-center gap-2 px-3">
+      <span className="min-w-0 truncate font-semibold text-text">{label}</span>
+      {type && (
+        <span className="shrink-0 text-[11px] font-normal uppercase text-text-subtle">
+          {type}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Célula de coleção — quando há conteúdo, a própria célula é o alvo de
+ * navegação. Coleção vazia é informativa, sem seta/cursor: não há destino útil.
+ */
+function CollectionCell({ label, onOpen }: { label: string; onOpen?: () => void }) {
+  const content = (
+    <>
+      <Database size={12} strokeWidth={1.5} className="shrink-0 text-accent" />
+      <span className="min-w-0 truncate">{label}</span>
+      {onOpen && (
+        <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[11px] text-text-subtle group-hover:text-accent">
+          open
+          <ChevronRight size={13} strokeWidth={1.5} />
+        </span>
+      )}
+    </>
+  );
+
+  if (!onOpen) {
+    return (
+      <div className="flex h-8 w-full items-center gap-2 px-3 text-left text-text-muted">
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={onOpen}
+      title="Open"
+      className="group flex h-8 w-full cursor-pointer items-center gap-2 px-3 text-left text-text-muted hover:bg-surface-hover hover:text-text"
+    >
+      {content}
+    </button>
+  );
+}
+
+function JsonDataGrid<Row>({
+  columns,
+  rows,
+  getRowKey,
+  emptyLabel,
+}: {
+  columns: Array<JsonGridColumn<Row>>;
+  rows: Row[];
+  getRowKey: (row: Row) => string;
+  emptyLabel: string;
+}) {
+  const templateColumns = columns.map((column) => column.width).join(" ");
+  // Virtualização (plano §C): um array/objeto com dezenas de milhares de
+  // itens vira ~30 nós DOM. Spacers em fluxo normal preservam o grid e o
+  // scroll horizontal (alinhados ao header sticky).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 33,
+    overscan: 12,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const paddingTop = virtualItems[0]?.start ?? 0;
+  const paddingBottom = virtualizer.getTotalSize() - (virtualItems[virtualItems.length - 1]?.end ?? 0);
+
+  return (
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+      <div className="flex min-h-full min-w-full flex-col">
+        <div
+          className="sticky top-0 z-10 grid h-9 shrink-0 border-b border-border bg-surface font-mono text-[12px]"
+          style={{ gridTemplateColumns: templateColumns }}
+        >
+          {columns.map((column) => (
+            <div
+              key={column.id}
+              className={`min-w-0 border-r border-border ${column.className ?? ""}`}
+            >
+              {column.header}
+            </div>
+          ))}
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="flex h-14 shrink-0 items-center border-b border-border px-3 text-[12px] text-text-subtle">
+            {emptyLabel}
+          </div>
+        ) : (
+          <div className="shrink-0">
+            {paddingTop > 0 && <div style={{ height: paddingTop }} />}
+            {virtualItems.map((virtualItem) => {
+              const row = rows[virtualItem.index] as Row;
+              return (
+                <div
+                  key={getRowKey(row)}
+                  className="grid min-h-8 border-b border-border font-mono text-[12px] hover:bg-surface-hover"
+                  style={{ gridTemplateColumns: templateColumns }}
+                >
+                  {columns.map((column) => (
+                    <div
+                      key={column.id}
+                      className={`min-w-0 border-r border-border ${column.className ?? ""}`}
+                    >
+                      {column.cell(row)}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+            {paddingBottom > 0 && <div style={{ height: paddingBottom }} />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function JsonValueDraftInput({
+  type,
+  value,
+  onChange,
+}: {
+  type: JsonNewValueType;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  if (type === "boolean") {
+    return (
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-accent"
+      >
+        <option value="false">false</option>
+        <option value="true">true</option>
+      </select>
+    );
+  }
+  if (type === "null") {
+    return (
+      <div className="flex h-8 items-center rounded-md border border-border bg-surface-sunken px-2 font-mono text-[12px] text-text-subtle">
+        null
+      </div>
+    );
+  }
+  if (type === "object" || type === "array") {
+    return (
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        spellCheck={false}
+        className="min-h-20 w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 font-mono text-[12px] leading-relaxed outline-none focus:border-accent"
+      />
+    );
+  }
+  return (
+    <input
+      type={type === "number" ? "number" : "text"}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className="h-8 w-full rounded-md border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent"
+    />
+  );
+}
+
+function JsonAddDrawer({
+  state,
+  onClose,
+  onCreateArrayItem,
+  onCreateField,
+}: {
+  state: JsonAddModalState;
+  onClose: () => void;
+  onCreateArrayItem: (path: JsonPath, value: unknown) => void;
+  onCreateField: (path: JsonPath, name: string, value: unknown) => string | null;
+}) {
+  const schema = useMemo(
+    () => (state.kind === "array" ? inferArraySchema(state.array) : []),
+    [state],
+  );
+  const [arrayType, setArrayType] = useState<JsonNewValueType>("string");
+  const [arrayValue, setArrayValue] = useState("");
+  const [rowValues, setRowValues] = useState<Record<string, string>>({});
+  const [fieldName, setFieldName] = useState("");
+  const [fieldType, setFieldType] = useState<JsonNewValueType>("string");
+  const [fieldValue, setFieldValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setError(null);
+    if (state.kind === "array") {
+      const nextSchema = inferArraySchema(state.array);
+      if (nextSchema.length > 0) {
+        setRowValues(
+          Object.fromEntries(nextSchema.map((field) => [field.name, rawDefaultForType(field.type)])),
+        );
+      } else {
+        const inferred = inferTypeFromValues(state.array);
+        setArrayType(inferred);
+        setArrayValue(rawDefaultForType(inferred));
+      }
+    } else {
+      setFieldName("");
+      setFieldType("string");
+      setFieldValue(rawDefaultForType("string"));
+    }
+  }, [state]);
+
+  function updateFieldType(type: JsonNewValueType): void {
+    setFieldType(type);
+    setFieldValue(rawDefaultForType(type));
+  }
+
+  function updateArrayType(type: JsonNewValueType): void {
+    setArrayType(type);
+    setArrayValue(rawDefaultForType(type));
+  }
+
+  function create(): void {
+    setError(null);
+    if (state.kind === "array") {
+      if (schema.length > 0) {
+        const row: Record<string, unknown> = {};
+        for (const field of schema) {
+          const parsed = parseNewValue(field.type, rowValues[field.name] ?? rawDefaultForType(field.type));
+          if ("error" in parsed) {
+            setError(`${field.name}: ${parsed.error}`);
+            return;
+          }
+          row[field.name] = parsed.value;
+        }
+        onCreateArrayItem(state.path, row);
+        onClose();
+        return;
+      }
+      const parsed = parseNewValue(arrayType, arrayValue);
+      if ("error" in parsed) {
+        setError(parsed.error);
+        return;
+      }
+      onCreateArrayItem(state.path, parsed.value);
+      onClose();
+      return;
+    }
+
+    const name = fieldName.trim();
+    if (!name) {
+      setError("Enter a field name");
+      return;
+    }
+    const parsed = parseNewValue(fieldType, fieldValue);
+    if ("error" in parsed) {
+      setError(parsed.error);
+      return;
+    }
+    const fieldError = onCreateField(state.path, name, parsed.value);
+    if (fieldError) {
+      setError(fieldError);
+      return;
+    }
+    onClose();
+  }
+
+  return (
+    <aside className="rnsi-drawer-in absolute inset-y-0 right-0 z-30 flex w-[min(520px,100%)] flex-col border-l border-border bg-surface-raised shadow-xl shadow-black/10">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+        <Plus size={15} strokeWidth={1.5} className="text-accent" />
+        <div className="min-w-0">
+          <h2 className="truncate text-[13px] font-semibold">
+            {state.kind === "array" ? "New row" : "New field"}
+          </h2>
+          <p className="truncate text-[11px] text-text-subtle">
+            {state.kind === "array" && schema.length > 0
+              ? "Fields and types inferred from the current collection"
+              : state.kind === "array"
+                ? "No schema detected for this collection"
+                : "Choose the name, type, and value for the new field"}
+          </p>
+        </div>
+        <button
+          onClick={onClose}
+          title="Close"
+          className="ml-auto rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+        >
+          <X size={15} strokeWidth={1.5} />
+        </button>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        {state.kind === "array" && schema.length > 0 ? (
+          <div className="flex flex-col gap-5">
+            {schema.map((field) => (
+              <div key={field.name} className="grid grid-cols-[170px_1fr] gap-4">
+                <div className="min-w-0">
+                  <div className="truncate font-mono text-[12px] font-semibold text-text">
+                    {field.name}
+                  </div>
+                  <div className="mt-1 font-mono text-[10px] uppercase text-text-subtle">
+                    {field.type}
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <JsonValueDraftInput
+                    type={field.type}
+                    value={rowValues[field.name] ?? rawDefaultForType(field.type)}
+                    onChange={(next) => setRowValues((current) => ({ ...current, [field.name]: next }))}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : state.kind === "array" ? (
+          <div className="grid gap-3">
+            <label className="grid gap-1.5">
+              <span className="text-[11px] font-medium text-text-muted">Type</span>
+              <select
+                value={arrayType}
+                onChange={(event) => updateArrayType(event.target.value as JsonNewValueType)}
+                className="h-8 w-44 rounded-md border border-border bg-surface px-2 text-[12px]"
+              >
+                <option value="string">string</option>
+                <option value="number">number</option>
+                <option value="boolean">boolean</option>
+                <option value="object">object</option>
+                <option value="array">array</option>
+                <option value="null">null</option>
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-[11px] font-medium text-text-muted">Value</span>
+              <JsonValueDraftInput type={arrayType} value={arrayValue} onChange={setArrayValue} />
+            </label>
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            <label className="grid gap-1.5">
+              <span className="text-[11px] font-medium text-text-muted">Name</span>
+              <input
+                autoFocus
+                value={fieldName}
+                onChange={(event) => setFieldName(event.target.value)}
+                placeholder="newField"
+                className="h-8 rounded-md border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-[11px] font-medium text-text-muted">Type</span>
+              <select
+                value={fieldType}
+                onChange={(event) => updateFieldType(event.target.value as JsonNewValueType)}
+                className="h-8 w-44 rounded-md border border-border bg-surface px-2 text-[12px]"
+              >
+                <option value="string">string</option>
+                <option value="number">number</option>
+                <option value="boolean">boolean</option>
+                <option value="object">object</option>
+                <option value="array">array</option>
+                <option value="null">null</option>
+              </select>
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-[11px] font-medium text-text-muted">Value</span>
+              <JsonValueDraftInput type={fieldType} value={fieldValue} onChange={setFieldValue} />
+            </label>
+          </div>
+        )}
+      </div>
+
+      <footer className="flex h-12 shrink-0 items-center gap-3 border-t border-border px-4">
+        {error && <span className="min-w-0 flex-1 truncate text-[12px] text-deleted">{error}</span>}
+        {!error && <span className="min-w-0 flex-1 text-[11px] text-text-subtle">Saved automatically after creation.</span>}
+        <button
+          onClick={onClose}
+          className="h-8 min-w-20 rounded-md border border-border px-3 text-[12px] text-text-muted hover:bg-surface-hover"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={create}
+          className="h-8 min-w-20 rounded-md bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-hover"
+        >
+          Create
+        </button>
+      </footer>
+    </aside>
   );
 }
 
@@ -451,134 +975,394 @@ function JsonVisualExplorer({
 }: {
   value: unknown;
   sourceName?: string;
-  onChange: (value: unknown) => void;
+  onChange: (value: unknown, action?: JsonChangeAction) => void;
 }) {
   const [path, setPath] = useState<JsonPath>([]);
   const [query, setQuery] = useState("");
-  const [pageIndex, setPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState(50);
-  const [newFieldName, setNewFieldName] = useState("");
+  const [addModal, setAddModal] = useState<JsonAddModalState | null>(null);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(() => new Set());
   const current = getAtPath(value, path);
 
-  function updatePath(targetPath: JsonPath, nextValue: unknown): void {
-    onChange(setAtPath(value, targetPath, nextValue));
+  function updatePath(targetPath: JsonPath, nextValue: unknown, action: JsonChangeAction = "edited"): void {
+    onChange(setAtPath(value, targetPath, nextValue), action);
   }
 
   function navigate(nextPath: JsonPath): void {
     setPath(nextPath);
     setQuery("");
-    setPageIndex(0);
+    setSelectedItems(new Set());
   }
 
-  const page = useMemo(() => {
+  // Todas as linhas que casam (sem paginar): a virtualização do grid mantém o
+  // DOM em O(viewport), então um scroll único alcança 100% dos itens. A busca
+  // ainda varre só os primeiros 5000 (client-side, com aviso) — a busca
+  // integral do dataset é a global, no device.
+  const arrayView = useMemo(() => {
     if (!Array.isArray(current)) {
-      return { rows: [] as JsonTableRow[], total: 0, limited: false };
+      return { rows: [] as JsonTableRow[], limited: false };
     }
     const q = query.trim().toLowerCase();
     if (!q) {
-      const total = current.length;
-      const safePage = Math.min(pageIndex, Math.max(0, Math.ceil(total / pageSize) - 1));
-      const start = safePage * pageSize;
       return {
-        rows: current
-          .slice(start, start + pageSize)
-          .map((item, offset) => ({ index: start + offset, value: item })),
-        total,
+        rows: current.map((item, index) => ({ index, value: item })),
         limited: false,
       };
     }
-
     const scanLimit = Math.min(current.length, 5000);
-    const pageStart = pageIndex * pageSize;
-    const pageEnd = pageStart + pageSize;
     const matchedRows: JsonTableRow[] = [];
-    let total = 0;
     for (let index = 0; index < scanLimit; index += 1) {
       const item = current[index];
-      if (!searchPreview(item).includes(q)) continue;
-      if (total >= pageStart && total < pageEnd) matchedRows.push({ index, value: item });
-      total += 1;
+      if (searchPreview(item).includes(q)) matchedRows.push({ index, value: item });
     }
-    return { rows: matchedRows, total, limited: scanLimit < current.length };
-  }, [current, query, pageIndex, pageSize]);
+    return { rows: matchedRows, limited: scanLimit < current.length };
+  }, [current, query]);
 
-  const pageCount = Math.max(1, Math.ceil(page.total / pageSize));
-  const safePageIndex = Math.min(pageIndex, pageCount - 1);
-  const pagedRows = page.rows;
+  const objectEntries = useMemo<Array<[string, unknown]>>(() => {
+    if (!isPlainObject(current)) return [];
+    const entries = Object.entries(current);
+    const q = query.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter(([key, child]) => key.toLowerCase().includes(q) || searchPreview(child).includes(q));
+  }, [current, query]);
 
-  const objectColumns = useMemo<ColumnDef<JsonTableRow>[]>(() => {
+  const arrayRows = arrayView.rows;
+  const visibleArrayKeys = arrayRows.map((row) => String(row.index));
+  const allVisibleArraySelected =
+    visibleArrayKeys.length > 0 && visibleArrayKeys.every((key) => selectedItems.has(key));
+  const objectKeys = isPlainObject(current) ? Object.keys(current) : [];
+  const visibleObjectKeys = objectEntries.map(([key]) => key);
+  const allObjectFieldsSelected =
+    visibleObjectKeys.length > 0 && visibleObjectKeys.every((key) => selectedItems.has(key));
+
+  function toggleSelected(key: string): void {
+    setSelectedItems((currentSelection) => {
+      const next = new Set(currentSelection);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleVisibleArrayRows(): void {
+    setSelectedItems((currentSelection) => {
+      const next = new Set(currentSelection);
+      const checked = visibleArrayKeys.length > 0 && visibleArrayKeys.every((key) => next.has(key));
+      for (const key of visibleArrayKeys) {
+        if (checked) next.delete(key);
+        else next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function toggleObjectFields(): void {
+    setSelectedItems((currentSelection) => {
+      const next = new Set(currentSelection);
+      const checked = visibleObjectKeys.length > 0 && visibleObjectKeys.every((key) => next.has(key));
+      for (const key of visibleObjectKeys) {
+        if (checked) next.delete(key);
+        else next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function clearSelection(): void {
+    setSelectedItems(new Set());
+  }
+
+  function deleteSelectedArrayRows(): void {
+    if (!Array.isArray(current) || selectedItems.size === 0) return;
+    const selectedIndexes = [...selectedItems]
+      .map((key) => Number(key))
+      .filter(Number.isInteger)
+      .sort((a, b) => a - b);
+    if (selectedIndexes.length === 0) return;
+    const selected = new Set(selectedIndexes);
+    updatePath(
+      path,
+      current.filter((_, index) => !selected.has(index)),
+      "deleted",
+    );
+    clearSelection();
+  }
+
+  function deleteSelectedObjectFields(): void {
+    if (!isPlainObject(current) || selectedItems.size === 0) return;
+    const next = { ...current };
+    for (const key of selectedItems) delete next[key];
+    updatePath(path, next, "deleted");
+    clearSelection();
+  }
+
+  // Duplicar mora na mesma hierarquia do deletar — via seleção. Um por vez:
+  // duplicar N itens de uma vez raramente é o que se quer e embaralha a ordem.
+  function duplicateSelectedArrayRow(): void {
+    if (!Array.isArray(current) || selectedItems.size !== 1) return;
+    const [key] = [...selectedItems];
+    const index = Number(key);
+    if (!Number.isInteger(index)) return;
+    onChange(duplicateAtPath(value, [...path, index]), "duplicated");
+    clearSelection();
+  }
+
+  function duplicateSelectedObjectField(): void {
+    if (!isPlainObject(current) || selectedItems.size !== 1) return;
+    const [key] = [...selectedItems];
+    if (key === undefined) return;
+    onChange(duplicateAtPath(value, [...path, key]), "duplicated");
+    clearSelection();
+  }
+
+  const arrayRowsHaveObjectShape = Array.isArray(current) && current.some(isPlainObject);
+
+  const arrayGridColumns = useMemo<Array<JsonGridColumn<JsonTableRow>>>(() => {
     if (!Array.isArray(current)) return [];
     const objectRows = current
       .slice(0, 300)
       .map((item, index) => ({ index, value: item }))
       .filter((row) => isPlainObject(row.value));
     const keys = [...new Set(objectRows.flatMap((row) => Object.keys(row.value as Record<string, unknown>)))].slice(0, 12);
-    const cols: ColumnDef<JsonTableRow>[] = [
-      ...keys.map<ColumnDef<JsonTableRow>>((key) => ({
-        id: key,
-        header: key,
-        accessorFn: (row) => (isPlainObject(row.value) ? row.value[key] : undefined),
-        cell: ({ row, getValue }) => {
-          const cellValue = getValue();
-          const cellPath = [...path, row.original.index, key];
-          if (isCollection(cellValue)) {
-            return (
-              <button
-                onClick={() => navigate(cellPath)}
-                className="flex h-8 w-full items-center gap-2 px-2 text-left text-text-muted hover:bg-surface-hover hover:text-text"
-              >
-                <Database size={12} strokeWidth={1.5} className="text-accent" />
-                <span className="truncate">{collectionLabel(cellValue)}</span>
-              </button>
-            );
-          }
-          return (
-            <div className="px-1">
-              <JsonPrimitiveEditor value={cellValue} onChange={(next) => updatePath(cellPath, next)} />
+    if (keys.length === 0) {
+      return [
+        {
+          id: "__select",
+          width: "40px",
+          header: (
+            <div className="flex h-full items-center justify-center px-2">
+              <input
+                type="checkbox"
+                checked={allVisibleArraySelected}
+                onChange={toggleVisibleArrayRows}
+                aria-label="Select visible rows"
+                className="h-3.5 w-3.5 rounded border-border accent-accent"
+              />
             </div>
-          );
+          ),
+          cell: (row) => (
+            <div className="flex h-8 items-center justify-center px-2">
+              <input
+                type="checkbox"
+                checked={selectedItems.has(String(row.index))}
+                onChange={() => toggleSelected(String(row.index))}
+                aria-label="Select row"
+                className="h-3.5 w-3.5 rounded border-border accent-accent"
+              />
+            </div>
+          ),
         },
-      })),
+        {
+          id: "__index",
+          width: "96px",
+          header: <JsonColumnHeader label="#" type="number" />,
+          cell: (row) => (
+            <div className="flex h-8 items-center px-3 text-[11px] text-text-subtle">
+              #{row.index + 1}
+            </div>
+          ),
+        },
+        {
+          id: "value",
+          width: "minmax(260px,1fr)",
+          header: <JsonColumnHeader label="value" type={compactValueKind(current.slice(0, 300))} />,
+          cell: (row) => {
+            if (isCollection(row.value)) {
+              return (
+                <CollectionCell
+                  label={collectionLabel(row.value)}
+                  onOpen={
+                    isNavigableCollection(row.value)
+                      ? () => navigate([...path, row.index])
+                      : undefined
+                  }
+                />
+              );
+            }
+            return (
+              <JsonPrimitiveEditor
+                value={row.value}
+                onChange={(next) => updatePath([...path, row.index], next)}
+                variant="cell"
+              />
+            );
+          },
+        },
+      ];
+    }
+
+    const cols: Array<JsonGridColumn<JsonTableRow>> = [
       {
-        id: "__actions",
-        size: 142,
-        cell: ({ row }) => (
-          <div className="flex items-center justify-end gap-1 px-1">
-            <button
-              onClick={() => navigate([...path, row.original.index])}
-              title="Abrir detalhe"
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
-            >
-              Abrir
-              <ChevronRight size={12} strokeWidth={1.5} />
-            </button>
-            <button
-              onClick={() => onChange(duplicateAtPath(value, [...path, row.original.index]))}
-              title="Duplicar"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
-            >
-              <Copy size={12} strokeWidth={1.5} />
-            </button>
-            <button
-              onClick={() => onChange(deleteAtPath(value, [...path, row.original.index]))}
-              title="Deletar"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-deleted hover:bg-deleted-wash"
-            >
-              <Trash2 size={12} strokeWidth={1.5} />
-            </button>
+        id: "__select",
+        width: "40px",
+        header: (
+          <div className="flex h-full items-center justify-center px-2">
+            <input
+              type="checkbox"
+              checked={allVisibleArraySelected}
+              onChange={toggleVisibleArrayRows}
+              aria-label="Select visible rows"
+              className="h-3.5 w-3.5 rounded border-border accent-accent"
+            />
+          </div>
+        ),
+        cell: (row) => (
+          <div className="flex h-8 items-center justify-center px-2">
+            <input
+              type="checkbox"
+              checked={selectedItems.has(String(row.index))}
+              onChange={() => toggleSelected(String(row.index))}
+              aria-label="Select row"
+              className="h-3.5 w-3.5 rounded border-border accent-accent"
+            />
           </div>
         ),
       },
+      {
+        id: "__index",
+        width: "88px",
+        header: <JsonColumnHeader label="#" type="row" />,
+        cell: (row) => {
+          if (!isNavigableCollection(row.value)) {
+            return (
+              <div className="flex h-8 items-center px-3 text-[11px] text-text-subtle">
+                <span className="tabular-nums">#{row.index + 1}</span>
+              </div>
+            );
+          }
+          return (
+            <button
+              onClick={() => navigate([...path, row.index])}
+              title="Open row"
+              className="group flex h-8 w-full cursor-pointer items-center gap-1 px-3 text-left text-[11px] text-text-subtle hover:bg-surface-hover hover:text-accent"
+            >
+              <span className="tabular-nums">#{row.index + 1}</span>
+              <ChevronRight
+                size={12}
+                strokeWidth={1.5}
+                className="ml-auto text-text-subtle group-hover:text-accent"
+              />
+            </button>
+          );
+        },
+      },
+      ...keys.map<JsonGridColumn<JsonTableRow>>((key) => ({
+        id: key,
+        width: "minmax(180px,1fr)",
+        header: (
+          <JsonColumnHeader
+            label={key}
+            type={compactValueKind(objectRows.map((row) => (row.value as Record<string, unknown>)[key]))}
+          />
+        ),
+        cell: (row) => {
+          const cellValue = isPlainObject(row.value) ? row.value[key] : undefined;
+          const cellPath = [...path, row.index, key];
+          if (isCollection(cellValue)) {
+            return (
+              <CollectionCell
+                label={collectionLabel(cellValue)}
+                onOpen={isNavigableCollection(cellValue) ? () => navigate(cellPath) : undefined}
+              />
+            );
+          }
+          return (
+            <JsonPrimitiveEditor
+              value={cellValue}
+              onChange={(next) => updatePath(cellPath, next)}
+              variant="cell"
+            />
+          );
+        },
+      })),
     ];
     return cols;
-  }, [current, path, value]);
+  }, [allVisibleArraySelected, current, path, selectedItems, value]);
 
-  const table = useReactTable({
-    data: pagedRows,
-    columns: objectColumns,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (row) => String(row.index),
-  });
+  const objectGridRows = useMemo<JsonObjectFieldRow[]>(
+    () => objectEntries.map(([key, fieldValue]) => ({ key, value: fieldValue })),
+    [objectEntries],
+  );
+
+  const objectGridColumns = useMemo<Array<JsonGridColumn<JsonObjectFieldRow>>>(() => {
+    const valueTypeLabel = compactValueKind(objectEntries.map(([, fieldValue]) => fieldValue));
+    return [
+      {
+        id: "__select",
+        width: "40px",
+        header: (
+          <div className="flex h-full items-center justify-center px-2">
+            <input
+              type="checkbox"
+              checked={allObjectFieldsSelected}
+              onChange={toggleObjectFields}
+              aria-label="Select fields"
+              className="h-3.5 w-3.5 rounded border-border accent-accent"
+            />
+          </div>
+        ),
+        cell: (row) => (
+          <div className="flex h-8 items-center justify-center px-2">
+            <input
+              type="checkbox"
+              checked={selectedItems.has(row.key)}
+              onChange={() => toggleSelected(row.key)}
+              aria-label="Select field"
+              className="h-3.5 w-3.5 rounded border-border accent-accent"
+            />
+          </div>
+        ),
+      },
+      {
+        id: "field",
+        width: "minmax(190px,0.65fr)",
+        header: <JsonColumnHeader label="field" type="string" />,
+        cell: (row) => (
+          <div className="flex h-8 min-w-0 items-center px-3 font-semibold">
+            <span className="truncate">{row.key}</span>
+          </div>
+        ),
+      },
+      {
+        id: "value",
+        width: "minmax(260px,1fr)",
+        header: <JsonColumnHeader label="value" type={valueTypeLabel} />,
+        cell: (row) => {
+          const childPath = [...path, row.key];
+          if (isCollection(row.value)) {
+            return (
+              <CollectionCell
+                label={collectionLabel(row.value)}
+                onOpen={
+                  isNavigableCollection(row.value) ? () => navigate(childPath) : undefined
+                }
+              />
+            );
+          }
+          return (
+            <JsonPrimitiveEditor
+              value={row.value}
+              onChange={(next) => updatePath(childPath, next)}
+              variant="cell"
+            />
+          );
+        },
+      },
+    ];
+  }, [allObjectFieldsSelected, objectEntries, path, selectedItems, value]);
+
+  function createArrayItem(targetPath: JsonPath, item: unknown): void {
+    const target = getAtPath(value, targetPath);
+    if (!Array.isArray(target)) return;
+    updatePath(targetPath, [...target, item], "row-created");
+  }
+
+  function createField(targetPath: JsonPath, name: string, fieldValue: unknown): string | null {
+    const target = getAtPath(value, targetPath);
+    if (!isPlainObject(target)) return "Object not found";
+    if (Object.hasOwn(target, name)) return "A field with this name already exists";
+    updatePath(targetPath, { ...target, [name]: fieldValue }, "field-created");
+    return null;
+  }
 
   if (!isCollection(current)) {
     return (
@@ -592,202 +1376,152 @@ function JsonVisualExplorer({
   }
 
   return (
-    <div className="flex h-full min-h-72 flex-col overflow-hidden rounded-md border border-border bg-surface-raised">
+    <div className="relative flex h-full min-h-72 flex-col overflow-hidden rounded-md border border-border bg-surface-raised">
       <JsonVisualHeader sourceName={sourceName} path={path} onNavigate={navigate} />
 
       {Array.isArray(current) ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-            <Search size={13} strokeWidth={1.5} className="text-text-subtle" />
-            <input
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setPageIndex(0);
-              }}
-              placeholder={`Buscar em ${path[path.length - 1] ?? "array"}...`}
-              className="h-7 w-56 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-accent"
-            />
+            <div className="relative w-56 shrink-0">
+              <Search
+                size={13}
+                strokeWidth={1.5}
+                className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-subtle"
+              />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={`Search ${path[path.length - 1] ?? "array"}...`}
+                className="h-7 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none focus:border-accent"
+              />
+            </div>
+            {selectedItems.size > 0 && (
+              <>
+                <span className="ml-2 inline-flex h-7 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
+                  {selectedItems.size} selected
+                </span>
+                {selectedItems.size === 1 && (
+                  <button
+                    onClick={duplicateSelectedArrayRow}
+                    className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] font-medium text-text-muted hover:bg-surface-hover hover:text-text"
+                  >
+                    <Copy size={12} strokeWidth={1.5} />
+                    Duplicate
+                  </button>
+                )}
+                <button
+                  onClick={deleteSelectedArrayRows}
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted"
+                >
+                  <Trash2 size={12} strokeWidth={1.5} />
+                  Delete
+                </button>
+                <button
+                  onClick={clearSelection}
+                  className="inline-flex h-7 items-center rounded-md border border-transparent px-2.5 text-[11px] text-text-subtle hover:border-border hover:bg-surface-hover hover:text-text"
+                >
+                  Clear selection
+                </button>
+              </>
+            )}
             <button
-              onClick={() => updatePath(path, [...current, defaultValueForArray(current)])}
+              onClick={() => setAddModal({ kind: "array", path, array: current })}
               className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
             >
               <Plus size={12} strokeWidth={1.5} />
-              Adicionar
+              Add
             </button>
           </div>
-          {objectColumns.length > 1 ? (
-            <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full border-separate border-spacing-0 font-mono text-[12px]">
-                <thead className="sticky top-0 z-10 bg-surface">
-                  {table.getHeaderGroups().map((group) => (
-                    <tr key={group.id}>
-                      {group.headers.map((header) => (
-                        <th
-                          key={header.id}
-                          className="h-8 border-b border-r border-border px-2 text-left font-semibold"
-                        >
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(header.column.columnDef.header, header.getContext())}
-                        </th>
-                      ))}
-                    </tr>
-                  ))}
-                </thead>
-                <tbody>
-                  {table.getRowModel().rows.map((row) => (
-                    <tr
-                      key={row.id}
-                      onDoubleClick={() => navigate([...path, row.original.index])}
-                      className="hover:bg-surface-hover"
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="h-9 border-b border-r border-border align-middle">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <ol className="min-h-0 flex-1 overflow-auto">
-              {pagedRows.map((row) => (
-                <li key={row.index} className="flex h-9 items-center gap-2 border-b border-border px-3">
-                  <span className="w-10 shrink-0 font-mono text-[11px] text-text-subtle">#{row.index + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    {isCollection(row.value) ? (
-                      <button
-                        onClick={() => navigate([...path, row.index])}
-                        className="flex w-full items-center gap-2 text-left text-text-muted hover:text-text"
-                      >
-                        <Database size={12} strokeWidth={1.5} className="text-accent" />
-                        {collectionLabel(row.value)}
-                      </button>
-                    ) : (
-                      <JsonPrimitiveEditor
-                        value={row.value}
-                        onChange={(next) => updatePath([...path, row.index], next)}
-                      />
-                    )}
-                  </div>
-                  <button
-                    onClick={() => onChange(duplicateAtPath(value, [...path, row.index]))}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover"
-                  >
-                    <Copy size={12} strokeWidth={1.5} />
-                  </button>
-                  <button
-                    onClick={() => onChange(deleteAtPath(value, [...path, row.index]))}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-deleted hover:bg-deleted-wash"
-                  >
-                    <Trash2 size={12} strokeWidth={1.5} />
-                  </button>
-                </li>
-              ))}
-            </ol>
-          )}
+          <JsonDataGrid
+            columns={arrayGridColumns}
+            rows={arrayRows}
+            getRowKey={(row) => String(row.index)}
+            emptyLabel={arrayRowsHaveObjectShape ? "No records found." : "No items found."}
+          />
           <div className="flex h-10 shrink-0 items-center gap-2 border-t border-border px-3 text-[12px] text-text-muted">
-            <button
-              onClick={() => setPageIndex((page) => Math.max(0, page - 1))}
-              disabled={safePageIndex === 0}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border disabled:opacity-40"
-            >
-              <ChevronLeft size={13} strokeWidth={1.5} />
-            </button>
             <span>
-              Página {safePageIndex + 1} de {pageCount}
+              {arrayRows.length} {arrayRows.length === 1 ? "item" : "items"}
+              {query.trim() ? " found" : ""}
             </span>
-            <button
-              onClick={() => setPageIndex((page) => Math.min(pageCount - 1, page + 1))}
-              disabled={safePageIndex >= pageCount - 1}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border disabled:opacity-40"
-            >
-              <ChevronRight size={13} strokeWidth={1.5} />
-            </button>
-            <select
-              value={pageSize}
-              onChange={(event) => {
-                setPageSize(Number(event.target.value));
-                setPageIndex(0);
-              }}
-              className="ml-2 h-7 rounded-md border border-border bg-surface px-2 text-[12px]"
-            >
-              {[25, 50, 100].map((size) => (
-                <option key={size} value={size}>
-                  {size} rows
-                </option>
-              ))}
-            </select>
-            <span className="ml-auto">
-              {page.total} registros{page.limited ? " nos primeiros 5000 itens" : ""}
-            </span>
+            {arrayView.limited && (
+              <span className="ml-auto text-text-subtle">searching the first 5,000 items</span>
+            )}
           </div>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-            <input
-              value={newFieldName}
-              onChange={(event) => setNewFieldName(event.target.value)}
-              placeholder="novoCampo"
-              className="h-7 w-48 rounded-md border border-border bg-surface px-2 font-mono text-[12px] outline-none focus:border-accent"
-            />
+            <div className="relative w-56 shrink-0">
+              <Search
+                size={13}
+                strokeWidth={1.5}
+                className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-subtle"
+              />
+              <input
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setSelectedItems(new Set());
+                }}
+                placeholder="Search fields..."
+                className="h-7 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none focus:border-accent"
+              />
+            </div>
+            <span className="font-mono text-[12px] font-semibold text-text">
+              {query.trim() ? `${objectEntries.length} of ${objectKeys.length}` : objectKeys.length} fields
+            </span>
+            {selectedItems.size > 0 && (
+              <>
+                <span className="ml-2 inline-flex h-7 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
+                  {selectedItems.size} selected
+                </span>
+                {selectedItems.size === 1 && (
+                  <button
+                    onClick={duplicateSelectedObjectField}
+                    className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] font-medium text-text-muted hover:bg-surface-hover hover:text-text"
+                  >
+                    <Copy size={12} strokeWidth={1.5} />
+                    Duplicate
+                  </button>
+                )}
+                <button
+                  onClick={deleteSelectedObjectFields}
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted"
+                >
+                  <Trash2 size={12} strokeWidth={1.5} />
+                  Delete
+                </button>
+                <button
+                  onClick={clearSelection}
+                  className="inline-flex h-7 items-center rounded-md border border-transparent px-2.5 text-[11px] text-text-subtle hover:border-border hover:bg-surface-hover hover:text-text"
+                >
+                  Clear selection
+                </button>
+              </>
+            )}
             <button
-              onClick={() => {
-                const name = newFieldName.trim();
-                if (!name || Object.hasOwn(current, name)) return;
-                updatePath(path, { ...current, [name]: "" });
-                setNewFieldName("");
-              }}
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+              onClick={() => setAddModal({ kind: "field", path, keys: objectKeys })}
+              className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
             >
               <Plus size={12} strokeWidth={1.5} />
-              Adicionar campo
+              Add field
             </button>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto p-2">
-          <div className="divide-y divide-border rounded-md border border-border">
-            {Object.entries(current).map(([key, child]) => {
-              const childPath = [...path, key];
-              return (
-                <div key={key} className="grid min-h-9 grid-cols-[190px_1fr_74px] items-center">
-                  <div className="min-w-0 border-r border-border px-3 font-mono text-[12px] font-semibold">
-                    <span className="truncate">{key}</span>
-                  </div>
-                  <div className="min-w-0 px-2">
-                    {isCollection(child) ? (
-                      <button
-                        onClick={() => navigate(childPath)}
-                        className="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-text-muted hover:bg-surface-hover hover:text-text"
-                      >
-                        <Database size={12} strokeWidth={1.5} className="text-accent" />
-                        <span className="truncate">{collectionLabel(child)}</span>
-                        <ChevronRight size={13} strokeWidth={1.5} className="ml-auto" />
-                      </button>
-                    ) : (
-                      <JsonPrimitiveEditor value={child} onChange={(next) => updatePath(childPath, next)} />
-                    )}
-                  </div>
-                  <div className="flex items-center justify-end gap-1 px-2">
-                    <span className="rounded border border-border px-1.5 py-px text-[10px] text-text-subtle">
-                      {valueKind(child)}
-                    </span>
-                    <button
-                      onClick={() => onChange(deleteAtPath(value, childPath))}
-                      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-deleted hover:bg-deleted-wash"
-                    >
-                      <Trash2 size={12} strokeWidth={1.5} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          </div>
+          <JsonDataGrid
+            columns={objectGridColumns}
+            rows={objectGridRows}
+            getRowKey={(row) => row.key}
+            emptyLabel="No fields found."
+          />
         </div>
+      )}
+      {addModal && (
+        <JsonAddDrawer
+          state={addModal}
+          onClose={() => setAddModal(null)}
+          onCreateArrayItem={createArrayItem}
+          onCreateField={createField}
+        />
       )}
     </div>
   );
@@ -802,7 +1536,7 @@ function JsonVisualHeader({
   path: JsonPath;
   onNavigate: (path: JsonPath) => void;
 }) {
-  const currentLabel = path.length === 0 ? "Raiz" : pathLabel(path[path.length - 1] ?? "Raiz");
+  const currentLabel = path.length === 0 ? "Root" : pathLabel(path[path.length - 1] ?? "Root");
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface-sunken px-3 text-[12px]">
       {path.length > 0 ? (
@@ -811,11 +1545,11 @@ function JsonVisualHeader({
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2.5 font-medium text-text-muted hover:bg-surface-hover hover:text-text"
         >
           <ChevronLeft size={14} strokeWidth={1.5} />
-          Voltar
+          Back
         </button>
       ) : (
         <span className="inline-flex h-8 items-center rounded-md border border-transparent px-2.5 text-text-subtle">
-          Raiz
+          Root
         </span>
       )}
 
@@ -853,7 +1587,7 @@ export function JsonWorkspace({
   minHeight = "min-h-0",
 }: {
   draft: string;
-  onDraftChange: (value: string) => void;
+  onDraftChange: (value: string, action?: JsonChangeAction) => void;
   sourceName?: string;
   minHeight?: string;
 }) {
@@ -879,7 +1613,7 @@ export function JsonWorkspace({
   const treeValue = parsed.error === null && isJsonRoot(parsed.value) ? parsed.value : null;
   const nodeCount = parsed.error === null ? countJsonNodes(parsed.value) : 0;
   const nodeCountLabel =
-    nodeCount >= JSON_NODE_COUNT_LIMIT ? `${JSON_NODE_COUNT_LIMIT}+ nós` : `${nodeCount} nós`;
+    nodeCount >= JSON_NODE_COUNT_LIMIT ? `${JSON_NODE_COUNT_LIMIT}+ nodes` : `${nodeCount} nodes`;
   const showTree = mode === "tree" && parsed.error === null;
 
   function setCollapse(next: boolean | number): void {
@@ -929,7 +1663,7 @@ export function JsonWorkspace({
             }`}
           >
             <ListTree size={12} strokeWidth={1.5} />
-            Árvore
+            Tree
           </button>
           <button
             onClick={() => setMode("raw")}
@@ -954,13 +1688,13 @@ export function JsonWorkspace({
 
         <span className="ml-1 hidden items-center gap-1.5 text-[11px] text-text-subtle sm:flex">
           <Braces size={12} strokeWidth={1.5} />
-          {parsed.error === null ? `${rootLabel(parsed.value)} · ${nodeCountLabel}` : "inválido"}
+          {parsed.error === null ? `${rootLabel(parsed.value)} · ${nodeCountLabel}` : "invalid"}
         </span>
 
         <button
           onClick={() => setCollapse(false)}
           disabled={!treeValue}
-          title="Expandir tudo"
+          title="Expand all"
           className="ml-auto rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
         >
           <Maximize2 size={13} strokeWidth={1.5} />
@@ -968,7 +1702,7 @@ export function JsonWorkspace({
         <button
           onClick={() => setCollapse(2)}
           disabled={!treeValue}
-          title="Profundidade 2"
+          title="Collapse to depth 2"
           className="rounded px-1.5 py-1 font-mono text-[11px] text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
         >
           2
@@ -983,7 +1717,7 @@ export function JsonWorkspace({
         </button>
         <button
           onClick={() => void copyJson()}
-          title="Copiar JSON"
+          title="Copy JSON"
           className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
         >
           {copied ? <Check size={13} strokeWidth={1.5} /> : <Copy size={13} strokeWidth={1.5} />}
@@ -995,7 +1729,7 @@ export function JsonWorkspace({
           <JsonVisualExplorer
             value={parsed.value}
             sourceName={sourceName}
-            onChange={(next) => onDraftChange(stringifyJson(next))}
+            onChange={(next, action) => onDraftChange(stringifyJson(next), action)}
           />
         ) : mode === "ts" && parsed.error === null ? (
           <div className="flex h-full min-h-72 flex-col gap-2">
@@ -1004,7 +1738,7 @@ export function JsonWorkspace({
                 value={tsRootName}
                 readOnly
                 className="w-48 rounded border border-border bg-surface-sunken px-2 py-1 font-mono text-[11px] text-text-muted"
-                title="Nome inferido pela chave JSON"
+                title="Name inferred from the JSON key"
               />
               <div className="flex rounded-md border border-border bg-surface p-0.5">
                 {(["interface", "type"] as const).map((option) => (
@@ -1048,7 +1782,7 @@ export function JsonWorkspace({
                 className="ml-auto flex items-center gap-1.5 rounded border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-surface-hover"
               >
                 {copiedTs ? <Check size={12} strokeWidth={1.5} /> : <Copy size={12} strokeWidth={1.5} />}
-                Copiar
+                Copy
               </button>
             </div>
             <pre className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[12px] leading-relaxed text-text">
@@ -1060,7 +1794,7 @@ export function JsonWorkspace({
             <Suspense
               fallback={
                 <div className="rounded-md border border-border bg-surface-sunken px-3 py-2 text-[12px] text-text-subtle">
-                  Carregando árvore JSON...
+                  Loading JSON tree...
                 </div>
               }
             >
@@ -1107,35 +1841,101 @@ export function JsonWorkspace({
   );
 }
 
+function EditorToast({
+  toast,
+  onClose,
+}: {
+  toast: EditorToastState;
+  onClose: () => void;
+}) {
+  const [undoing, setUndoing] = useState(false);
+
+  return (
+    <div className="rnsi-snackbar pointer-events-auto absolute bottom-3 right-3 z-20 flex min-h-11 w-[min(360px,calc(100%-24px))] items-center gap-2 rounded-md border border-border-strong bg-surface-sunken px-3 py-2 text-[12px] text-text shadow-md shadow-black/5">
+      <span className="min-w-0 flex-1 truncate font-medium">{toast.message}</span>
+      {toast.undo && (
+        <button
+          onClick={() => {
+            setUndoing(true);
+            void toast.undo?.().finally(() => {
+              setUndoing(false);
+              onClose();
+            });
+          }}
+          disabled={undoing}
+          className="shrink-0 font-medium text-accent underline decoration-accent/45 underline-offset-3 hover:text-accent-hover disabled:opacity-50"
+        >
+          {undoing ? "undoing..." : "undo"}
+        </button>
+      )}
+      <button
+        onClick={onClose}
+        title="Close"
+        className="shrink-0 rounded p-0.5 text-text-muted hover:bg-surface-hover hover:text-text"
+      >
+        <X size={13} strokeWidth={1.5} />
+      </button>
+    </div>
+  );
+}
+
 /**
  * Histórico da chave selecionada — a terceira coluna (plano §5.2).
  * Não é metadata: é o diferencial do produto no nível da chave.
  */
 function KeyHistory({ historyKey }: { historyKey: string }) {
   const history = useStudio((s) => s.keyHistory[historyKey]);
+  const size = useLayout((s) => s.panels.history.size);
+  const collapsed = useLayout((s) => s.panels.history.collapsed);
+  const toggleCollapsed = useLayout((s) => s.toggleCollapsed);
+
+  if (collapsed) {
+    return (
+      <div className="flex w-9 shrink-0 flex-col items-center border-l border-border py-2">
+        <button
+          onClick={() => toggleCollapsed("history")}
+          title="Expand history"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
+        >
+          <PanelRightOpen size={16} strokeWidth={1.5} />
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-l border-border">
+    <aside
+      style={{ width: size }}
+      className="relative flex shrink-0 flex-col border-l border-border"
+    >
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-3">
         <History size={13} strokeWidth={1.5} className="text-text-subtle" />
         <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-          Histórico
+          History
         </span>
         {history && history.length > 1 && (
           <span className="text-[11px] text-text-subtle">{history.length}</span>
         )}
+        <button
+          onClick={() => toggleCollapsed("history")}
+          title="Collapse panel"
+          className="ml-auto shrink-0 rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+        >
+          <PanelRightClose size={14} strokeWidth={1.5} />
+        </button>
       </div>
+      <ResizeHandle panelId="history" edge="left" />
       <ol className="flex-1 overflow-y-auto p-2">
         {(!history || history.length === 0) && (
           <li className="px-1 py-2 text-[11px] text-text-subtle">
-            Mudanças nesta chave aparecem aqui enquanto o Studio estiver aberto.
+            Changes to this key appear here while Studio is open.
           </li>
         )}
         {history?.map((entry, i) => (
           <li key={i} className="mb-2 rounded-md border border-border p-2">
             <div className="mb-1 flex items-center gap-2 text-[10px] text-text-subtle">
               <time className="tabular-nums">
-                {new Date(entry.timestamp).toLocaleTimeString("pt-BR")}
+                {new Date(entry.timestamp).toLocaleTimeString("en-US")}
               </time>
               <span
                 className={
@@ -1184,7 +1984,7 @@ function CreateKeyForm({
   async function create(): Promise<void> {
     const name = keyName.trim();
     if (!name) {
-      setError("dê um nome à chave");
+      setError("enter a key name");
       return;
     }
     let value: StorageValue;
@@ -1192,7 +1992,7 @@ function CreateKeyForm({
     else if (type === "number") {
       const n = Number(draft);
       if (!Number.isFinite(n)) {
-        setError("número inválido");
+        setError("invalid number");
         return;
       }
       value = { type: "number", value: n };
@@ -1201,7 +2001,7 @@ function CreateKeyForm({
       try {
         JSON.parse(draft);
       } catch {
-        setError("JSON inválido");
+        setError("Invalid JSON");
         return;
       }
       value = { type: "json", value: draft };
@@ -1221,10 +2021,10 @@ function CreateKeyForm({
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex h-9 shrink-0 items-center gap-3 border-b border-border px-4">
-        <span className="text-[12px] font-semibold">Nova chave</span>
+        <span className="text-[12px] font-semibold">New key</span>
         <button
           onClick={() => setCreating(false)}
-          title="Cancelar"
+          title="Cancel"
           className="ml-auto rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
         >
           <X size={14} strokeWidth={1.5} />
@@ -1233,19 +2033,19 @@ function CreateKeyForm({
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
         <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium text-text-muted">Chave</span>
+          <span className="text-[11px] font-medium text-text-muted">Key</span>
           <input
             autoFocus
             type="text"
             value={keyName}
             onChange={(e) => setKeyName(e.target.value)}
-            placeholder="ex.: feature.novaHome"
+            placeholder="e.g. feature.newHome"
             className="w-full max-w-md rounded-md border border-border bg-surface-raised px-3 py-1.5 font-mono text-[12px] placeholder:text-text-subtle"
           />
         </label>
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium text-text-muted">Tipo</span>
+          <span className="text-[11px] font-medium text-text-muted">Type</span>
           <select
             value={type}
             onChange={(e) => {
@@ -1263,7 +2063,7 @@ function CreateKeyForm({
         </label>
 
         <label className="flex min-h-0 flex-1 flex-col gap-1.5">
-          <span className="text-[11px] font-medium text-text-muted">Valor</span>
+          <span className="text-[11px] font-medium text-text-muted">Value</span>
           {type === "boolean" ? (
             <button
               type="button"
@@ -1297,13 +2097,13 @@ function CreateKeyForm({
           disabled={saving}
           className="rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-50"
         >
-          {saving ? "Criando…" : "Criar"}
+          {saving ? "Creating…" : "Create"}
         </button>
         <button
           onClick={() => setCreating(false)}
           className="rounded-md px-2.5 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover"
         >
-          Cancelar
+          Cancel
         </button>
         {error && <span className="text-[12px] text-deleted">{error}</span>}
       </div>
@@ -1312,13 +2112,9 @@ function CreateKeyForm({
 }
 
 type ValueType = StorageValue["type"];
+const CONVERTIBLE_VALUE_TYPES = ["string", "number", "boolean", "json", "null"] as const;
 
-/**
- * Editor por tipo (plano §5.2). O seletor de tipo é sempre visível: nem todo
- * provider tem introspecção (MMKV não distingue `123` de `"123"`), então
- * mudar o tipo é sempre uma decisão explícita do usuário — nunca um efeito
- * colateral silencioso da edição.
- */
+/** Editor por tipo (plano §5.2). Conversões são ações explícitas e confirmadas. */
 export function ValueEditor() {
   const selection = useStudio((s) => s.selection);
   const selectedKey = useStudio((s) => s.selectedKey);
@@ -1334,14 +2130,25 @@ export function ValueEditor() {
   const [draftType, setDraftType] = useState<ValueType>("string");
   const [draft, setDraft] = useState("");
   const [boolDraft, setBoolDraft] = useState(false);
+  const [originalSignature, setOriginalSignature] = useState<string | null>(null);
+  const [originalValue, setOriginalValue] = useState<StorageValue | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "saving">("loading");
   const [error, setError] = useState<string | null>(null);
   /** Valor cortado no device (preview): tamanho real + progresso do load-full. */
   const [truncatedInfo, setTruncatedInfo] = useState<{ totalSize: number } | null>(null);
   const [fullLoad, setFullLoad] = useState<{ received: number; total: number } | null>(null);
+  const [toast, setToast] = useState<EditorToastState | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [convertTarget, setConvertTarget] = useState<ValueType | null>(null);
+  const pendingActionRef = useRef<JsonChangeAction>("edited");
+  const saveSeqRef = useRef(0);
+  const toastIdRef = useRef(1);
+  const fullLoadAbortRef = useRef<AbortController | null>(null);
 
   function applyValue(value: StorageValue): void {
     setDraftType(value.type);
+    setOriginalSignature(storageValueSignature(value));
+    setOriginalValue(value);
     if (value.type === "boolean") setBoolDraft(value.value);
     else if (value.type === "json") {
       try {
@@ -1356,52 +2163,66 @@ export function ValueEditor() {
   useEffect(() => {
     if (!selection || !selectedKey) return;
     let cancelled = false;
+    fullLoadAbortRef.current?.abort();
+    fullLoadAbortRef.current = null;
     setState("loading");
     setError(null);
+    setOriginalSignature(null);
+    setOriginalValue(null);
+    setToast(null);
+    setActionsOpen(false);
+    setConvertTarget(null);
     setTruncatedInfo(null);
     setFullLoad(null);
-    void getValue(selection.providerId, selection.instanceId, selectedKey).then((preview) => {
-      if (cancelled) return;
-      if (preview.value) {
-        applyValue(preview.value);
-        setTruncatedInfo(preview.truncated ? { totalSize: preview.totalSize } : null);
-      }
-      setState("ready");
-    });
+    void getValue(selection.providerId, selection.instanceId, selectedKey)
+      .then((preview) => {
+        if (cancelled) return;
+        if (preview.value) {
+          applyValue(preview.value);
+          setTruncatedInfo(preview.truncated ? { totalSize: preview.totalSize } : null);
+        }
+        setState("ready");
+      })
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        setError(cause instanceof Error ? cause.message : String(cause));
+        setState("ready");
+      });
     return () => {
       cancelled = true;
+      fullLoadAbortRef.current?.abort();
+      fullLoadAbortRef.current = null;
     };
   }, [selection, selectedKey]);
 
   async function loadFullValue(): Promise<void> {
     if (!selection || !selectedKey || fullLoad) return;
+    const controller = new AbortController();
+    fullLoadAbortRef.current?.abort();
+    fullLoadAbortRef.current = controller;
     setFullLoad({ received: 0, total: truncatedInfo?.totalSize ?? 0 });
     setError(null);
     try {
       const value = await getFullValue(selection.providerId, selection.instanceId, selectedKey, {
-        onProgress: (received, total) => setFullLoad({ received, total }),
+        signal: controller.signal,
+        onProgress: (received, total) => {
+          if (fullLoadAbortRef.current === controller) setFullLoad({ received, total });
+        },
       });
-      if (value) {
+      if (value && fullLoadAbortRef.current === controller) {
         applyValue(value);
         setTruncatedInfo(null);
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (!controller.signal.aborted) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
     } finally {
-      setFullLoad(null);
+      if (fullLoadAbortRef.current === controller) {
+        fullLoadAbortRef.current = null;
+        setFullLoad(null);
+      }
     }
-  }
-
-  if (selection && creating) {
-    return <CreateKeyForm providerId={selection.providerId} instanceId={selection.instanceId} />;
-  }
-
-  if (!selection || !selectedKey) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-text-subtle">
-        Selecione uma chave.
-      </div>
-    );
   }
 
   function buildValue(): StorageValue | { error: string } {
@@ -1410,7 +2231,7 @@ export function ValueEditor() {
         return { type: "string", value: draft };
       case "number": {
         const n = Number(draft);
-        return Number.isFinite(n) ? { type: "number", value: n } : { error: "número inválido" };
+        return Number.isFinite(n) ? { type: "number", value: n } : { error: "invalid number" };
       }
       case "boolean":
         return { type: "boolean", value: boolDraft };
@@ -1419,32 +2240,94 @@ export function ValueEditor() {
           JSON.parse(draft);
           return { type: "json", value: draft };
         } catch {
-          return { error: "JSON inválido" };
+          return { error: "Invalid JSON" };
         }
       case "null":
         return { type: "null", value: null };
       case "buffer":
-        return { error: "buffers são somente leitura no MVP" };
+        return { error: "Buffer values are read-only." };
     }
   }
 
-  async function save(): Promise<void> {
+  const currentValue = useMemo(() => buildValue(), [boolDraft, draft, draftType]);
+  const currentSignature = "error" in currentValue ? null : storageValueSignature(currentValue);
+  const isDirty =
+    originalSignature !== null &&
+    (currentSignature === null || currentSignature !== originalSignature);
+
+  useEffect(() => {
     if (!selection || !selectedKey) return;
-    const value = buildValue();
-    if ("error" in value) {
-      setError(value.error);
-      return;
-    }
-    setState("saving");
-    setError(null);
-    try {
-      // A UI não confirma antes do runtime responder (regra do protocolo).
-      await setValue(selection.providerId, selection.instanceId, selectedKey, value);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setState("ready");
-    }
+    if (creating || state !== "ready" || truncatedInfo !== null) return;
+    if (!isDirty || currentSignature === null || "error" in currentValue || originalValue === null) return;
+
+    const providerId = selection.providerId;
+    const instanceId = selection.instanceId;
+    const key = selectedKey;
+    const valueToSave = currentValue;
+    const previousValue = originalValue;
+    const action = pendingActionRef.current;
+    const seq = saveSeqRef.current + 1;
+    saveSeqRef.current = seq;
+
+    const timer = window.setTimeout(() => {
+      setState("saving");
+      setError(null);
+      void setValue(providerId, instanceId, key, valueToSave)
+        .then(() => {
+          if (saveSeqRef.current !== seq) return;
+          setOriginalSignature(storageValueSignature(valueToSave));
+          setOriginalValue(valueToSave);
+          setState("ready");
+          setToast({
+            id: toastIdRef.current++,
+            message: jsonActionMessage(action),
+            undo: async () => {
+              await setValue(providerId, instanceId, key, previousValue);
+              applyValue(previousValue);
+            },
+          });
+          pendingActionRef.current = "edited";
+        })
+        .catch((cause) => {
+          if (saveSeqRef.current !== seq) return;
+          setError(cause instanceof Error ? cause.message : String(cause));
+          setState("ready");
+        });
+    }, draftType === "json" ? 450 : 650);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    creating,
+    currentSignature,
+    currentValue,
+    draftType,
+    isDirty,
+    originalValue,
+    selectedKey,
+    selection,
+    state,
+    truncatedInfo,
+  ]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(
+      () => setToast((current) => (current?.id === toast.id ? null : current)),
+      6000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  if (selection && creating) {
+    return <CreateKeyForm providerId={selection.providerId} instanceId={selection.instanceId} />;
+  }
+
+  if (!selection || !selectedKey) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-text-subtle">
+        Select a key.
+      </div>
+    );
   }
 
   async function remove(): Promise<void> {
@@ -1459,8 +2342,66 @@ export function ValueEditor() {
     }
   }
 
+  function convertType(target: ValueType): void {
+    let source: unknown;
+    try {
+      if (draftType === "boolean") source = boolDraft;
+      else if (draftType === "null") source = null;
+      else if (draftType === "number") source = Number(draft);
+      else if (draftType === "json") source = JSON.parse(draft);
+      else source = draft;
+
+      if (target === "string") {
+        setDraft(
+          typeof source === "string"
+            ? source
+            : source === null
+              ? ""
+              : typeof source === "object"
+                ? JSON.stringify(source)
+                : String(source),
+        );
+      } else if (target === "number") {
+        const next = Number(source);
+        if (!Number.isFinite(next)) throw new Error("This value cannot be converted to a number.");
+        setDraft(String(next));
+      } else if (target === "boolean") {
+        if (typeof source === "boolean") setBoolDraft(source);
+        else if (typeof source === "number") setBoolDraft(source !== 0);
+        else if (typeof source === "string" && ["true", "1"].includes(source.toLowerCase())) {
+          setBoolDraft(true);
+        } else if (
+          typeof source === "string" &&
+          ["false", "0", ""].includes(source.toLowerCase())
+        ) {
+          setBoolDraft(false);
+        } else {
+          throw new Error("This value cannot be converted to a boolean.");
+        }
+      } else if (target === "json") {
+        if (typeof source === "string") {
+          try {
+            JSON.parse(source);
+            setDraft(source);
+          } catch {
+            setDraft(JSON.stringify(source));
+          }
+        } else {
+          setDraft(JSON.stringify(source));
+        }
+      }
+
+      pendingActionRef.current = "edited";
+      setDraftType(target);
+      setConvertTarget(null);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   return (
-    <div className="flex min-w-0 flex-1">
+    <div className="relative flex min-w-0 flex-1">
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       {/* faixa de metadata — fina, não uma coluna (plano §5.2) */}
       <div className="flex h-9 shrink-0 items-center gap-3 border-b border-border px-4">
@@ -1469,29 +2410,59 @@ export function ValueEditor() {
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-3 text-[11px] text-text-subtle">
           {entry && <span>{formatSize(entry.approxSize)}</span>}
-          <select
-            value={draftType}
-            onChange={(e) => {
-              const next = e.target.value as ValueType;
-              setDraftType(next);
-              if (next === "json" && draft.trim() === "") setDraft("{}");
-            }}
-            className="rounded border border-border bg-surface-raised px-1.5 py-0.5 text-[11px] text-text-muted"
-          >
-            {(["string", "number", "boolean", "json", "null"] as const).map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
+          <span className="rounded border border-border px-1.5 py-0.5 font-mono uppercase text-text-muted">
+            {draftType}
+          </span>
         </span>
+        <div className="relative">
+          <button
+            onClick={() => setActionsOpen((open) => !open)}
+            title="More actions"
+            aria-expanded={actionsOpen}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
+          >
+            <MoreHorizontal size={14} strokeWidth={1.5} />
+          </button>
+          {actionsOpen && (
+            <>
+              <button
+                aria-label="Close actions"
+                onClick={() => setActionsOpen(false)}
+                className="fixed inset-0 z-40 cursor-default"
+              />
+              <div className="absolute right-0 top-8 z-50 w-44 overflow-hidden rounded-md border border-border-strong bg-surface-raised py-1 text-[12px] shadow-xl shadow-black/15">
+                <button
+                  onClick={() => {
+                    setActionsOpen(false);
+                    setConvertTarget(
+                      CONVERTIBLE_VALUE_TYPES.find((type) => type !== draftType) ?? "string",
+                    );
+                  }}
+                  disabled={state !== "ready" || truncatedInfo !== null}
+                  className="flex h-8 w-full items-center px-2.5 text-left text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-40"
+                >
+                  Convert type…
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+        <button
+          onClick={() => void remove()}
+          disabled={state !== "ready"}
+          title="Remove key"
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-transparent px-2 text-[11px] text-deleted hover:border-deleted/30 hover:bg-deleted-wash disabled:opacity-50"
+        >
+          <Trash2 size={12} strokeWidth={1.5} />
+          Remove
+        </button>
       </div>
 
       {truncatedInfo && (
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-accent-wash px-4 py-1.5 text-[12px]">
           <span className="text-text-muted">
-            Valor grande — mostrando um preview de 64 KB de{" "}
-            {formatSize(truncatedInfo.totalSize)}. Edição bloqueada até carregar tudo.
+            Large value — showing a 64 KB preview of{" "}
+            {formatSize(truncatedInfo.totalSize)}. Editing is blocked until the full value is loaded.
           </span>
           <button
             onClick={() => void loadFullValue()}
@@ -1499,23 +2470,26 @@ export function ValueEditor() {
             className="ml-auto shrink-0 rounded-md border border-accent px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-accent hover:text-white disabled:opacity-60"
           >
             {fullLoad
-              ? `Carregando… ${
+              ? `Loading… ${
                   fullLoad.total > 0
                     ? `${Math.round((fullLoad.received / fullLoad.total) * 100)}%`
                     : formatSize(fullLoad.received)
                 }`
-              : `Carregar tudo (${formatSize(truncatedInfo.totalSize)})`}
+              : `Load all (${formatSize(truncatedInfo.totalSize)})`}
           </button>
         </div>
       )}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
         {state === "loading" ? (
-          <p className="text-text-subtle">Carregando…</p>
+          <p className="text-text-subtle">Loading…</p>
         ) : draftType === "boolean" ? (
           <button
             type="button"
-            onClick={() => setBoolDraft((v) => !v)}
+            onClick={() => {
+              pendingActionRef.current = "edited";
+              setBoolDraft((v) => !v);
+            }}
             role="switch"
             aria-checked={boolDraft}
             data-checked={boolDraft}
@@ -1527,46 +2501,105 @@ export function ValueEditor() {
           <input
             type="number"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              pendingActionRef.current = "edited";
+              setDraft(e.target.value);
+            }}
             className="w-64 rounded-md border border-border bg-surface-raised px-3 py-1.5 font-mono text-[12px]"
           />
         ) : draftType === "string" ? (
           <input
             type="text"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              pendingActionRef.current = "edited";
+              setDraft(e.target.value);
+            }}
             className="w-full rounded-md border border-border bg-surface-raised px-3 py-1.5 font-mono text-[12px]"
           />
         ) : (
-          <JsonWorkspace draft={draft} onDraftChange={setDraft} sourceName={selectedKey} />
+          <JsonWorkspace
+            draft={draft}
+            onDraftChange={(next, action = "edited") => {
+              pendingActionRef.current = action;
+              setDraft(next);
+            }}
+            sourceName={selectedKey}
+          />
         )}
       </div>
 
-      <div className="flex h-11 shrink-0 items-center gap-2 border-t border-border px-4">
-        <button
-          onClick={() => void save()}
-          disabled={state !== "ready" || truncatedInfo !== null}
-          title={
-            truncatedInfo
-              ? "Preview truncado — carregue o valor completo antes de salvar"
-              : undefined
-          }
-          className="rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-50"
-        >
-          {state === "saving" ? "Salvando…" : "Salvar"}
-        </button>
-        <button
-          onClick={() => void remove()}
-          disabled={state !== "ready"}
-          title="Remover chave"
-          className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] text-deleted hover:bg-deleted-wash disabled:opacity-50"
-        >
-          <Trash2 size={13} strokeWidth={1.5} />
-          Remover
-        </button>
-        {error && <span className="text-[12px] text-deleted">{error}</span>}
-      </div>
+      {error && (
+        <div className="shrink-0 border-t border-border px-4 py-2 text-[12px] text-deleted">
+          {error}
+        </div>
+      )}
     </div>
+    {convertTarget && (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="convert-type-title"
+        className="fixed inset-0 z-[70] flex items-start justify-center bg-black/25 px-4 pt-24"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setConvertTarget(null);
+        }}
+      >
+        <div className="w-full max-w-sm rounded-md border border-border-strong bg-surface-raised shadow-2xl shadow-black/20">
+          <div className="flex h-11 items-center border-b border-border px-4">
+            <div>
+              <h2 id="convert-type-title" className="text-[13px] font-semibold">
+                Convert value type
+              </h2>
+              <p className="text-[11px] text-text-subtle">Current type: {draftType}</p>
+            </div>
+            <button
+              onClick={() => setConvertTarget(null)}
+              title="Close"
+              className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
+            >
+              <X size={14} strokeWidth={1.5} />
+            </button>
+          </div>
+          <div className="space-y-3 p-4">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-medium text-text-muted">New type</span>
+              <select
+                autoFocus
+                value={convertTarget}
+                onChange={(event) => setConvertTarget(event.target.value as ValueType)}
+                className="h-8 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-accent"
+              >
+                {CONVERTIBLE_VALUE_TYPES.map((type) => (
+                  <option key={type} value={type} disabled={type === draftType}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="text-[11px] leading-5 text-text-subtle">
+              Converting may change the value your app reads. The change is saved automatically and can be undone from the confirmation toast.
+            </p>
+          </div>
+          <div className="flex h-12 items-center justify-end gap-2 border-t border-border px-4">
+            <button
+              onClick={() => setConvertTarget(null)}
+              className="h-8 rounded-md px-3 text-[12px] text-text-muted hover:bg-surface-hover"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => convertType(convertTarget)}
+              disabled={convertTarget === draftType}
+              className="h-8 rounded-md bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-40"
+            >
+              Convert
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    {toast && <EditorToast toast={toast} onClose={() => setToast(null)} />}
     <KeyHistory
       historyKey={`${keysId(selection.providerId, selection.instanceId)} ${selectedKey}`}
     />

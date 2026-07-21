@@ -1,0 +1,56 @@
+---
+title: Introduction
+description: What NativeScope is, what it deliberately is not, and how it stays out of your app's way.
+---
+
+NativeScope is a local studio for the data inside a running React Native app. It reads and writes
+AsyncStorage, MMKV and SQLite live, so you can see what your app actually stored instead of
+guessing from log statements.
+
+It is built around one constraint: **you should not have to change your app to inspect it.**
+
+## How it stays out of the way
+
+Most devtools ask you to mount a provider, wrap your root component, or register your storage
+instances by hand. NativeScope does none of that. When you start your app through the NativeScope
+CLI, it composes a small Metro wrapper around your existing config. The resolver substitutes the
+storage modules your app already imports with instrumented versions in development. Your app
+source is untouched.
+
+That gives three properties worth stating plainly:
+
+- **No app integration code.** Your imports of `@react-native-async-storage/async-storage`,
+  `react-native-mmkv` and `expo-sqlite` keep working exactly as written.
+- **A release no-op.** When Metro builds with `dev: false`, the resolver bypasses every NativeScope
+  shim and resolves the real storage module. NativeScope's own CI scans a release bundle for the
+  shim marker as a second guard.
+- **A reversible Metro wrapper.** If the CLI finds an existing `metro.config.js`, it preserves it
+  as `metro.config.original.js` and writes a small delegate. The generated file explains how to
+  restore the original config.
+
+## What you get
+
+A key/value browser with live change highlighting, a SQLite client with an editable grid and a SQL
+console, a global search that runs on the device rather than shipping your database across the
+wire, and streaming export for tables and instances that are too large to hold in memory.
+
+Changes are bidirectional. Editing a value from the studio writes it on the device and the app sees
+it immediately; a write from the app appears in the studio tagged with its origin, so you always
+know whether you or the app caused something.
+
+## What it is not
+
+It is not a production monitoring tool, not a crash reporter, and not a remote debugger. It runs
+against `127.0.0.1` and holds no database of app values. Closing it discards inspected data; only
+small interface preferences may remain in that browser.
+
+<Callout kind="note">
+NativeScope is pre-1.0 and the API is still moving. The storage module is the one that is
+complete; anything beyond it should be treated as unstable.
+</Callout>
+
+## Where to go next
+
+Start with the [Quickstart](/docs/quickstart). If you use React Query or another cache layer in
+front of your storage, read the [React Query bridge](/docs/react-query) afterwards — it is the one
+piece of configuration most projects end up wanting.

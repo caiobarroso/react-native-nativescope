@@ -1,0 +1,106 @@
+---
+title: Configuration
+description: The optional nativescope.config.ts file, and when you actually need it.
+---
+
+Core storage discovery, inspection and editing work with no configuration at all. You only add a
+config file when a module needs app-side behavior that cannot be inferred safely. Today, the
+Storage module exposes an in-app indicator and cache invalidation for a layer like React Query.
+
+## The file
+
+Create `nativescope.config.ts` at the root of your app. When Metro runs through NativeScope, the
+shim loads it automatically. It does not change your production bundle.
+
+```ts
+// nativescope.config.ts
+import { defineNativeScopeConfig } from "react-native-nativescope/app";
+
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      indicator: true,
+      reactQuery: true,
+    },
+  },
+});
+```
+
+`defineNativeScopeConfig` is only there for type inference. It returns the object unchanged.
+
+## `modules.storage.indicator`
+
+Shows a small badge inside your app when a change arrives from the studio. It hides itself after a
+moment and can be dismissed with `×` for the rest of the session. On Android it already sits above
+the navigation bar.
+
+```ts
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      indicator: {
+        autoHideMs: 1600,
+        bottomOffset: 88,
+      },
+    },
+  },
+});
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `autoHideMs` | `1600` | How long the badge stays before hiding itself. |
+| `bottomOffset` | above the Android nav bar | Distance from the bottom of the screen. |
+| `eventFilter` | none | Restrict which changes show the badge. |
+
+Use it when you want visual confirmation that the app received your edit. Most of the time
+`indicator: true` is all you need.
+
+## `modules.storage.reactQuery`
+
+Covered in depth in the [React Query bridge](/docs/react-query). The short version:
+
+```ts
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      reactQuery: true,
+    },
+  },
+});
+```
+
+That discovers your `QueryClient` and invalidates queries when the studio changes data.
+
+## Event filters
+
+Both options accept an `eventFilter` that narrows which changes they react to. Every field is
+optional and they combine with AND.
+
+```ts
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      reactQuery: {
+        queryKey: ["schedule"],
+        eventFilter: {
+          providerId: "mmkv",
+          instanceId: "cache",
+        },
+      },
+    },
+  },
+});
+```
+
+| Field | Example |
+| --- | --- |
+| `kind` | `"key-value"` or `"database"` |
+| `providerId` | `"mmkv"`, `"async-storage"`, `"expo-sqlite"` |
+| `instanceId` | `"default"`, `"cache"` |
+| `key` | a specific key |
+| `table` | a specific SQLite table |
+| `source` | `"app"` or `"studio"` |
+
+By default the bridge only reacts to `source: "studio"`. Changes your own app made do not trigger
+invalidation, because your app already knows about them.

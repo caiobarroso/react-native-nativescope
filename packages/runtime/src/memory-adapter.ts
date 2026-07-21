@@ -4,15 +4,18 @@ import { pageOfKeys } from "./key-pagination.ts";
 
 const PREVIEW_MAX = 120;
 
-export function toKeyEntry(key: string, value: StorageValue): KeyEntry {
+export function toKeyEntry(key: string, value: StorageValue, lean = false): KeyEntry {
   const serialized =
     value.type === "null" ? "null" : String(value.value satisfies string | number | boolean);
   return {
     key,
     valueType: value.type,
     approxSize: new TextEncoder().encode(serialized).length,
-    preview:
-      serialized.length > PREVIEW_MAX ? `${serialized.slice(0, PREVIEW_MAX)}…` : serialized,
+    preview: lean
+      ? ""
+      : serialized.length > PREVIEW_MAX
+        ? `${serialized.slice(0, PREVIEW_MAX)}…`
+        : serialized,
   };
 }
 
@@ -88,8 +91,9 @@ export function createMemoryAdapter(options: {
     async listKeys(instanceId, options) {
       const s = store(instanceId);
       const { pageKeys, nextAfterKey, total } = pageOfKeys([...s.keys()], options);
+      const lean = options?.lean ?? false;
       return {
-        entries: pageKeys.map((key) => toKeyEntry(key, s.get(key) as StorageValue)),
+        entries: pageKeys.map((key) => toKeyEntry(key, s.get(key) as StorageValue, lean)),
         nextAfterKey,
         total,
       };

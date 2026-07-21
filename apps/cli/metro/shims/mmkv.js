@@ -43,7 +43,7 @@ if (runtime && typeof real.MMKV === "function") {
       enumerable: true,
     });
   } catch (error) {
-    console.warn("[storage-inspector] falha ao instrumentar MMKV:", error);
+    console.warn("[nativescope] failed to instrument MMKV:", error);
   }
 }
 

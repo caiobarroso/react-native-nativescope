@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   KEY_VALUE_PREVIEW_LIMIT,
   PROTOCOL_VERSION,
@@ -16,7 +16,19 @@ import { startRuntime } from "./bootstrap.ts";
 import { handleCommand } from "./command-handler.ts";
 import { createStreamHub, fnv1a32 } from "./streams.ts";
 import { createCoalescer } from "./event-coalescer.ts";
+import {
+  emitAppDevtoolsChange,
+  installAppDevtoolsConfig,
+  registerReactQueryClient,
+} from "./app-devtools.ts";
 import type { WebSocketLike } from "./transport.ts";
+
+const APP_DEVTOOLS_GLOBALS = ["__RNSI_APP_DEVTOOLS__", "__RNSI_REACT_QUERY_BRIDGE_STATE__"];
+
+beforeEach(() => {
+  const root = globalThis as unknown as Record<string, unknown>;
+  for (const key of APP_DEVTOOLS_GLOBALS) delete root[key];
+});
 
 function command(partial: Pick<CommandMessage, "type" | "payload">): CommandMessage {
   return {
@@ -129,6 +141,34 @@ describe("command handler", () => {
     if (list.ok) {
       const { entries } = list.result as { entries: Array<{ key: string }> };
       expect(entries.map((e) => e.key)).toEqual(["user"]);
+    }
+  });
+
+  it("list em modo lean omite preview sem perder metadados", async () => {
+    const registry = createRegistry();
+    registry.register(createMemoryAdapter());
+    const target = { providerId: "memory", instanceId: "default" };
+
+    await handleCommand(
+      registry,
+      command({
+        type: "key-value.set",
+        payload: { ...target, key: "token", value: { type: "string", value: "secret-value" } },
+      }),
+    );
+
+    const list = await handleCommand(
+      registry,
+      command({ type: "key-value.list", payload: { ...target, lean: true } }),
+    );
+    expect(list.ok).toBe(true);
+    if (list.ok) {
+      const { entries } = list.result as {
+        entries: Array<{ key: string; preview: string; valueType: string; approxSize: number }>;
+      };
+      expect(entries).toEqual([
+        { key: "token", preview: "", valueType: "string", approxSize: 12 },
+      ]);
     }
   });
 
@@ -357,6 +397,192 @@ describe("coalescer de eventos (ADR-0001)", () => {
       { item: "c1", count: 1 },
       { item: "a2", count: 1 },
     ]);
+  });
+});
+
+describe("app devtools config", () => {
+  it("invalida React Query automaticamente quando a mudança vem do Studio", () => {
+    const queryClient = { invalidateQueries: vi.fn() };
+    installAppDevtoolsConfig({ modules: { storage: { reactQuery: queryClient } } });
+
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "mmkv",
+      instanceId: "cache",
+      key: "pdv",
+      change: "updated",
+      source: "studio",
+      entry: null,
+      timestamp: Date.now(),
+    });
+
+    expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+  });
+
+  it("não invalida React Query para mudanças originadas no próprio app", () => {
+    const queryClient = { invalidateQueries: vi.fn() };
+    installAppDevtoolsConfig({ modules: { storage: { reactQuery: queryClient } } });
+
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "mmkv",
+      instanceId: "cache",
+      key: "pdv",
+      change: "updated",
+      source: "app",
+      entry: null,
+      timestamp: Date.now(),
+    });
+
+    expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+  });
+
+  it("deduplica instalações do mesmo QueryClient", () => {
+    const queryClient = { invalidateQueries: vi.fn() };
+    installAppDevtoolsConfig({ modules: { storage: { reactQuery: queryClient } } });
+    installAppDevtoolsConfig({ modules: { storage: { reactQuery: queryClient } } });
+
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "mmkv",
+      instanceId: "cache",
+      key: "pdv",
+      change: "updated",
+      source: "studio",
+      entry: null,
+      timestamp: Date.now(),
+    });
+
+    expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+  });
+
+  it("respeita queryKey e filtro de evento", () => {
+    const queryClient = { invalidateQueries: vi.fn() };
+    installAppDevtoolsConfig({
+      modules: {
+        storage: {
+          reactQuery: {
+            queryClient,
+            queryKey: ["schedule"],
+            eventFilter: { providerId: "mmkv", instanceId: "cache" },
+          },
+        },
+      },
+    });
+
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "async-storage",
+      instanceId: "default",
+      key: "pdv",
+      change: "updated",
+      source: "studio",
+      entry: null,
+      timestamp: Date.now(),
+    });
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "mmkv",
+      instanceId: "cache",
+      key: "pdv",
+      change: "updated",
+      source: "studio",
+      entry: null,
+      timestamp: Date.now(),
+    });
+
+    expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["schedule"] });
+  });
+
+  it("habilita React Query automático sem conhecer o caminho do QueryClient do app", () => {
+    const queryClient = { invalidateQueries: vi.fn() };
+    installAppDevtoolsConfig({
+      modules: {
+        storage: {
+          reactQuery: {
+            queryKey: ["schedule"],
+            eventFilter: { providerId: "mmkv" },
+          },
+        },
+      },
+    });
+    registerReactQueryClient(queryClient);
+
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "mmkv",
+      instanceId: "cache",
+      key: "schedule-today-123",
+      change: "updated",
+      source: "studio",
+      entry: null,
+      timestamp: Date.now(),
+    });
+
+    expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["schedule"] });
+  });
+
+  it("aplica configuração automática em QueryClients descobertos antes da config", () => {
+    const queryClient = { invalidateQueries: vi.fn() };
+    registerReactQueryClient(queryClient);
+    installAppDevtoolsConfig({ modules: { storage: { reactQuery: true } } });
+
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "async-storage",
+      instanceId: "default",
+      key: "user.profile",
+      change: "updated",
+      source: "studio",
+      entry: null,
+      timestamp: Date.now(),
+    });
+
+    expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+  });
+
+  it("libera um QueryClient descoberto mesmo quando a config chegou depois", () => {
+    const queryClient = { invalidateQueries: vi.fn() };
+    const unregister = registerReactQueryClient(queryClient);
+    installAppDevtoolsConfig({ modules: { storage: { reactQuery: true } } });
+    unregister();
+
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "mmkv",
+      instanceId: "cache",
+      key: "user.profile",
+      change: "updated",
+      source: "studio",
+      entry: null,
+      timestamp: Date.now(),
+    });
+
+    expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+  });
+
+  it("libera QueryClients descobertos depois quando a configuração é removida", () => {
+    const queryClient = { invalidateQueries: vi.fn() };
+    const disposeConfig = installAppDevtoolsConfig({
+      modules: { storage: { reactQuery: true } },
+    });
+    registerReactQueryClient(queryClient);
+    disposeConfig();
+
+    emitAppDevtoolsChange({
+      kind: "key-value",
+      providerId: "mmkv",
+      instanceId: "cache",
+      key: "user.profile",
+      change: "updated",
+      source: "studio",
+      entry: null,
+      timestamp: Date.now(),
+    });
+
+    expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
   });
 });
 

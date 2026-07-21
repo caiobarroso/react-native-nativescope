@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "react-native-storage-inspector",
+  "productName": "NativeScope",
   "version": "0.1.0",
-  "identifier": "com.caiobarroso.react-native-storage-inspector",
+  "identifier": "com.caiobarroso.react-native-nativescope",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "react-native-storage-inspector",
+        "title": "NativeScope Studio",
         "width": 800,
         "height": 600
       }

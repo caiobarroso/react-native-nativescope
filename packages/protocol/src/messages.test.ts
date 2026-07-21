@@ -108,6 +108,22 @@ describe("commandMessageSchema", () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+  it("aceita key-value.list em modo lean para varreduras de metadado", () => {
+    const parsed = commandMessageSchema.safeParse({
+      kind: "command",
+      protocolVersion: PROTOCOL_VERSION,
+      requestId: "r",
+      type: "key-value.list",
+      payload: {
+        providerId: "mmkv",
+        instanceId: "cache",
+        limit: 500,
+        lean: true,
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
 });
 
 describe("storageValueSchema", () => {

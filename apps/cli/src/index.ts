@@ -47,7 +47,7 @@ function openBrowser(url: string): void {
 
 /**
  * Sessão para o shim do Metro: porta + token viram um módulo JS bundlável,
- * resolvido pelo withStorageInspector como "__rnsi_session__".
+ * resolvido pelo withNativeScope como "__rnsi_session__".
  */
 function writeSessionFile(projectDir: string, port: number, token: string): void {
   try {
@@ -75,7 +75,7 @@ function watchAndroid(port: number): void {
       console.log(`android: ${state.problem}`);
     } else if (state.reversed.length > 0) {
       console.log(
-        `android: adb reverse ativo (${state.reversed.length} device${state.reversed.length > 1 ? "s" : ""})`,
+        `android: adb reverse active (${state.reversed.length} device${state.reversed.length > 1 ? "s" : ""})`,
       );
     }
   });
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
   if (args[0] === "fake-runtime") {
     // Uso interno/testes: conecta um app falso num serviço já de pé.
     startFakeRuntime({ port, sessionToken, scale: flag("fake-scale") });
-    console.log(`fake-runtime conectando em ws://127.0.0.1:${port}`);
+    console.log(`fake-runtime connecting to ws://127.0.0.1:${port}`);
     return;
   }
 
@@ -97,14 +97,14 @@ async function main(): Promise<void> {
   const uiDir = findUiDir();
 
   console.log("");
-  console.log("React Native Storage Inspector");
+  console.log("NativeScope");
   console.log("");
-  console.log(`Projeto: ${project.name}`);
+  console.log(`Project: ${project.name}`);
   if (project.providers.length > 0) {
-    console.log("Detectado no package.json:");
+    console.log("Detected in package.json:");
     for (const p of project.providers) console.log(`  ✓ ${p.label}`);
   } else {
-    console.log("Nenhum storage conhecido no package.json (MMKV, AsyncStorage, expo-sqlite).");
+    console.log("No supported storage dependency found in package.json (MMKV, AsyncStorage, expo-sqlite).");
   }
 
   await startLocalServer({
@@ -123,10 +123,10 @@ async function main(): Promise<void> {
   if (isAppProject && !flag("fake")) {
     const metroResult = ensureMetroConfig(projectDir, project.flavor);
     if (metroResult.status === "created") {
-      console.log("metro.config.js criado com o inspector já aplicado.");
+      console.log("Created metro.config.js with NativeScope enabled.");
     } else if (metroResult.status === "wrapped") {
       console.log(
-        `metro.config.js embrulhado (original preservado em ${metroResult.originalBackup}).`,
+        `Wrapped metro.config.js (original preserved as ${metroResult.originalBackup}).`,
       );
     } else if (metroResult.status === "manual") {
       console.log("");
@@ -141,7 +141,7 @@ async function main(): Promise<void> {
 
   const url = `http://127.0.0.1:${port}/?token=${sessionToken}`;
   console.log("");
-  console.log(`Serviço local: ws://127.0.0.1:${port}`);
+  console.log(`Local service: ws://127.0.0.1:${port}`);
   console.log(`Studio: ${url}`);
   console.log("");
 
@@ -150,8 +150,8 @@ async function main(): Promise<void> {
     startFakeRuntime({ port, sessionToken, scale });
     console.log(
       scale
-        ? "(--fake --fake-scale: runtime simulado com 100k linhas + valores de MB)"
-        : "(--fake: runtime simulado conectado)",
+        ? "(--fake --fake-scale: simulated runtime with 100k rows and MB-sized values)"
+        : "(--fake: simulated runtime connected)",
     );
   }
 
@@ -159,6 +159,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: Error) => {
-  console.error(`erro: ${error.message}`);
+  console.error(`error: ${error.message}`);
   process.exit(1);
 });

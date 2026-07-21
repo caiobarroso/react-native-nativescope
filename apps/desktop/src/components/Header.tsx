@@ -7,9 +7,19 @@ export function Header() {
 
   return (
     <header className="flex h-11 items-center gap-3 border-b border-border bg-surface px-4">
-      <span className="text-[13px] font-semibold tracking-tight">
-        Storage Inspector
-      </span>
+      <div className="flex h-full items-center" aria-label="NativeScope">
+        <img
+          src="/brand/nativescope-logo.png"
+          alt="NativeScope"
+          className="h-[18px] w-auto dark:hidden"
+        />
+        <img
+          src="/brand/nativescope-logo-reversed.png"
+          alt=""
+          aria-hidden="true"
+          className="hidden h-[18px] w-auto dark:block"
+        />
+      </div>
 
       <div className="ml-auto flex items-center gap-3">
         {phase === "connected" && <SnapshotTool />}
@@ -31,10 +41,10 @@ export function Header() {
           />
           <span className="text-text-muted">
             {phase === "connected"
-              ? "conectado"
+              ? "connected"
               : phase === "waiting-app"
-                ? "aguardando o app"
-                : "conectando"}
+                ? "waiting for app"
+                : "connecting"}
           </span>
         </span>
       </div>

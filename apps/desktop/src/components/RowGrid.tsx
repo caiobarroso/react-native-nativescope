@@ -150,14 +150,14 @@ function InsertRowDrawer({
   return (
     <aside className="rnsi-drawer-in absolute inset-y-0 right-0 z-30 flex w-[min(520px,100%)] flex-col border-l border-border bg-surface-raised shadow-xl shadow-black/10">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        <span className="text-[13px] font-medium">Adicionar linha em</span>
+        <span className="text-[13px] font-medium">Add row to</span>
         <span className="rounded border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-[12px]">
           {table}
         </span>
         <button
           onClick={onClose}
           className="ml-auto rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
-          title="Fechar"
+          title="Close"
         >
           <X size={15} strokeWidth={1.5} />
         </button>
@@ -173,9 +173,9 @@ function InsertRowDrawer({
                 <div className="min-w-0">
                   <div className="truncate font-mono text-[12px] text-text">{column.name}</div>
                   <div className="mt-1 text-[11px] text-text-subtle">
-                    {column.declaredType || "sem tipo"}
+                    {column.declaredType || "no type"}
                     {column.pkIndex > 0 ? " · pk" : ""}
-                    {required ? " · obrigatório" : ""}
+                    {required ? " · required" : ""}
                   </div>
                 </div>
                 <div className="min-w-0">
@@ -183,7 +183,7 @@ function InsertRowDrawer({
                     value={draft.values[column.name] ?? ""}
                     onChange={(event) => onDraftChange(column.name, event.target.value)}
                     disabled={checkedNull}
-                    placeholder={checkedNull ? "NULL" : required ? "valor obrigatório" : "deixar vazio usa default"}
+                    placeholder={checkedNull ? "NULL" : required ? "required value" : "leave blank to use default"}
                     className="h-9 w-full rounded-md border border-border bg-surface px-3 font-mono text-[12px] outline-none placeholder:text-text-subtle focus:border-accent disabled:text-text-subtle"
                   />
                   <label className="mt-1.5 flex items-center gap-2 text-[11px] text-text-subtle">
@@ -194,7 +194,7 @@ function InsertRowDrawer({
                       disabled={column.notNull}
                       className="h-3.5 w-3.5 accent-accent disabled:opacity-40"
                     />
-                    Inserir NULL
+                    Insert NULL
                   </label>
                 </div>
               </div>
@@ -218,19 +218,19 @@ function InsertRowDrawer({
           data-checked={createMore}
           className="rnsi-switch"
         />
-        <span className="text-[12px] text-text-muted">Criar mais</span>
+        <span className="text-[12px] text-text-muted">Create another</span>
         <button
           onClick={onClose}
           className="ml-auto h-8 min-w-20 rounded-md border border-border px-3 text-[12px] text-text-muted hover:bg-surface-hover"
         >
-          Cancelar
+          Cancel
         </button>
         <button
           onClick={() => onSave(createMore)}
           disabled={saving}
           className="h-8 min-w-20 rounded-md bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-50"
         >
-          {saving ? "Salvando..." : "Salvar"}
+          {saving ? "Saving..." : "Save"}
         </button>
       </footer>
     </aside>
@@ -261,12 +261,12 @@ function TableToast({
           disabled={undoing}
           className="shrink-0 font-medium text-accent underline decoration-accent/45 underline-offset-3 hover:text-accent-hover disabled:opacity-50"
         >
-          {undoing ? "desfazendo..." : "desfazer"}
+          {undoing ? "undoing..." : "undo"}
         </button>
       )}
       <button
         onClick={onClose}
-        title="Fechar"
+        title="Close"
         className="shrink-0 rounded p-0.5 text-text-muted hover:bg-surface-hover hover:text-text"
       >
         <X size={13} strokeWidth={1.5} />
@@ -281,14 +281,12 @@ function JsonCellModal({
   error,
   onDraftChange,
   onClose,
-  onSave,
 }: {
   cell: JsonCellState;
   saving: boolean;
   error: string | null;
   onDraftChange: (draft: string) => void;
   onClose: () => void;
-  onSave: () => void;
 }) {
   return (
     <div
@@ -302,7 +300,7 @@ function JsonCellModal({
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
           <Braces size={15} strokeWidth={1.5} className="text-accent" />
           <div className="min-w-0">
-            <h2 className="truncate text-[13px] font-semibold">JSON da célula</h2>
+            <h2 className="truncate text-[13px] font-semibold">Cell JSON</h2>
             <p className="truncate font-mono text-[11px] text-text-subtle">
               {cell.table}.{cell.column}
             </p>
@@ -310,7 +308,7 @@ function JsonCellModal({
           <button
             onClick={onClose}
             className="ml-auto rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
-            title="Fechar"
+            title="Close"
           >
             <X size={15} strokeWidth={1.5} />
           </button>
@@ -329,21 +327,14 @@ function JsonCellModal({
           {error && <span className="min-w-0 flex-1 truncate text-[12px] text-deleted">{error}</span>}
           {!error && (
             <span className="min-w-0 flex-1 truncate text-[11px] text-text-subtle">
-              Salvar grava o JSON formatado de volta na célula.
+              {saving ? "Saving changes..." : "Changes are saved automatically."}
             </span>
           )}
           <button
             onClick={onClose}
             className="rounded-md border border-border px-3 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover"
           >
-            Cancelar
-          </button>
-          <button
-            onClick={onSave}
-            disabled={saving}
-            className="rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-hover disabled:opacity-50"
-          >
-            {saving ? "Salvando..." : "Salvar JSON"}
+            Close
           </button>
         </footer>
       </section>
@@ -396,7 +387,7 @@ function SortableTableTab({
           event.stopPropagation();
           onClose(table);
         }}
-        title="Fechar tab"
+        title="Close tab"
         className="rounded p-0.5 text-text-subtle opacity-60 hover:bg-surface-hover hover:text-text group-hover:opacity-100"
       >
         <X size={12} strokeWidth={1.5} />
@@ -438,7 +429,7 @@ function TableTabs({
       {tabs.length === 0 ? (
         <div className="flex h-full items-center gap-2 px-2 text-[12px] text-text-subtle">
           <Table2 size={13} strokeWidth={1.5} />
-          Abra uma tabela pela lista lateral
+          Open a table from the sidebar
         </div>
       ) : (
         <DndContext
@@ -481,6 +472,7 @@ export function RowGrid() {
       : undefined,
   );
   const nonce = useStudio((s) => s.dbRefreshNonce);
+  const activityFocus = useStudio((s) => s.activityFocus);
 
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
@@ -492,7 +484,6 @@ export function RowGrid() {
   const [editing, setEditing] = useState<{ ref: RowRef; column: string; draft: string } | null>(
     null,
   );
-  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(() => new Set());
   const [toast, setToast] = useState<TableToastState | null>(null);
   const [insertOpen, setInsertOpen] = useState(false);
@@ -507,8 +498,21 @@ export function RowGrid() {
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+  const [activityRowFocus, setActivityRowFocus] = useState<{
+    token: number;
+    rowId: number;
+  } | null>(null);
   const limitRef = useRef(PAGE);
+  const rowsRequestSeqRef = useRef(0);
+  const handledActivityFocusRef = useRef(0);
+  // Espelhos em ref para o refresh realtime ler estado atual sem recriar o
+  // callback a cada render (o que dispararia o efeito de nonce em loop).
+  const rowsRef = useRef<Row[]>(rows);
+  rowsRef.current = rows;
+  const rowVirtualizerRef = useRef<{ getVirtualItems: () => Array<{ index: number }> } | null>(null);
   const nextToastId = useRef(1);
+  const jsonSaveSeqRef = useRef(0);
+  const cellLoadAbortRef = useRef<AbortController | null>(null);
   // saveEdit lê o draft daqui para manter identidade estável — sem isso,
   // cada tecla digitada trocaria o callback e re-renderizaria todas as rows.
   const editingRef = useRef(editing);
@@ -531,6 +535,7 @@ export function RowGrid() {
   const refresh = useCallback(
     async (limit: number) => {
       if (!selection || !selectedTable) return;
+      const requestSeq = ++rowsRequestSeqRef.current;
       setLoading(true);
       setError(null);
       try {
@@ -543,15 +548,17 @@ export function RowGrid() {
           offset: 0,
           ...(orderBy ? { orderBy, direction: sort?.desc ? "desc" : "asc" } : {}),
         });
-        if (page) {
+        if (page && requestSeq === rowsRequestSeqRef.current) {
           setRows(page.rows);
           setTotal(page.total);
           setTotalIsEstimate(page.totalIsEstimate ?? false);
         }
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        if (requestSeq === rowsRequestSeqRef.current) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
       } finally {
-        setLoading(false);
+        if (requestSeq === rowsRequestSeqRef.current) setLoading(false);
       }
     },
     [selection, selectedTable, sorting, schema?.columns],
@@ -564,6 +571,7 @@ export function RowGrid() {
    */
   const loadMore = useCallback(async () => {
     if (!selection || !selectedTable || loadingMore) return;
+    const requestSeq = ++rowsRequestSeqRef.current;
     setLoadingMore(true);
     setError(null);
     try {
@@ -580,39 +588,110 @@ export function RowGrid() {
         ...(keysetCursor !== undefined ? { afterRowid: keysetCursor } : {}),
         ...(orderBy ? { orderBy, direction: sort?.desc ? "desc" : "asc" } : {}),
       });
-      if (page) {
+      if (page && requestSeq === rowsRequestSeqRef.current) {
         setRows((current) => [...current, ...page.rows]);
         setTotal(page.total);
         setTotalIsEstimate(page.totalIsEstimate ?? false);
         limitRef.current = rows.length + page.rows.length;
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (requestSeq === rowsRequestSeqRef.current) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
     } finally {
       setLoadingMore(false);
     }
   }, [selection, selectedTable, sorting, schema?.columns, rows, loadingMore]);
 
+  /**
+   * Refresh do REALTIME e pós-edição: re-consulta apenas a JANELA VISÍVEL
+   * (O(viewport)), nunca a janela carregada inteira. Sem isto, paginar fundo
+   * + tabela write-heavy faria cada evento re-puxar milhares de linhas numa
+   * mensagem só — estourando o orçamento de fio (a falha Flipper).
+   * Keyset quando sem ordenação; OFFSET quando ordenado. Faz merge in-place.
+   */
+  const refreshVisibleWindow = useCallback(async () => {
+    if (!selection || !selectedTable) return;
+    const requestSeq = ++rowsRequestSeqRef.current;
+    const items = rowVirtualizerRef.current?.getVirtualItems() ?? [];
+    const current = rowsRef.current;
+    if (items.length === 0 || current.length === 0) {
+      // Ainda sem janela medida (ex.: logo após montar) — página inicial.
+      await refresh(PAGE);
+      return;
+    }
+    const firstIdx = Math.max(0, items[0]?.index ?? 0);
+    const lastIdx = Math.min(current.length - 1, items[items.length - 1]?.index ?? 0);
+    // No fim da janela carregada estendemos +PAGE: assim inserções na cauda
+    // aparecem e deleções encolhem o array — tudo ainda bounded (viewport+PAGE).
+    const atEnd = lastIdx >= current.length - 1;
+    const fetchCount = lastIdx - firstIdx + 1 + (atEnd ? PAGE : 0);
+    const sort = sorting[0];
+    const orderBy = sort
+      ? schema?.columns.find((column) => column.name === sort.id)?.name
+      : undefined;
+    const before = firstIdx > 0 ? current[firstIdx - 1]?.ref : undefined;
+    const keysetCursor = !orderBy && before && "rowid" in before ? before.rowid : undefined;
+    try {
+      const page = await loadRows(selection.providerId, selection.instanceId, selectedTable, {
+        limit: fetchCount,
+        offset: keysetCursor !== undefined ? 0 : firstIdx,
+        ...(keysetCursor !== undefined ? { afterRowid: keysetCursor } : {}),
+        ...(orderBy ? { orderBy, direction: sort?.desc ? "desc" : "asc" } : {}),
+      });
+      if (!page || requestSeq !== rowsRequestSeqRef.current) return;
+      setRows((prev) => {
+        const next = prev.slice();
+        for (let i = 0; i < page.rows.length; i += 1) next[firstIdx + i] = page.rows[i] as Row;
+        // Menos linhas que o pedido = fim real alcançado (ex.: deleções) →
+        // corta a cauda para o array não mentir sobre o tamanho.
+        if (page.rows.length < fetchCount) next.length = firstIdx + page.rows.length;
+        return next;
+      });
+      setTotal(page.total);
+      setTotalIsEstimate(page.totalIsEstimate ?? false);
+    } catch (cause) {
+      if (requestSeq === rowsRequestSeqRef.current) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    }
+  }, [selection, selectedTable, sorting, schema?.columns]);
+
   /** Célula truncada: busca o conteúdo completo via stream antes de usar. */
   const loadFullCellText = useCallback(
     async (ref: RowRef, column: string): Promise<string | null> => {
       if (!selection || !selectedTable) return null;
-      const cell = await getFullCell(
-        selection.providerId,
-        selection.instanceId,
-        selectedTable,
-        ref,
-        column,
-      );
-      return cell?.data ?? null;
+      const controller = new AbortController();
+      cellLoadAbortRef.current?.abort();
+      cellLoadAbortRef.current = controller;
+      try {
+        const cell = await getFullCell(
+          selection.providerId,
+          selection.instanceId,
+          selectedTable,
+          ref,
+          column,
+          { signal: controller.signal },
+        );
+        return cell?.data ?? null;
+      } catch (cause) {
+        if (!controller.signal.aborted) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+        return null;
+      } finally {
+        if (cellLoadAbortRef.current === controller) cellLoadAbortRef.current = null;
+      }
     },
     [selection, selectedTable],
   );
 
   useEffect(() => {
+    cellLoadAbortRef.current?.abort();
+    cellLoadAbortRef.current = null;
     limitRef.current = PAGE;
+    setLoadingMore(false);
     setEditing(null);
-    setConfirmingDelete(null);
     setSelectedRows(new Set());
     setInsertOpen(false);
     setInsertError(null);
@@ -620,6 +699,10 @@ export function RowGrid() {
     setJsonCell(null);
     setJsonError(null);
     void refresh(PAGE);
+    return () => {
+      cellLoadAbortRef.current?.abort();
+      cellLoadAbortRef.current = null;
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -636,16 +719,27 @@ export function RowGrid() {
     });
   }, [rows]);
 
-  // Realtime: qualquer database.changed re-consulta a página visível.
+  // Realtime: qualquer database.changed re-consulta APENAS a janela visível.
   useEffect(() => {
-    if (nonce > 0) void refresh(limitRef.current);
-  }, [nonce, refresh]);
+    if (nonce > 0) void refreshVisibleWindow();
+  }, [nonce, refreshVisibleWindow]);
 
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast((current) => (current?.id === toast.id ? null : current)), 6000);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!jsonCell || jsonCell.draft === jsonCell.original || jsonSaving) return;
+    const seq = jsonSaveSeqRef.current + 1;
+    jsonSaveSeqRef.current = seq;
+    const timer = window.setTimeout(() => {
+      if (jsonSaveSeqRef.current !== seq) return;
+      void saveJsonCell();
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [jsonCell?.draft, jsonCell?.original, jsonSaving]);
 
   const onStartEdit = useCallback((ref: RowRef, column: string, draft: string) => {
     setEditing({ ref, column, draft });
@@ -654,7 +748,6 @@ export function RowGrid() {
     setEditing((cur) => (cur ? { ...cur, draft } : cur));
   }, []);
   const onCancelEdit = useCallback(() => setEditing(null), []);
-  const onAskDelete = useCallback((key: string) => setConfirmingDelete(key), []);
   const onToggleRow = useCallback((ref: RowRef) => {
     const key = refKey(ref);
     if (!key) return;
@@ -706,7 +799,7 @@ export function RowGrid() {
       const rowBefore = rows.find((row) => sameRef(row.ref, current.ref));
       const previous = rowBefore?.cells[current.column] ?? null;
       showToast({
-        message: "Célula atualizada",
+        message: "Cell updated",
         undo: async () => {
           await updateCell(
             selection.providerId,
@@ -716,49 +809,15 @@ export function RowGrid() {
             current.column,
             previous,
           );
-          await refresh(limitRef.current);
+          await refreshVisibleWindow();
         },
       });
       setEditing(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [selection, selectedTable, schema, rows, showToast, refresh]);
+  }, [selection, selectedTable, schema, rows, showToast, refreshVisibleWindow]);
   const onCommitEdit = useCallback(() => void saveEdit(), [saveEdit]);
-
-  const onConfirmDelete = useCallback(
-    (ref: RowRef) => {
-      void (async () => {
-        if (!selection || !selectedTable) return;
-        const deleted = rows.find((row) => sameRef(row.ref, ref));
-        try {
-          await deleteRow(selection.providerId, selection.instanceId, selectedTable, ref);
-          setConfirmingDelete(null);
-          // Linha com célula truncada: o undo re-inseriria dados cortados.
-          const undoSafe = deleted && (deleted.truncatedColumns?.length ?? 0) === 0;
-          showToast({
-            message: undoSafe
-              ? "Linha deletada"
-              : "Linha deletada (sem desfazer: célula grande truncada)",
-            undo: undoSafe && deleted
-              ? async () => {
-                  await insertRow(
-                    selection.providerId,
-                    selection.instanceId,
-                    selectedTable,
-                    deleted.cells,
-                  );
-                  await refresh(limitRef.current);
-                }
-              : undefined,
-          });
-        } catch (cause) {
-          setError(cause instanceof Error ? cause.message : String(cause));
-        }
-      })();
-    },
-    [selection, selectedTable, rows, showToast, refresh],
-  );
 
   const tableColumns = useMemo<ColumnDef<Row>[]>(
     () => {
@@ -835,7 +894,7 @@ export function RowGrid() {
                       draft: jsonDraft(value),
                     });
                   }}
-                  title="Abrir JSON"
+                  title="Open JSON"
                   className="mr-1 shrink-0 rounded p-1 text-text-subtle opacity-70 hover:bg-accent-wash hover:text-accent group-hover:opacity-100"
                 >
                   <Braces size={12} strokeWidth={1.5} />
@@ -862,7 +921,7 @@ export function RowGrid() {
                       }
                     });
                   }}
-                  title="Célula grande (preview) — carregar conteúdo completo"
+                  title="Large cell (preview) — load full content"
                   className="mr-1 shrink-0 rounded px-1 py-0.5 font-mono text-[10px] text-accent opacity-80 hover:bg-accent-wash group-hover:opacity-100"
                 >
                   …+
@@ -889,7 +948,7 @@ export function RowGrid() {
               type="checkbox"
               checked={allVisibleSelected}
               onChange={toggleVisibleRows}
-              aria-label="Selecionar linhas visíveis"
+              aria-label="Select visible rows"
               className="h-3.5 w-3.5 rounded border-border accent-accent"
             />
           ),
@@ -902,55 +961,21 @@ export function RowGrid() {
                 type="checkbox"
                 checked={selectedRows.has(key)}
                 onChange={() => onToggleRow(ref)}
-                aria-label="Selecionar linha"
+                aria-label="Select row"
                 className="h-3.5 w-3.5 rounded border-border accent-accent"
               />
             );
           },
         },
         ...dataColumns,
-        {
-          id: "__actions",
-          enableSorting: false,
-          enableResizing: false,
-          size: 54,
-          minSize: 54,
-          maxSize: 54,
-          meta: { kind: "actions" } satisfies GridColumnMeta,
-          cell: ({ row }) => {
-            const ref = row.original.ref;
-            const key = refKey(ref);
-            if (ref === null || key === null) return null;
-
-            return confirmingDelete === key ? (
-              <button
-                onClick={() => onConfirmDelete(ref)}
-                className="rounded bg-deleted px-1.5 py-0.5 text-[10px] font-medium text-white"
-              >
-                confirmar
-              </button>
-            ) : (
-              <button
-                onClick={() => onAskDelete(key)}
-                title="Excluir linha"
-                className="invisible rounded p-1 text-text-subtle hover:bg-deleted-wash hover:text-deleted group-hover:visible"
-              >
-                <Trash2 size={12} strokeWidth={1.5} />
-              </button>
-            );
-          },
-        },
       ];
     },
     [
       allVisibleSelected,
-      confirmingDelete,
       editing,
       loadFullCellText,
-      onAskDelete,
       onCancelEdit,
       onCommitEdit,
-      onConfirmDelete,
       onDraftChange,
       onStartEdit,
       onToggleRow,
@@ -989,11 +1014,80 @@ export function RowGrid() {
     estimateSize: () => 32,
     overscan: 16,
   });
+  rowVirtualizerRef.current = rowVirtualizer;
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualPaddingTop = virtualRows[0]?.start ?? 0;
   const virtualPaddingBottom =
     rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1]?.end ?? 0);
   const visibleColumnCount = table.getVisibleFlatColumns().length;
+
+  useEffect(() => {
+    if (!selection || !selectedTable || !schema || !activityFocus) return;
+    if (handledActivityFocusRef.current === activityFocus.token) return;
+    if (
+      activityFocus.providerId !== selection.providerId ||
+      activityFocus.instanceId !== selection.instanceId ||
+      activityFocus.target.kind !== "database" ||
+      activityFocus.target.table !== selectedTable
+    ) {
+      return;
+    }
+
+    const rowId = activityFocus.target.rowId;
+    if (rowId === null || schema.identity !== "rowid") {
+      handledActivityFocusRef.current = activityFocus.token;
+      return;
+    }
+    // A navegação por rowid usa a ordem natural. Se havia sort ativo, o efeito
+    // roda novamente assim que o reset de tabela o remover.
+    if (sorting.length > 0) return;
+
+    handledActivityFocusRef.current = activityFocus.token;
+    const requestSeq = ++rowsRequestSeqRef.current;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void loadRows(selection.providerId, selection.instanceId, selectedTable, {
+      limit: PAGE,
+      offset: 0,
+      afterRowid: rowId - 1,
+    }).then((page) => {
+      if (cancelled || !page || requestSeq !== rowsRequestSeqRef.current) return;
+      setRows(page.rows);
+      setTotal(page.total);
+      setTotalIsEstimate(page.totalIsEstimate ?? false);
+      limitRef.current = page.rows.length;
+      setActivityRowFocus({ token: activityFocus.token, rowId });
+    }).catch((cause: unknown) => {
+      if (!cancelled && requestSeq === rowsRequestSeqRef.current) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    }).finally(() => {
+      if (!cancelled && requestSeq === rowsRequestSeqRef.current) setLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activityFocus, schema, selectedTable, selection, sorting.length]);
+
+  useEffect(() => {
+    if (!activityRowFocus) return;
+    const index = gridRows.findIndex(
+      (row) => row.original.ref && "rowid" in row.original.ref && row.original.ref.rowid === activityRowFocus.rowId,
+    );
+    if (index >= 0) rowVirtualizer.scrollToIndex(index, { align: "center" });
+    const timer = window.setTimeout(() => setActivityRowFocus(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [activityRowFocus, gridRows, rowVirtualizer]);
+
+  // Scroll infinito (não só o botão): chegando perto do fim da janela
+  // carregada, a próxima página vem sozinha — igual ao KeyList.
+  const lastVisibleRowIndex = virtualRows[virtualRows.length - 1]?.index ?? 0;
+  useEffect(() => {
+    if (loadingMore || rows.length >= total) return;
+    if (lastVisibleRowIndex >= rows.length - 8) void loadMore();
+  }, [lastVisibleRowIndex, rows.length, total, loadingMore, loadMore]);
 
   // Early returns SÓ depois de todos os hooks (regras de hooks).
   if (!selection) {
@@ -1011,7 +1105,7 @@ export function RowGrid() {
           onReorder={reorderTableTabs}
         />
         <div className="flex flex-1 items-center justify-center text-text-subtle">
-          Selecione uma tabela para abrir em uma tab.
+          Select a table to open it in a tab.
         </div>
       </div>
     );
@@ -1021,6 +1115,11 @@ export function RowGrid() {
     if (!selection || !selectedTable || exporting !== null) return;
     const sink = await createFileSink(`${selection.instanceId}-${selectedTable}.ndjson`);
     if (!sink) return; // usuário cancelou
+    if (sink.buffered) {
+      showToast({
+        message: "This browser buffers exports in memory. Use Chromium for direct-to-disk streaming.",
+      });
+    }
     setExporting(0);
     try {
       await exportInstance(
@@ -1034,7 +1133,7 @@ export function RowGrid() {
         (received) => setExporting(received),
       );
       await sink.close();
-      showToast({ message: `Tabela ${selectedTable} exportada` });
+      showToast({ message: `${selectedTable} exported` });
     } catch (cause) {
       await sink.abort();
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -1059,17 +1158,17 @@ export function RowGrid() {
         }
       }
       setSelectedRows(new Set());
-      await refresh(limitRef.current);
+      await refreshVisibleWindow();
       showToast({
-        message: `${deletedRows.length} linha${deletedRows.length > 1 ? "s" : ""} deletada${
-          deletedRows.length > 1 ? "s" : ""
-        }${undoSafe ? "" : " (sem desfazer: célula grande truncada)"}`,
+        message: `${deletedRows.length} row${deletedRows.length > 1 ? "s" : ""} deleted${
+          undoSafe ? "" : " (undo unavailable: large cell was truncated)"
+        }`,
         undo: undoSafe
           ? async () => {
               for (const row of deletedRows) {
                 await insertRow(selection.providerId, selection.instanceId, selectedTable, row.cells);
               }
-              await refresh(limitRef.current);
+              await refreshVisibleWindow();
             }
           : undefined,
       });
@@ -1115,7 +1214,7 @@ export function RowGrid() {
         (insertDraft.values[column.name]?.trim() ?? "") === "",
     );
     if (missingRequired.length > 0) {
-      setInsertError(`Preencha: ${missingRequired.map((column) => column.name).join(", ")}`);
+      setInsertError(`Required: ${missingRequired.map((column) => column.name).join(", ")}`);
       return;
     }
 
@@ -1123,13 +1222,13 @@ export function RowGrid() {
     setInsertError(null);
     try {
       const ref = await insertRow(selection.providerId, selection.instanceId, selectedTable, values);
-      await refresh(limitRef.current);
+      await refreshVisibleWindow();
       showToast({
-        message: "Linha inserida",
+        message: "Row inserted",
         undo: ref
           ? async () => {
               await deleteRow(selection.providerId, selection.instanceId, selectedTable, ref);
-              await refresh(limitRef.current);
+              await refreshVisibleWindow();
             }
           : undefined,
       });
@@ -1148,7 +1247,7 @@ export function RowGrid() {
     try {
       serialized = JSON.stringify(JSON.parse(jsonCell.draft), null, 2);
     } catch (cause) {
-      setJsonError(cause instanceof Error ? cause.message : "JSON inválido");
+      setJsonError(cause instanceof Error ? cause.message : "Invalid JSON");
       return;
     }
 
@@ -1165,10 +1264,21 @@ export function RowGrid() {
       );
       const previous = jsonCell.original;
       const savedCell = jsonCell;
-      setJsonCell(null);
-      await refresh(limitRef.current);
+      setJsonCell((current) =>
+        current &&
+        sameRef(current.ref, savedCell.ref) &&
+        current.column === savedCell.column &&
+        current.table === savedCell.table
+          ? {
+              ...current,
+              original: serialized,
+              draft: current.draft === savedCell.draft ? serialized : current.draft,
+            }
+          : current,
+      );
+      await refreshVisibleWindow();
       showToast({
-        message: "JSON atualizado",
+        message: "JSON updated",
         undo: async () => {
           await updateCell(
             selection.providerId,
@@ -1178,7 +1288,7 @@ export function RowGrid() {
             savedCell.column,
             previous,
           );
-          await refresh(limitRef.current);
+          await refreshVisibleWindow();
         },
       });
     } catch (cause) {
@@ -1201,16 +1311,14 @@ export function RowGrid() {
         <span className="font-mono text-[12px] font-semibold">{selectedTable}</span>
         <span
           className="text-[11px] tabular-nums text-text-subtle"
-          title={totalIsEstimate ? "Contagem estimada — o valor exato chega no próximo refresh" : undefined}
+          title={totalIsEstimate ? "Estimated count — the exact value arrives on the next refresh" : undefined}
         >
-          {rows.length} de {totalIsEstimate ? "~" : ""}
-          {total}
+          {rows.length} of {totalIsEstimate ? `≈ ${total}` : total}
         </span>
         {selectedVisibleRows.length > 0 && (
           <>
             <span className="ml-2 inline-flex h-7 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
-              {selectedVisibleRows.length} selecionada
-              {selectedVisibleRows.length > 1 ? "s" : ""}
+              {selectedVisibleRows.length} selected
             </span>
             <button
               onClick={() => void deleteSelectedRows()}
@@ -1218,13 +1326,13 @@ export function RowGrid() {
               className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted disabled:opacity-40"
             >
               <Trash2 size={12} strokeWidth={1.5} />
-              Deletar
+              Delete
             </button>
             <button
               onClick={() => setSelectedRows(new Set())}
               className="inline-flex h-7 items-center rounded-md border border-transparent px-2.5 text-[11px] text-text-subtle hover:border-border hover:bg-surface-hover hover:text-text"
             >
-              Limpar seleção
+              Clear selection
             </button>
           </>
         )}
@@ -1238,13 +1346,13 @@ export function RowGrid() {
             className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] font-medium text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-40"
           >
             <Plus size={12} strokeWidth={1.5} />
-            Inserir
+            Insert
           </button>
         )}
         <button
-          onClick={() => void refresh(limitRef.current)}
+          onClick={() => void refreshVisibleWindow()}
           disabled={loading}
-          title="Recarregar linhas"
+          title="Reload rows"
           className={`${readOnly ? "ml-auto" : ""} inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40`}
         >
           <RefreshCw size={14} strokeWidth={1.5} />
@@ -1254,8 +1362,8 @@ export function RowGrid() {
           disabled={exporting !== null}
           title={
             exporting !== null
-              ? `Exportando… ${Math.round(exporting / 1024)} KB`
-              : "Exportar tabela inteira (NDJSON, 100% das linhas via stream)"
+              ? `Exporting... ${Math.round(exporting / 1024)} KB`
+              : "Export entire table (NDJSON, 100% of rows via stream)"
           }
           className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${
             exporting !== null
@@ -1268,8 +1376,8 @@ export function RowGrid() {
       </div>
       {readOnly && (
         <div className="shrink-0 border-b border-border bg-surface-sunken px-4 py-2 text-[12px] text-text-muted">
-          Somente leitura: esta tabela não tem rowid nem chave primária — não há
-          identidade estável para editar linhas com segurança.
+          Read only: this table has no rowid or primary key, so rows cannot be
+          edited safely without a stable identity.
         </div>
       )}
       {error && (
@@ -1305,7 +1413,7 @@ export function RowGrid() {
                             type="button"
                             onClick={header.column.getToggleSortingHandler()}
                             className="flex h-full w-full min-w-0 items-center gap-2 px-3 text-left hover:bg-surface-hover"
-                            title={`Ordenar por ${schemaColumn.name}`}
+                            title={`Sort by ${schemaColumn.name}`}
                           >
                             <span className="min-w-0 truncate font-semibold text-text">
                               {schemaColumn.name}
@@ -1316,7 +1424,7 @@ export function RowGrid() {
                               </span>
                             )}
                             <span className="shrink-0 text-[11px] font-normal text-text-subtle">
-                              {schemaColumn.declaredType || "sem tipo"}
+                              {schemaColumn.declaredType || "no type"}
                             </span>
                             <SortIcon
                               size={12}
@@ -1336,7 +1444,7 @@ export function RowGrid() {
                         {header.column.getCanResize() && (
                           <button
                             type="button"
-                            aria-label="Redimensionar coluna"
+                            aria-label="Resize column"
                             onDoubleClick={() => header.column.resetSize()}
                             onMouseDown={header.getResizeHandler()}
                             onTouchStart={header.getResizeHandler()}
@@ -1364,10 +1472,21 @@ export function RowGrid() {
                 if (!row) return null;
                 const key = refKey(row.original.ref);
                 const checked = key !== null && selectedRows.has(key);
+                const activityHighlighted =
+                  activityRowFocus !== null &&
+                  row.original.ref !== null &&
+                  "rowid" in row.original.ref &&
+                  row.original.ref.rowid === activityRowFocus.rowId;
                 return (
                   <tr
-                    key={row.id}
-                    className={`group hover:bg-surface-hover ${checked ? "bg-accent-wash/60" : ""}`}
+                    key={`${row.id}-${activityHighlighted ? activityRowFocus.token : 0}`}
+                    className={`group hover:bg-surface-hover ${
+                      activityHighlighted
+                        ? "rnsi-activity-focus"
+                        : checked
+                          ? "bg-accent-wash/60"
+                          : ""
+                    }`}
                   >
                     {row.getVisibleCells().map((cell) => {
                       const meta = cell.column.columnDef.meta as GridColumnMeta | undefined;
@@ -1396,7 +1515,7 @@ export function RowGrid() {
           </table>
 
           {rows.length === 0 && !loading && (
-            <p className="p-4 text-[12px] text-text-subtle">Tabela vazia.</p>
+            <p className="p-4 text-[12px] text-text-subtle">Empty table.</p>
           )}
           {rows.length < total && (
             <button
@@ -1405,8 +1524,8 @@ export function RowGrid() {
               className="m-3 rounded-md border border-border px-3 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover disabled:opacity-50"
             >
               {loadingMore
-                ? "Carregando…"
-                : `Carregar mais (${rows.length} de ${totalIsEstimate ? "~" : ""}${total})`}
+                ? "Loading…"
+                : `Load more (${rows.length} of ${totalIsEstimate ? `≈ ${total}` : total})`}
             </button>
           )}
         </div>
@@ -1437,7 +1556,6 @@ export function RowGrid() {
               setJsonCell(null);
               setJsonError(null);
             }}
-            onSave={() => void saveJsonCell()}
           />
         )}
       </div>

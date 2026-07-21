@@ -16,7 +16,9 @@ import { tags } from "@lezer/highlight";
 import { ChevronDown, ChevronUp, Play, Sparkles, Table2, Wand2 } from "lucide-react";
 import type { ExecuteResult, TableSchema } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
+import { useLayout } from "../lib/layout.ts";
 import { executeSql } from "../lib/studio-client.ts";
+import { ResizeHandle } from "./ResizeHandle.tsx";
 
 const SQL_KEYWORDS = [
   "SELECT",
@@ -125,10 +127,10 @@ function columnOptions(table: TableSchema, boost = 0): Completion[] {
     boost: boost + (column.pkIndex > 0 ? 4 : 0),
     info:
       column.pkIndex > 0
-        ? `PK ${column.pkIndex} · ${column.declaredType || "sem tipo declarado"}`
+        ? `PK ${column.pkIndex} · ${column.declaredType || "no declared type"}`
         : column.notNull
-          ? `NOT NULL · ${column.declaredType || "sem tipo declarado"}`
-          : column.declaredType || "sem tipo declarado",
+          ? `NOT NULL · ${column.declaredType || "no declared type"}`
+          : column.declaredType || "no declared type",
   }));
 }
 
@@ -168,14 +170,14 @@ function selectedTableSnippets(table: TableSchema | undefined): Completion[] {
       label: `select ${table.name}`,
       type: "text",
       detail: "snippet",
-      info: "Consulta a tabela aberta com limite.",
+      info: "Query the open table with a limit.",
       boost: 25,
     }),
     snippetCompletion(`SELECT COUNT(*) AS total\nFROM ${escapeSnippet(tableName)};`, {
       label: `count ${table.name}`,
       type: "text",
       detail: "snippet",
-      info: "Conta as linhas da tabela aberta.",
+      info: "Count rows in the open table.",
       boost: 24,
     }),
     snippetCompletion(
@@ -184,7 +186,7 @@ function selectedTableSnippets(table: TableSchema | undefined): Completion[] {
         label: `filter ${table.name}`,
         type: "text",
         detail: "snippet",
-        info: "Consulta com WHERE, ordenação e limite.",
+        info: "Query with WHERE, ordering, and a limit.",
         boost: 23,
       },
     ),
@@ -194,7 +196,7 @@ function selectedTableSnippets(table: TableSchema | undefined): Completion[] {
         label: `insert ${table.name}`,
         type: "text",
         detail: "snippet",
-        info: "Insere uma linha usando as colunas conhecidas.",
+        info: "Insert a row using the known columns.",
         boost: 22,
       },
     ),
@@ -204,7 +206,7 @@ function selectedTableSnippets(table: TableSchema | undefined): Completion[] {
         label: `update ${table.name}`,
         type: "text",
         detail: "snippet",
-        info: "Atualiza uma linha com WHERE.",
+        info: "Update a row with WHERE.",
         boost: 21,
       },
     ),
@@ -214,7 +216,7 @@ function selectedTableSnippets(table: TableSchema | undefined): Completion[] {
         label: `delete ${table.name}`,
         type: "text",
         detail: "snippet",
-        info: "Remove uma linha com WHERE.",
+        info: "Delete a row with WHERE.",
         boost: 20,
       },
     ),
@@ -453,16 +455,16 @@ function classifySql(sql: string): {
   const withoutStrings = normalized.replace(/'([^']|'')*'/g, "''");
 
   if (/^\s*delete\s+from\b/i.test(withoutStrings) && !/\bwhere\b/i.test(withoutStrings)) {
-    return { isMutation: true, warning: "DELETE sem WHERE vai afetar a tabela inteira." };
+    return { isMutation: true, warning: "DELETE without WHERE will affect the entire table." };
   }
   if (/^\s*update\b/i.test(withoutStrings) && !/\bwhere\b/i.test(withoutStrings)) {
-    return { isMutation: true, warning: "UPDATE sem WHERE vai alterar a tabela inteira." };
+    return { isMutation: true, warning: "UPDATE without WHERE will modify the entire table." };
   }
   if (/^\s*drop\s+table\b/i.test(withoutStrings)) {
-    return { isMutation: true, warning: "DROP TABLE remove a tabela do app conectado." };
+    return { isMutation: true, warning: "DROP TABLE removes the table from the connected app." };
   }
   if (/^\s*alter\s+table\b/i.test(withoutStrings)) {
-    return { isMutation: true, warning: "ALTER TABLE muda o schema em tempo real." };
+    return { isMutation: true, warning: "ALTER TABLE changes the schema in real time." };
   }
   return { isMutation: !isRead, warning: null };
 }
@@ -490,7 +492,10 @@ export function SqlConsole() {
   const tables = useStudio((s) =>
     tableKey ? (s.tables[tableKey] ?? EMPTY_TABLES) : EMPTY_TABLES,
   );
-  const [open, setOpen] = useState(false);
+  const size = useLayout((s) => s.panels.sqlConsole.size);
+  const collapsed = useLayout((s) => s.panels.sqlConsole.collapsed);
+  const toggleCollapsed = useLayout((s) => s.toggleCollapsed);
+  const open = !collapsed;
   const [sql, setSql] = useState("");
   const [result, setResult] = useState<ExecuteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -538,10 +543,14 @@ export function SqlConsole() {
   }
 
   return (
-    <section className="shrink-0 border-t border-border">
+    <section
+      style={open ? { height: size } : undefined}
+      className="relative flex shrink-0 flex-col border-t border-border"
+    >
+      {open && <ResizeHandle panelId="sqlConsole" edge="top" />}
       <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex h-8 w-full items-center gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-text-muted hover:bg-surface-hover"
+        onClick={() => toggleCollapsed("sqlConsole")}
+        className="flex h-8 w-full shrink-0 items-center gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-text-muted hover:bg-surface-hover"
       >
         SQL
         {tables.length > 0 && (
@@ -560,11 +569,11 @@ export function SqlConsole() {
       </button>
 
       {open && (
-        <div className="flex flex-col gap-2 border-t border-border p-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden border-t border-border p-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-1.5 text-[11px] text-text-muted">
               <Table2 size={12} strokeWidth={1.5} />
-              {selectedTable ?? "sem tabela selecionada"}
+              {selectedTable ?? "no table selected"}
             </span>
             <button
               onClick={() => insertTemplate("select")}
@@ -593,7 +602,7 @@ export function SqlConsole() {
             </span>
           </div>
 
-          <div className="flex items-start gap-2">
+          <div className="flex shrink-0 items-start gap-2">
             <div className="min-w-0 flex-1">
               <CodeMirror
                 value={sql}
@@ -621,7 +630,7 @@ export function SqlConsole() {
               }`}
             >
               <Play size={12} strokeWidth={2} />
-              {confirming ? "Confirmar" : running ? "Executando..." : "Executar"}
+              {confirming ? "Confirm" : running ? "Running..." : "Run"}
             </button>
           </div>
 
@@ -635,12 +644,12 @@ export function SqlConsole() {
 
           {result?.kind === "mutation" && (
             <p className="text-[12px] text-text-muted">
-              OK - {result.rowsAffected} linha(s) afetada(s).
+              OK - {result.rowsAffected} row(s) affected.
             </p>
           )}
 
           {result?.kind === "rows" && (
-            <div className="max-h-48 overflow-auto rounded-md border border-border">
+            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border">
               <table className="w-full border-collapse font-mono text-[11px]">
                 <thead className="sticky top-0 bg-surface-sunken">
                   <tr>
@@ -673,7 +682,7 @@ export function SqlConsole() {
                 </tbody>
               </table>
               {result.rows.length === 0 && (
-                <p className="p-2 text-[11px] text-text-subtle">0 linhas.</p>
+                <p className="p-2 text-[11px] text-text-subtle">0 rows.</p>
               )}
             </div>
           )}

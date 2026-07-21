@@ -1,0 +1,75 @@
+---
+title: Large datasets
+description: Why a million keys and multi-gigabyte databases stay responsive, and what the guarantees actually are.
+---
+
+Devtools usually fall over on real data. They hold every value in memory and send whole tables
+across the wire. NativeScope is built on a narrower, testable rule instead:
+
+> **Values, rows, wire messages and rendered DOM stay bounded by a page, chunk, or viewport.**
+
+Rendering is O(viewport), table and value transfers are O(page or chunk), and only the selected
+instance remains cached in the Studio. Key names are the honest exception: AsyncStorage and MMKV
+expose their inventory through `getAllKeys()`, so those provider APIs necessarily materialize the
+list of names on the device. NativeScope pages the values and previews that follow; it does not
+pretend the underlying key enumeration is free.
+
+## What this means in practice
+
+**Key values are cursor-paginated.** The runtime enumerates key names, orders them deterministically,
+then reads values only for the requested page. The studio asks for the page after a given key rather
+than an offset, so pages stay stable while your app writes and deletes underneath. Scrolling retains
+the pages you have visited in the active instance so you can move back without another round trip;
+switching instances releases that cache.
+
+**Large values arrive as a preview.** A value over 64 KB is delivered truncated, with its real size
+reported. The complete value streams on demand in chunks with a checksum, so nothing on the wire is
+ever big enough to stall the UI.
+
+**Editing is blocked until the value is fully loaded.** This is the part that matters most. A
+preview can never be written back over real data — the save button stays disabled, and operations
+that would need a complete value (duplicating a key, restoring a snapshot) refuse to run on a
+truncated one rather than silently corrupting it.
+
+**Search runs on the device.** Searching a million keys does not transfer a million keys. The scan
+happens where the data is and only matches come back.
+
+**Export streams when the browser supports direct file writing.** In Chromium, exporting a table or
+instance writes NDJSON to disk chunk by chunk. Browsers without the File System Access API fall back
+to a Blob download, which necessarily retains the export in browser memory; the UI identifies this
+fallback before large exports become a surprise.
+
+**SQLite counts are two-phase.** An immediate estimate renders instantly, prefixed with `~`, and is
+replaced by the exact count once computed in the background. You never wait on `COUNT(*)` over a
+hundred million rows to see a table.
+
+## Why the JS thread stays free
+
+Reading a page of values is done in small batches, and the runtime yields to the event loop between
+them. Streaming, searching and exporting use the same cooperative pattern where the provider API
+allows it. The hard guarantee is that value reads and wire payloads are bounded; key-name enumeration
+still inherits the cost of each storage library's `getAllKeys()` primitive.
+
+Bursts of writes are coalesced with a leading-and-trailing window, so a loop writing the same key a
+thousand times a second produces a steady trickle of events carrying counts, not a thousand
+renders. If the pending queue ever hits its cap, it flushes immediately rather than growing.
+
+## The guarantee about completeness
+
+Nothing above hides data from you. Every truncation is announced, sized, and has a path to the
+complete value. A preview is a rendering decision, never a limit on what you can reach.
+
+<Callout kind="note">
+The one deliberate limit: snapshots capture previews rather than full values, so restoring a diff
+that includes a truncated value is refused with an explanation instead of writing a shortened
+value back.
+</Callout>
+
+## Trying it
+
+The CLI ships a synthetic dataset so you can see the behaviour without a real app.
+
+<InstallCommand run="nativescope --fake --fake-scale" />
+
+That connects a simulated runtime with thousands of keys, multi-megabyte values, and a
+hundred-thousand-row SQLite table.

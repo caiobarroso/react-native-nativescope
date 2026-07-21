@@ -1,17 +1,28 @@
-import { Copy, Download, Files, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import {
+  Copy,
+  ChartNoAxesColumnIncreasing,
+  Files,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
 import type { KeyEntry, StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
+import { useLayout } from "../lib/layout.ts";
+import { ResizeHandle } from "./ResizeHandle.tsx";
 import {
-  exportInstance,
   getValueComplete,
   loadKeys,
   loadMoreKeys,
   removeKey,
+  searchKeys,
   setValue,
 } from "../lib/studio-client.ts";
-import { createFileSink } from "../lib/export.ts";
 import { generateTypeScript } from "./ValueEditor.tsx";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -54,7 +65,7 @@ function storageTypeSchema(key: string, value: StorageValue): string {
   );
 }
 
-export function KeyList() {
+export function KeyList({ onOpenOverview }: { onOpenOverview?: () => void }) {
   const selection = useStudio((s) => s.selection);
   const keys = useStudio((s) =>
     selection ? s.keys[keysId(selection.providerId, selection.instanceId)] : undefined,
@@ -62,49 +73,61 @@ export function KeyList() {
   const selectedKey = useStudio((s) => s.selectedKey);
   const selectKey = useStudio((s) => s.selectKey);
   const recentChanges = useStudio((s) => s.recentChanges);
+  const activityFocus = useStudio((s) => s.activityFocus);
   const creating = useStudio((s) => s.creating);
   const setCreating = useStudio((s) => s.setCreating);
   const keyFilter = useStudio((s) => s.keyFilter);
   const setKeyFilter = useStudio((s) => s.setKeyFilter);
+  const size = useLayout((s) => s.panels.keyList.size);
+  const collapsed = useLayout((s) => s.panels.keyList.collapsed);
+  const toggleCollapsed = useLayout((s) => s.toggleCollapsed);
   const keysMeta = useStudio((s) =>
     selection ? s.keysMeta[keysId(selection.providerId, selection.instanceId)] : undefined,
   );
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [exporting, setExporting] = useState<number | null>(null);
 
-  async function exportKeys(): Promise<void> {
-    if (!selection || exporting !== null) return;
-    const sink = await createFileSink(
-      `${selection.providerId}-${selection.instanceId}.ndjson`,
-    );
-    if (!sink) return; // usuário cancelou
-    setExporting(0);
-    try {
-      await exportInstance(
-        { kind: "key-value", providerId: selection.providerId, instanceId: selection.instanceId },
-        sink,
-        (received) => setExporting(received),
-      );
-      await sink.close();
-    } catch {
-      await sink.abort();
-    } finally {
-      setExporting(null);
+  // Busca NO DEVICE (plano §D), não filtro client-side sobre a página
+  // carregada: com 1M de chaves e 200 carregadas, o filtro antigo dizia "nada
+  // bate" mesmo havendo match na chave 900.000. Agora a varredura roda onde o
+  // dado mora e só os matches viajam.
+  const [searchResults, setSearchResults] = useState<KeyEntry[] | null>(null);
+  const [searchInfo, setSearchInfo] = useState<{ complete: boolean; scanned: number } | null>(null);
+  const [searching, setSearching] = useState(false);
+  const filtering = keyFilter.trim() !== "";
+
+  useEffect(() => {
+    const q = keyFilter.trim();
+    if (!selection || q === "") {
+      setSearchResults(null);
+      setSearchInfo(null);
+      setSearching(false);
+      return;
     }
-  }
+    setSearching(true);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void searchKeys(selection.providerId, selection.instanceId, q, 200)
+        .then((result) => {
+          if (cancelled) return;
+          setSearchResults(result.entries);
+          setSearchInfo({ complete: result.complete, scanned: result.scanned });
+          setSearching(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setSearchResults([]);
+          setSearchInfo(null);
+          setSearching(false);
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [keyFilter, selection]);
 
-  const filtered = useMemo(
-    () =>
-      keyFilter.trim() === ""
-        ? keys
-        : keys?.filter(
-            (e) =>
-              e.key.toLowerCase().includes(keyFilter.toLowerCase()) ||
-              e.preview.toLowerCase().includes(keyFilter.toLowerCase()),
-          ),
-    [keys, keyFilter],
-  );
+  const filtered = filtering ? searchResults ?? undefined : keys;
 
   // Virtualização: 1 milhão de chaves carregadas = ~30 nós DOM (plano §C).
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -118,15 +141,31 @@ export function KeyList() {
   const loadMore = useCallback(() => {
     if (!selection || loadingMore) return;
     setLoadingMore(true);
-    void loadMoreKeys(selection.providerId, selection.instanceId).finally(() =>
-      setLoadingMore(false),
-    );
+    void loadMoreKeys(selection.providerId, selection.instanceId)
+      .catch(() => {})
+      .finally(() => setLoadingMore(false));
   }, [selection, loadingMore]);
 
   // Scroll infinito: chegando perto do fim da janela carregada (sem filtro
   // ativo), a próxima página vem sozinha.
   const virtualItems = virtualizer.getVirtualItems();
   const lastVisibleIndex = virtualItems[virtualItems.length - 1]?.index ?? 0;
+
+  const focusedKey =
+    activityFocus &&
+    activityFocus.providerId === selection?.providerId &&
+    activityFocus.instanceId === selection?.instanceId &&
+    activityFocus.target.kind === "key-value"
+      ? activityFocus.target.key
+      : null;
+
+  useEffect(() => {
+    if (!focusedKey || !filtered) return;
+    const index = filtered.findIndex((entry) => entry.key === focusedKey);
+    if (index < 0) return;
+    virtualizer.scrollToIndex(index, { align: "center" });
+  }, [activityFocus?.token, filtered, focusedKey, virtualizer]);
+
   useEffect(() => {
     if (keyFilter.trim() !== "") return;
     if (!keysMeta?.nextAfterKey || loadingMore) return;
@@ -134,6 +173,20 @@ export function KeyList() {
   }, [lastVisibleIndex, filtered, keysMeta?.nextAfterKey, keyFilter, loadingMore, loadMore]);
 
   if (!selection) return null;
+
+  if (collapsed) {
+    return (
+      <div className="flex w-9 shrink-0 flex-col items-center border-r border-border py-2">
+        <button
+          onClick={() => toggleCollapsed("keyList")}
+          title="Expand key list"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
+        >
+          <PanelLeftOpen size={16} strokeWidth={1.5} />
+        </button>
+      </div>
+    );
+  }
 
   async function deleteEntry(key: string): Promise<void> {
     if (!selection) return;
@@ -164,35 +217,35 @@ export function KeyList() {
   }
 
   return (
-    <div className="flex w-72 shrink-0 flex-col border-r border-border">
+    <div
+      style={{ width: size }}
+      className="relative flex shrink-0 flex-col border-r border-border"
+    >
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-2">
-        <Search size={13} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
-        <input
-          type="text"
-          value={keyFilter}
-          onChange={(e) => setKeyFilter(e.target.value)}
-          placeholder="Filtrar chaves e valores"
-          className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-text-subtle"
-        />
+        <div className="relative min-w-0 flex-1">
+          <Search
+            size={13}
+            strokeWidth={1.5}
+            className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-subtle"
+          />
+          <input
+            type="text"
+            value={keyFilter}
+            onChange={(e) => setKeyFilter(e.target.value)}
+            placeholder="Filter keys and values"
+            className="h-7 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none placeholder:text-text-subtle focus:border-accent"
+          />
+        </div>
         <button
-          onClick={() => void exportKeys()}
-          disabled={exporting !== null}
-          title={
-            exporting !== null
-              ? `Exportando… ${Math.round(exporting / 1024)} KB`
-              : "Exportar tudo (NDJSON, 100% dos dados via stream)"
-          }
-          className={`shrink-0 rounded p-1 ${
-            exporting !== null
-              ? "text-accent"
-              : "text-text-subtle hover:bg-surface-hover hover:text-text"
-          }`}
+          onClick={onOpenOverview}
+          title="Storage overview"
+          className="shrink-0 rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
         >
-          <Download size={13} strokeWidth={1.5} />
+          <ChartNoAxesColumnIncreasing size={13} strokeWidth={1.5} />
         </button>
         <button
           onClick={() => setCreating(true)}
-          title="Nova chave"
+          title="New key"
           className={`shrink-0 rounded p-1 ${
             creating
               ? "bg-accent-wash text-accent"
@@ -201,41 +254,54 @@ export function KeyList() {
         >
           <Plus size={14} strokeWidth={1.5} />
         </button>
+        <button
+          onClick={() => toggleCollapsed("keyList")}
+          title="Collapse panel"
+          className="shrink-0 rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+        >
+          <PanelLeftClose size={14} strokeWidth={1.5} />
+        </button>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
       {keys === undefined && (
-        <p className="p-4 text-text-subtle">Carregando chaves…</p>
+        <p className="p-4 text-text-subtle">Loading keys…</p>
       )}
-      {keys?.length === 0 && (
-        <p className="p-4 text-text-subtle">Nenhuma chave nesta instância.</p>
+      {!filtering && keys?.length === 0 && (
+        <p className="p-4 text-text-subtle">No keys in this instance.</p>
       )}
-      {keys && keys.length > 0 && filtered?.length === 0 && (
-        <p className="p-4 text-text-subtle">Nada bate com "{keyFilter}".</p>
+      {filtering && searching && !searchResults && (
+        <p className="p-4 text-text-subtle">Searching on device…</p>
+      )}
+      {filtering && searchResults?.length === 0 && !searching && (
+        <p className="p-4 text-text-subtle">No keys found for "{keyFilter}".</p>
       )}
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
       {virtualItems.map((virtualItem) => {
         const entry = filtered?.[virtualItem.index];
         if (!entry) return null;
         const active = entry.key === selectedKey;
+        const menuOpen = openMenu === entry.key;
         const changeStamp =
           recentChanges[`${keysId(selection.providerId, selection.instanceId)} ${entry.key}`];
         const flash = changeStamp && Date.now() - changeStamp < 950;
+        const activityHighlighted = focusedKey === entry.key;
         return (
           <div
-            key={`${entry.key}-${changeStamp ?? 0}`}
+            key={`${entry.key}-${changeStamp ?? 0}-${activityHighlighted ? activityFocus?.token : 0}`}
             style={{
               position: "absolute",
               top: 0,
               left: 0,
               width: "100%",
+              zIndex: menuOpen ? 40 : 0,
               transform: `translateY(${virtualItem.start}px)`,
             }}
             className={`group flex h-8 w-full shrink-0 items-center border-l-2 ${
               active
                 ? "border-accent bg-accent-wash"
                 : "border-transparent hover:bg-surface-hover"
-            } ${flash ? "rnsi-flash" : ""}`}
+            } ${activityHighlighted ? "rnsi-activity-focus" : flash ? "rnsi-flash" : ""}`}
           >
             <button
               onClick={() => {
@@ -257,13 +323,13 @@ export function KeyList() {
                 setOpenMenu((current) => (current === entry.key ? null : entry.key));
               }}
               className="mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-subtle opacity-0 hover:bg-surface-hover hover:text-text group-hover:opacity-100 data-[open=true]:opacity-100"
-              data-open={openMenu === entry.key}
-              title="Ações"
+              data-open={menuOpen}
+              title="Actions"
             >
               <MoreHorizontal size={14} strokeWidth={1.5} />
             </button>
-            {openMenu === entry.key && (
-              <div className="absolute right-1 top-7 z-30 w-44 overflow-hidden rounded-md border border-border bg-surface-raised py-1 text-[12px] shadow-lg shadow-black/10">
+            {menuOpen && (
+              <div className="absolute right-1 top-7 z-50 w-48 overflow-hidden rounded-md border border-border-strong bg-surface-raised py-1 text-[12px] shadow-xl shadow-black/15">
                 <button
                   onClick={() => {
                     copyText(entry.key);
@@ -272,28 +338,28 @@ export function KeyList() {
                   className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-text-muted hover:bg-surface-hover hover:text-text"
                 >
                   <Copy size={13} strokeWidth={1.5} />
-                  Copiar nome
+                  Copy name
                 </button>
                 <button
                   onClick={() => void copySchema(entry.key)}
                   className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-text-muted hover:bg-surface-hover hover:text-text"
                 >
                   <Copy size={13} strokeWidth={1.5} />
-                  Copiar schema
+                  Copy schema
                 </button>
                 <button
                   onClick={() => void duplicateEntry(entry.key)}
                   className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-text-muted hover:bg-surface-hover hover:text-text"
                 >
                   <Files size={13} strokeWidth={1.5} />
-                  Duplicar
+                  Duplicate
                 </button>
                 <button
                   onClick={() => void deleteEntry(entry.key)}
                   className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-deleted hover:bg-deleted-wash"
                 >
                   <Trash2 size={13} strokeWidth={1.5} />
-                  Deletar
+                  Delete
                 </button>
               </div>
             )}
@@ -301,25 +367,37 @@ export function KeyList() {
         );
       })}
       </div>
-      {keysMeta?.nextAfterKey && (
-        <div className="border-t border-border p-2">
-          {keyFilter.trim() !== "" && (
-            <p className="mb-1.5 px-1 text-[11px] text-text-subtle">
-              Filtro aplicado às {keys?.length ?? 0} chaves carregadas.
-            </p>
-          )}
-          <button
-            disabled={loadingMore}
-            onClick={loadMore}
-            className="h-7 w-full rounded-md border border-border text-[12px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-50"
-          >
-            {loadingMore
-              ? "Carregando…"
-              : `Carregar mais (${keys?.length ?? 0} de ${keysMeta.total})`}
-          </button>
-        </div>
+      {filtering ? (
+        (searching || searchResults) && (
+          <div className="border-t border-border p-2 text-[11px] text-text-subtle">
+            {searching
+              ? "Searching on device…"
+              : `${searchResults?.length ?? 0} result${
+                  (searchResults?.length ?? 0) === 1 ? "" : "s"
+                } on device${
+                  searchInfo && !searchInfo.complete
+                    ? ` · partial scan (${searchInfo.scanned.toLocaleString()} read)`
+                    : ""
+                }`}
+          </div>
+        )
+      ) : (
+        keysMeta?.nextAfterKey && (
+          <div className="border-t border-border p-2">
+            <button
+              disabled={loadingMore}
+              onClick={loadMore}
+              className="h-7 w-full rounded-md border border-border text-[12px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-50"
+            >
+              {loadingMore
+                ? "Loading…"
+                : `Load more (${keys?.length ?? 0} of ${keysMeta.total})`}
+            </button>
+          </div>
+        )
       )}
       </div>
+      <ResizeHandle panelId="keyList" edge="right" />
     </div>
   );
 }

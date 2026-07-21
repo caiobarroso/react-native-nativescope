@@ -1,0 +1,58 @@
+---
+title: CLI
+description: Every flag the nativescope command accepts.
+---
+
+```bash
+nativescope [options]
+```
+
+Running it with no arguments is the intended path: it detects your project, starts Metro with the
+NativeScope resolver, sets up the Android tunnel if needed, and opens the studio.
+
+## Options
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--port <number>` | `4782` | Port for the local server and the WebSocket the app connects to. |
+| `--project <dir>` | current directory | Run against a project in another directory. |
+| `--token <string>` | random per session | Session token the app must present. Generated for you; set it only if you are scripting. |
+| `--no-metro` | off | Do not start Metro. Use when you run Metro yourself. |
+| `--no-open` | off | Do not open the browser. |
+| `--fake` | off | Connect a simulated app that generates activity, with no device or simulator. |
+| `--fake-scale` | off | Make the simulated app large: thousands of keys, multi-megabyte values, a 100k-row table. |
+
+## Running Metro yourself
+
+<InstallCommand run="nativescope --no-metro" />
+
+Then attach the resolver in your own Metro config:
+
+```js
+// metro.config.js
+const { withNativeScope } = require("react-native-nativescope/metro");
+
+module.exports = withNativeScope(config);
+```
+
+## Android devices
+
+No flag is needed. NativeScope watches for devices and reapplies `adb reverse` when one is plugged
+in later, when the cable drops, or when the adb server restarts. It reports real problems — more
+than one device attached, debugging not authorized — instead of failing silently.
+
+If `adb` is not on your `PATH`, that whole subsystem is skipped as irrelevant, which is the correct
+behaviour for iOS-only work.
+
+## Developing without an app
+
+`--fake` is the fastest way to work on the studio itself or to see what NativeScope does before
+wiring it into a project.
+
+A small simulated app that emits realistic activity:
+
+<InstallCommand run="nativescope --fake" />
+
+A large one, for exercising the pagination and streaming paths:
+
+<InstallCommand run="nativescope --fake --fake-scale" />

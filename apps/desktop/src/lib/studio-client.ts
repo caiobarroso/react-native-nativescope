@@ -78,6 +78,8 @@ function awaitStream(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const fail = (message: string) => {
+      const active = activeStreams.get(streamId);
+      if (active) clearTimeout(active.idleTimer);
       activeStreams.delete(streamId);
       reject(new Error(message));
     };
@@ -89,14 +91,16 @@ function awaitStream(
       onProgress: options?.onProgress,
       onChunk: options?.onChunk,
       resolve: (data) => {
+        clearTimeout(stream.idleTimer);
         activeStreams.delete(streamId);
         resolve(data);
       },
       reject: (error) => {
+        clearTimeout(stream.idleTimer);
         activeStreams.delete(streamId);
         reject(error);
       },
-      idleTimer: setTimeout(() => fail("stream parado — o app parou de responder"), STREAM_IDLE_TIMEOUT_MS),
+      idleTimer: setTimeout(() => fail("stream stopped — the app stopped responding"), STREAM_IDLE_TIMEOUT_MS),
     };
     activeStreams.set(streamId, stream);
   });
@@ -107,7 +111,7 @@ function handleStreamChunk(streamId: string, data: string): void {
   if (!stream) return;
   clearTimeout(stream.idleTimer);
   stream.idleTimer = setTimeout(
-    () => stream.reject(new Error("stream parado — o app parou de responder")),
+    () => stream.reject(new Error("stream stopped — the app stopped responding")),
     STREAM_IDLE_TIMEOUT_MS,
   );
   if (stream.onChunk) stream.onChunk(data);
@@ -127,11 +131,11 @@ function handleStreamEnd(payload: {
   if (!stream) return;
   clearTimeout(stream.idleTimer);
   if (!payload.ok) {
-    stream.reject(new Error(payload.error ?? "stream falhou no device"));
+    stream.reject(new Error(payload.error ?? "stream failed on device"));
     return;
   }
   if (payload.checksum && payload.checksum !== stream.hash.toString(16)) {
-    stream.reject(new Error("checksum divergente — transferência corrompida"));
+    stream.reject(new Error("checksum mismatch — corrupted transfer"));
     return;
   }
   stream.resolve(stream.parts.join(""));
@@ -140,7 +144,7 @@ function handleStreamEnd(payload: {
 /** Cancela um stream: avisa o device (para de ler) e rejeita o lado local. */
 export function cancelStream(streamId: string): void {
   void sendCommand({ type: "stream.cancel", payload: { streamId } }).catch(() => {});
-  activeStreams.get(streamId)?.reject(new Error("cancelado"));
+  activeStreams.get(streamId)?.reject(new Error("cancelled"));
 }
 
 function sessionToken(): string | null {
@@ -179,6 +183,7 @@ export function connect(): void {
       });
     },
     onClose() {
+      failInFlight("connection to the app was lost");
       useStudio.getState().setPhase("connecting");
     },
     onMessage(raw) {
@@ -186,6 +191,19 @@ export function connect(): void {
       if (parsed.ok) handleMessage(parsed.message);
     },
   });
+}
+
+function failInFlight(message: string): void {
+  for (const [requestId, entry] of pending) {
+    clearTimeout(entry.timer);
+    entry.reject(new Error(message));
+    pending.delete(requestId);
+  }
+  for (const stream of [...activeStreams.values()]) {
+    stream.reject(new Error(message));
+  }
+  for (const timer of tableRefreshTimers.values()) clearTimeout(timer);
+  tableRefreshTimers.clear();
 }
 
 function send(message: AnyMessage): void {
@@ -321,11 +339,14 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
 function sendCommand(
   partial: Pick<CommandMessage, "type" | "payload">,
 ): Promise<unknown> {
+  if (!transport?.isConnected()) {
+    return Promise.reject(new Error("the local service is not connected"));
+  }
   const requestId = `req-${nextRequestId++}`;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(requestId);
-      reject(new Error("o app não respondeu a tempo"));
+      reject(new Error("the app did not respond in time"));
     }, COMMAND_TIMEOUT_MS);
     pending.set(requestId, { resolve, reject, timer });
     send({
@@ -426,11 +447,15 @@ export async function getFullValue(
     payload: { providerId, instanceId, key },
   });
   const parsed = keyValueGetFullResultSchema.safeParse(result);
-  if (!parsed.success) throw new Error("resposta inválida do runtime");
+  if (!parsed.success) throw new Error("invalid runtime response");
   if (parsed.data.streamId === null) return null;
 
   const streamId = parsed.data.streamId;
   const onAbort = () => cancelStream(streamId);
+  if (options?.signal?.aborted) {
+    cancelStream(streamId);
+    throw new DOMException("Aborted", "AbortError");
+  }
   options?.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     const data = await awaitStream(streamId, parsed.data.totalSize, {
@@ -509,6 +534,86 @@ export async function fetchAllKeys(
   }
 }
 
+/** Projeção enxuta de uma chave para a varredura da visão geral. */
+export interface ScanEntry {
+  key: string;
+  valueType: string;
+  /** Tamanho aproximado do valor em bytes (vem do device, sem ler o valor aqui). */
+  approxSize: number;
+}
+
+export interface ScanPageMeta {
+  /** Total de chaves na instância, anunciado pelo device. */
+  total: number;
+  /** Quantas chaves já foram varridas até aqui (acumulado). */
+  scanned: number;
+}
+
+/** Página grande da varredura; o teto do protocolo é 500. */
+const SCAN_PAGE_LIMIT = 500;
+/** Trava de segurança contra um runtime que nunca devolva nextAfterKey=null. */
+const SCAN_MAX_KEYS = 5_000_000;
+
+/**
+ * Varredura COMPLETA de metadado da instância key-value, para a visão geral.
+ *
+ * Difere do fetchAllKeys de propósito: (1) `lean` — o device omite o preview,
+ * então cada página é só nome+tipo+tamanho; (2) NÃO acumula entries nem faz o
+ * safeParse profundo por página (o resultado é `unknown` no protocolo, e uma
+ * agregação read-only não corrompe nada com uma entry torta — só cai num balde
+ * "?"); (3) entrega cada página por callback para o redutor consumir na hora,
+ * sem nunca segurar 1M de objetos. O round-trip do WebSocket é o próprio yield
+ * entre páginas — a main thread respira a cada resposta.
+ *
+ * Cancelável por AbortSignal: para de pedir páginas (a resposta em voo é
+ * ignorada). Devolve `complete: false` quando cancelou ou bateu na trava.
+ */
+export async function scanAllKeys(
+  providerId: string,
+  instanceId: string,
+  onPage: (entries: ScanEntry[], meta: ScanPageMeta) => void,
+  options?: { signal?: AbortSignal },
+): Promise<{ complete: boolean; scanned: number; total: number }> {
+  let afterKey: string | undefined;
+  let scanned = 0;
+  let total = 0;
+  for (;;) {
+    if (options?.signal?.aborted) return { complete: false, scanned, total };
+    const result = await sendCommand({
+      type: "key-value.list",
+      payload: {
+        providerId,
+        instanceId,
+        ...(afterKey !== undefined ? { afterKey } : {}),
+        limit: SCAN_PAGE_LIMIT,
+        lean: true,
+      },
+    });
+    if (options?.signal?.aborted) return { complete: false, scanned, total };
+
+    // Guarda de shape leve — sem Zod profundo (é o que mantém a página barata).
+    const r = result as { entries?: unknown; nextAfterKey?: unknown; total?: unknown };
+    const rawEntries = Array.isArray(r.entries) ? r.entries : [];
+    const entries: ScanEntry[] = rawEntries.map((e) => {
+      const o = e as { key?: unknown; valueType?: unknown; approxSize?: unknown };
+      return {
+        key: typeof o.key === "string" ? o.key : String(o.key ?? ""),
+        valueType: typeof o.valueType === "string" ? o.valueType : "string",
+        approxSize:
+          typeof o.approxSize === "number" && Number.isFinite(o.approxSize) ? o.approxSize : 0,
+      };
+    });
+    total = typeof r.total === "number" ? r.total : total;
+    scanned += entries.length;
+    onPage(entries, { total, scanned });
+
+    const nextAfterKey = typeof r.nextAfterKey === "string" ? r.nextAfterKey : null;
+    if (nextAfterKey === null) return { complete: true, scanned, total };
+    if (scanned >= SCAN_MAX_KEYS) return { complete: false, scanned, total };
+    afterKey = nextAfterKey;
+  }
+}
+
 /** Busca de chaves executada NO device — só matches viajam (plano §D). */
 export async function searchKeys(
   providerId: string,
@@ -569,7 +674,7 @@ export async function exportInstance(
         },
   );
   const parsed = exportResultSchema.safeParse(result);
-  if (!parsed.success) throw new Error("resposta inválida do runtime");
+  if (!parsed.success) throw new Error("invalid runtime response");
   await awaitStream(parsed.data.streamId, 0, {
     onChunk: (chunk) => sink.write(chunk),
     ...(onProgress ? { onProgress: (received) => onProgress(received) } : {}),
@@ -626,19 +731,33 @@ export async function getFullCell(
   table: string,
   ref: RowRef,
   column: string,
-  options?: { onProgress?: (received: number, total: number) => void },
+  options?: {
+    onProgress?: (received: number, total: number) => void;
+    signal?: AbortSignal;
+  },
 ): Promise<{ data: string; kind: "text" | "blob" | "number" } | null> {
   const result = await sendCommand({
     type: "database.cell",
     payload: { providerId, instanceId, table, ref, column },
   });
   const parsed = databaseCellResultSchema.safeParse(result);
-  if (!parsed.success) throw new Error("resposta inválida do runtime");
+  if (!parsed.success) throw new Error("invalid runtime response");
   if (parsed.data.streamId === null) return null;
-  const data = await awaitStream(parsed.data.streamId, parsed.data.totalSize, {
-    ...(options?.onProgress ? { onProgress: options.onProgress } : {}),
-  });
-  return { data, kind: parsed.data.kind };
+  const streamId = parsed.data.streamId;
+  const onAbort = () => cancelStream(streamId);
+  if (options?.signal?.aborted) {
+    cancelStream(streamId);
+    throw new DOMException("Aborted", "AbortError");
+  }
+  options?.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const data = await awaitStream(streamId, parsed.data.totalSize, {
+      ...(options?.onProgress ? { onProgress: options.onProgress } : {}),
+    });
+    return { data, kind: parsed.data.kind };
+  } finally {
+    options?.signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 export async function updateCell(
@@ -698,6 +817,6 @@ export async function executeSql(
     payload: { providerId, instanceId, sql },
   });
   const parsed = databaseExecuteResultSchema.safeParse(result);
-  if (!parsed.success) throw new Error("resposta inválida do runtime");
+  if (!parsed.success) throw new Error("invalid runtime response");
   return parsed.data.result;
 }

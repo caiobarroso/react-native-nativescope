@@ -43,10 +43,14 @@ export interface KeyValueAdapter extends ProviderAdapter {
   /**
    * Lista uma PÁGINA de chaves. O adapter só lê os valores da janela pedida
    * — nunca materializa o dataset inteiro (orçamento: memória O(página)).
+   *
+   * `lean`: quando true, o preview vai vazio (approxSize/valueType permanecem).
+   * Usado pela varredura da visão geral, que só agrega tamanho e descartaria
+   * o preview de qualquer forma — não trafegar esse texto alivia fio e parse.
    */
   listKeys(
     instanceId: string,
-    options?: { afterKey?: string; limit?: number },
+    options?: { afterKey?: string; limit?: number; lean?: boolean },
   ): Promise<KeyListPage>;
   get(instanceId: string, key: string): Promise<StorageValue | null>;
   set(instanceId: string, key: string, value: StorageValue): Promise<void>;

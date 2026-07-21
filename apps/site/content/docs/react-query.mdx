@@ -1,0 +1,112 @@
+---
+title: React Query bridge
+description: Keep the screen in sync when the studio writes to storage behind your cache.
+---
+
+When the studio changes MMKV, AsyncStorage or SQLite, your app receives the event in realtime. But
+if the screen renders that data through React Query, the query cache still holds the old value and
+the UI will not update until something invalidates it.
+
+The bridge closes that gap.
+
+## The recommended setup
+
+```ts
+// nativescope.config.ts
+import { defineNativeScopeConfig } from "react-native-nativescope/app";
+
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      indicator: true,
+      reactQuery: true,
+    },
+  },
+});
+```
+
+That is the whole setup. When Metro runs through NativeScope, the shim loads this file, discovers
+your app's `QueryClient`, and invalidates queries when a change arrives from the studio. You do not
+have to know your query keys, your storage names, or anything about your project layout.
+
+## Narrowing what gets invalidated
+
+Invalidating everything is fine for small apps and wasteful for large ones. Scope it to a query key
+family:
+
+```ts
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      reactQuery: {
+        queryKey: ["schedule"],
+      },
+    },
+  },
+});
+```
+
+Or scope it to a particular storage:
+
+```ts
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      reactQuery: {
+        queryKey: ["schedule"],
+        eventFilter: {
+          providerId: "mmkv",
+          instanceId: "cache",
+        },
+      },
+    },
+  },
+});
+```
+
+For anything the declarative options cannot express, decide per event:
+
+```ts
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      reactQuery: {
+        shouldInvalidate: (event) =>
+          event.kind === "key-value" && event.key.startsWith("user:"),
+      },
+    },
+  },
+});
+```
+
+## Direction of the bridge
+
+By default the bridge only reacts to changes with `source: "studio"`. Writes made by your own app do
+not invalidate anything, because your app already caused them and invalidating would be a redundant
+round trip.
+
+## Installing it manually
+
+If your app needs to install the bridge imperatively — for example because the `QueryClient` lives
+somewhere the automatic discovery cannot reach — do it behind a `__DEV__` guard.
+
+```tsx
+import { getQueryClient } from "@/infrastructure/reactQuery/query-client";
+
+if (__DEV__) {
+  const { installNativeScopeDevtools } = require("react-native-nativescope/app");
+  installNativeScopeDevtools({
+    modules: { storage: { reactQuery: getQueryClient() } },
+  });
+}
+```
+
+Use `require` rather than a top-level `import` so the module is never part of the production module
+graph.
+
+## Other cache layers
+
+The bridge ships with a React Query integration because it is the most common case, but the
+underlying primitive is generic. `subscribeNativeScope` gives you every change with a filter, which
+is enough to invalidate a Zustand store, an Apollo cache, or anything else. See the
+[App API](/docs/api).

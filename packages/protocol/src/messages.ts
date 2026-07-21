@@ -69,6 +69,11 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
       ...kvTarget,
       afterKey: z.string().optional(),
       limit: z.number().int().positive().max(500).optional(),
+      // Modo enxuto (varredura/visão geral): o runtime omite o conteúdo do
+      // preview (preview: ""). approxSize e valueType ainda vêm — só o texto
+      // do preview, que uma agregação por tamanho descarta, deixa de trafegar.
+      // Retrocompatível: runtime antigo ignora e manda o preview normalmente.
+      lean: z.boolean().optional(),
     }),
   }),
   z.object({

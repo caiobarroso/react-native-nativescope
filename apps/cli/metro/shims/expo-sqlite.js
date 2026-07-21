@@ -138,7 +138,7 @@ if (runtime) {
       });
     }
   } catch (error) {
-    console.warn("[storage-inspector] falha ao instrumentar expo-sqlite:", error);
+    console.warn("[nativescope] failed to instrument expo-sqlite:", error);
   }
 }
 

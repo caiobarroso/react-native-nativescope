@@ -1,6 +1,7 @@
 "use strict";
 
 const GLOBAL_KEY = "__RNSI_APP_DEVTOOLS__";
+const REACT_QUERY_BRIDGE_KEY = "__RNSI_REACT_QUERY_BRIDGES__";
 
 function getBus() {
   const root = globalThis;
@@ -21,20 +22,97 @@ function eventMatches(event, filter) {
   return true;
 }
 
-function installStorageInspectorDevtools() {
-  getBus();
+function getReactQueryBridges() {
+  const root = globalThis;
+  if (!root[REACT_QUERY_BRIDGE_KEY]) {
+    root[REACT_QUERY_BRIDGE_KEY] = new WeakMap();
+  }
+  return root[REACT_QUERY_BRIDGE_KEY];
+}
+
+function normalizeReactQueryOptions(input) {
+  if (!input) return null;
+  const queryClient =
+    typeof input.invalidateQueries === "function" ? input : input.queryClient;
+  if (!queryClient || typeof queryClient.invalidateQueries !== "function") {
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn(
+        "[nativescope] reactQuery must be a QueryClient or { queryClient }.",
+      );
+    }
+    return null;
+  }
   return {
-    subscribe: subscribeStorageInspector,
-    getSnapshot: getStorageInspectorSnapshot,
+    queryClient,
+    queryKey: input.queryKey,
+    eventFilter: input.eventFilter,
+    shouldInvalidate: input.shouldInvalidate,
   };
 }
 
-function getStorageInspectorSnapshot() {
+function invalidateReactQuery(queryClient, queryKey) {
+  try {
+    const result =
+      queryKey === undefined
+        ? queryClient.invalidateQueries()
+        : queryClient.invalidateQueries({ queryKey });
+    if (result && typeof result.catch === "function") {
+      result.catch(() => {});
+    }
+  } catch {
+    /* devtool bridge nunca pode derrubar o app */
+  }
+}
+
+function installReactQueryBridge(reactQuery) {
+  const options = normalizeReactQueryOptions(reactQuery);
+  if (!options) return () => {};
+
+  const bridges = getReactQueryBridges();
+  const previous = bridges.get(options.queryClient);
+  if (previous) return previous.dispose;
+
+  const filter = { source: "studio", ...(options.eventFilter || {}) };
+  const unsubscribe = subscribeNativeScope((event) => {
+    if (
+      typeof options.shouldInvalidate === "function" &&
+      !options.shouldInvalidate(event)
+    ) {
+      return;
+    }
+    invalidateReactQuery(options.queryClient, options.queryKey);
+  }, filter);
+
+  const dispose = () => {
+    unsubscribe();
+    bridges.delete(options.queryClient);
+  };
+  bridges.set(options.queryClient, { dispose });
+  return dispose;
+}
+
+function installNativeScopeDevtools(options = {}) {
+  getBus();
+  const disposers = [];
+  const reactQuery = options.modules?.storage?.reactQuery;
+  if (reactQuery) {
+    disposers.push(installReactQueryBridge(reactQuery));
+  }
+  return {
+    subscribe: subscribeNativeScope,
+    getSnapshot: getNativeScopeSnapshot,
+    dispose() {
+      for (const dispose of disposers) dispose();
+    },
+  };
+}
+
+function getNativeScopeSnapshot() {
   const bus = getBus();
   return { version: bus.version, lastEvent: bus.lastEvent };
 }
 
-function subscribeStorageInspector(listener, filter) {
+function subscribeNativeScope(listener, filter) {
   const bus = getBus();
   const wrapped = (event) => {
     if (eventMatches(event, filter)) listener(event);
@@ -43,12 +121,12 @@ function subscribeStorageInspector(listener, filter) {
   return () => bus.listeners.delete(wrapped);
 }
 
-function useStorageInspectorSignal(filter) {
+function useNativeScopeSignal(filter) {
   const React = require("react");
   const getSnapshot = React.useCallback(() => getBus().version, []);
   const filterKey = JSON.stringify(filter || {});
   const subscribe = React.useCallback(
-    (notify) => subscribeStorageInspector(() => notify(), filter),
+    (notify) => subscribeNativeScope(() => notify(), filter),
     [filterKey],
   );
   return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -56,13 +134,13 @@ function useStorageInspectorSignal(filter) {
 
 function asyncStorageModule() {
   // Quando o projeto não tem AsyncStorage instalado, o resolver do
-  // inspector entrega um stub null (ver withStorageInspector) para o
+  // NativeScope entrega um stub null (ver withNativeScope) para o
   // bundle não quebrar. O erro amigável só acontece se o hook for USADO.
   const mod = require("@react-native-async-storage/async-storage");
   const storage = mod && (mod.default || mod);
   if (!storage) {
     throw new Error(
-      "[storage-inspector] useInspectedAsyncStorage requer @react-native-async-storage/async-storage instalado neste app.",
+      "[nativescope] useInspectedAsyncStorage requires @react-native-async-storage/async-storage in this app.",
     );
   }
   return storage;
@@ -85,7 +163,7 @@ function useInspectedAsyncStorage(key, options = {}) {
   const [value, setValueState] = React.useState(undefined);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
-  const signal = useStorageInspectorSignal({
+  const signal = useNativeScopeSignal({
     kind: "key-value",
     providerId: "async-storage",
     instanceId: "default",
@@ -128,7 +206,7 @@ function useInspectedAsyncStorage(key, options = {}) {
 function useInspectedMMKV(instance, key, options = {}) {
   const React = require("react");
   const [value, setValueState] = React.useState(() => readMmkvValue(instance, key));
-  const signal = useStorageInspectorSignal({
+  const signal = useNativeScopeSignal({
     kind: "key-value",
     providerId: "mmkv",
     instanceId: options.instanceId,
@@ -177,7 +255,7 @@ function useInspectedSqlite(db, query, params = [], options = {}) {
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(Boolean(db));
   const [error, setError] = React.useState(null);
-  const signal = useStorageInspectorSignal({
+  const signal = useNativeScopeSignal({
     kind: "database",
     providerId: "expo-sqlite",
     instanceId: options.instanceId,
@@ -210,13 +288,18 @@ function useInspectedSqlite(db, query, params = [], options = {}) {
   return { rows, loading, error, reload };
 }
 
+function defineNativeScopeConfig(config = {}) {
+  return config;
+}
+
 module.exports = {
-  installStorageInspectorDevtools,
-  subscribeStorageInspector,
-  getStorageInspectorSnapshot,
-  useStorageInspectorSignal,
+  defineNativeScopeConfig,
+  installNativeScopeDevtools,
+  subscribeNativeScope,
+  getNativeScopeSnapshot,
+  useNativeScopeSignal,
   // nome preferido — sem jargão de implementação ("signal"):
-  useStorageChanged: useStorageInspectorSignal,
+  useStorageChanged: useNativeScopeSignal,
   useInspectedAsyncStorage,
   useInspectedMMKV,
   useInspectedSqlite,

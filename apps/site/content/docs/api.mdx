@@ -1,0 +1,127 @@
+---
+title: App API
+description: Everything exported from react-native-nativescope/app, for the cases where config is not enough.
+---
+
+Everything here is optional. A project that only wants to inspect its storage needs none of it.
+
+The `/app` entry point contains these APIs. Prefer the root config file for normal use. When normal
+app code invokes an API manually, load it behind `__DEV__` with `require` so it never enters the
+production module graph. Type-only imports remain safe.
+
+```ts
+import {
+  defineNativeScopeConfig,
+  installNativeScopeDevtools,
+  subscribeNativeScope,
+  useNativeScopeSignal,
+} from "react-native-nativescope/app";
+```
+
+<Callout kind="note">
+The type blocks on this page are read directly out of the published type
+definitions at build time. They cannot drift from the shipped API.
+</Callout>
+
+## Reacting to changes
+
+### `subscribeNativeScope`
+
+The primitive everything else is built on. Calls your listener for every change, optionally filtered,
+and returns an unsubscribe function.
+
+```ts
+const unsubscribe = subscribeNativeScope(
+  (event) => {
+    console.log(event.kind, event.source);
+  },
+  { source: "studio", providerId: "mmkv" },
+);
+```
+
+The event you receive:
+
+<Snippet file="apps/cli/app/index.d.ts" symbol="NativeScopeChange" />
+
+And the filter shape, where every field is optional and combines with AND:
+
+<Snippet file="apps/cli/app/index.d.ts" symbol="NativeScopeEventFilter" />
+
+### `useNativeScopeSignal`
+
+A React hook returning a number that increments on every matching change. Use it as a dependency to
+re-run your own read.
+
+```tsx
+const signal = useNativeScopeSignal({ providerId: "mmkv", key: "user" });
+
+useEffect(() => {
+  reloadUser();
+}, [signal]);
+```
+
+`useStorageChanged` is an alias kept for readability at call sites.
+
+## Reading storage directly
+
+Convenience hooks that read a value and keep it fresh as the studio or the app changes it. They are
+for debug screens and small tools, not for production data flow.
+
+```tsx
+const { value, setValue, removeValue, loading } = useInspectedAsyncStorage("token");
+```
+
+```tsx
+const { value, setValue } = useInspectedMMKV<User>(mmkvInstance, "user");
+```
+
+```tsx
+const { rows, loading, reload } = useInspectedSqlite<Visit>(
+  db,
+  "select * from visits where pdv = ?",
+  ["Carrefour"],
+);
+```
+
+Each accepts an options object with a `source` filter, so you can react only to studio changes, only
+to app changes, or both.
+
+## Installing imperatively
+
+### `installNativeScopeDevtools`
+
+The manual equivalent of `nativescope.config.ts`. Use it when the automatic discovery cannot reach
+your `QueryClient`.
+
+<Snippet file="apps/cli/app/index.d.ts" symbol="InstallNativeScopeOptions" />
+
+```tsx
+if (__DEV__) {
+  const { installNativeScopeDevtools } = require("react-native-nativescope/app");
+  installNativeScopeDevtools({
+    modules: {
+      storage: { reactQuery: getQueryClient() },
+    },
+  });
+}
+```
+
+Manual installation requires an explicit `QueryClient`; automatic discovery and the in-app
+indicator belong in `nativescope.config.ts`. The function returns a handle with `subscribe`,
+`getSnapshot` and `dispose`.
+
+### `defineNativeScopeConfig`
+
+Identity function that exists purely for type inference in `nativescope.config.ts`. See
+[Configuration](/docs/configuration).
+
+## Snapshots
+
+### `getNativeScopeSnapshot`
+
+Returns the current version counter and the last change seen. Useful for wiring NativeScope into a
+store with `useSyncExternalStore`.
+
+```ts
+const { version, lastEvent } = getNativeScopeSnapshot();
+```

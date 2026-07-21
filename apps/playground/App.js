@@ -13,12 +13,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MMKV } from "react-native-mmkv";
 import * as SQLite from "expo-sqlite";
 import {
-  installStorageInspectorDevtools,
-  useStorageInspectorSignal,
-} from "react-native-storage-inspector/app";
+  installNativeScopeDevtools,
+  useNativeScopeSignal,
+} from "react-native-nativescope/app";
 
 if (typeof __DEV__ === "undefined" || __DEV__) {
-  installStorageInspectorDevtools();
+  installNativeScopeDevtools();
 }
 
 const settings = new MMKV({ id: "settings" });
@@ -92,7 +92,7 @@ export default function App() {
   const [customValue, setCustomValue] = useState("valor editavel");
   const [sqlRows, setSqlRows] = useState([]);
   const [busy, setBusy] = useState(false);
-  const studioSignal = useStorageInspectorSignal({ source: "studio" });
+  const studioSignal = useNativeScopeSignal({ source: "studio" });
 
   const ready = Boolean(db);
   const databaseSummary = useMemo(
@@ -433,7 +433,7 @@ export default function App() {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.kicker}>React Native Storage Inspector</Text>
+            <Text style={styles.kicker}>NativeScope</Text>
             <Text style={styles.title}>Playground completo</Text>
           </View>
           <StatusBadge busy={busy} ready={ready} />

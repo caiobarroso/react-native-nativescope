@@ -28,8 +28,21 @@ export {
 } from "./transport.ts";
 export { startRuntime, type Runtime, type RuntimeOptions } from "./bootstrap.ts";
 export {
+  enableAutoReactQueryBridge,
   emitAppDevtoolsChange,
+  installAppDevtoolsConfig,
+  installReactQueryBridge,
+  registerReactQueryClient,
+  subscribeAppDevtoolsChange,
+  type AutoReactQueryBridgeConfig,
+  type AppIndicatorConfig,
+  type AppStorageModuleConfig,
   type AppDevtoolsChange,
+  type AppDevtoolsConfig,
+  type AppDevtoolsEventFilter,
+  type ReactQueryBridgeConfig,
+  type ReactQueryBridgeOptions,
+  type ReactQueryClientLike,
 } from "./app-devtools.ts";
 export {
   createAsyncStorageAdapter,

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   PROTOCOL_VERSION,
@@ -28,6 +28,9 @@ interface Session {
   client: { name: string; platform: string };
 }
 
+const COMMAND_ROUTE_TTL_MS = 10_000;
+const STREAM_ROUTE_TTL_MS = 10 * 60_000;
+
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
@@ -52,9 +55,40 @@ const MIME: Record<string, string> = {
 export function startLocalServer(options: LocalServerOptions) {
   const { port, sessionToken, uiDir, project, log } = options;
 
-  let studio: Session | null = null;
+  const studios = new Set<Session>();
   let runtime: Session | null = null;
   let nextSessionId = 1;
+  let nextBridgeRequestId = 1;
+  const commandRoutes = new Map<
+    string,
+    { studio: Session; studioRequestId: string; timer: ReturnType<typeof setTimeout> }
+  >();
+  const streamRoutes = new Map<
+    string,
+    { studio: Session; timer: ReturnType<typeof setTimeout> }
+  >();
+
+  function deleteCommandRoute(requestId: string): void {
+    const route = commandRoutes.get(requestId);
+    if (!route) return;
+    clearTimeout(route.timer);
+    commandRoutes.delete(requestId);
+  }
+
+  function clearCommandRoutes(): void {
+    for (const requestId of commandRoutes.keys()) deleteCommandRoute(requestId);
+  }
+
+  function deleteStreamRoute(streamId: string): void {
+    const route = streamRoutes.get(streamId);
+    if (!route) return;
+    clearTimeout(route.timer);
+    streamRoutes.delete(streamId);
+  }
+
+  function clearStreamRoutes(): void {
+    for (const streamId of streamRoutes.keys()) deleteStreamRoute(streamId);
+  }
 
   function sendTo(session: Session | null, message: AnyMessage): void {
     if (session && session.socket.readyState === WebSocket.OPEN) {
@@ -64,12 +98,16 @@ export function startLocalServer(options: LocalServerOptions) {
       // fatal — um frame gordo é logado, não derruba a bridge.
       if (exceedsWireBudget(raw)) {
         log(
-          `⚠ frame acima do orçamento de fio (${WIRE_MESSAGE_BUDGET} bytes): ` +
-            `${message.kind} ~${raw.length} chars — deveria ir por stream.*`,
+          `Frame exceeds the wire budget (${WIRE_MESSAGE_BUDGET} bytes): ` +
+            `${message.kind} ~${raw.length} chars; use stream.* instead`,
         );
       }
       session.socket.send(raw);
     }
+  }
+
+  function sendToStudios(message: AnyMessage): void {
+    for (const studio of studios) sendTo(studio, message);
   }
 
   // -------------------------------------------------------------------- HTTP
@@ -77,13 +115,16 @@ export function startLocalServer(options: LocalServerOptions) {
   async function serveStatic(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!uiDir) {
       res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
-      res.end("UI não construída. Rode: pnpm --filter @rnsi/desktop build");
+      res.end("Studio UI is not built. Run: pnpm --filter @rnsi/desktop build");
       return;
     }
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
     // normalize + verificação de prefixo: nada de path traversal
-    let filePath = normalize(join(uiDir, url.pathname === "/" ? "index.html" : url.pathname));
-    if (!filePath.startsWith(normalize(uiDir))) {
+    const root = resolve(uiDir);
+    const requested = url.pathname === "/" ? "index.html" : `.${url.pathname}`;
+    let filePath = resolve(root, requested);
+    const outsideRoot = relative(root, filePath);
+    if (outsideRoot.startsWith("..") || isAbsolute(outsideRoot)) {
       res.writeHead(403).end();
       return;
     }
@@ -147,13 +188,13 @@ export function startLocalServer(options: LocalServerOptions) {
 
     function acceptHello(hello: HelloMessage): void {
       if (hello.sessionToken !== sessionToken) {
-        reject("unauthorized", "token de sessão inválido");
+        reject("unauthorized", "invalid session token");
         return;
       }
       if (hello.protocolVersion !== PROTOCOL_VERSION) {
         reject(
           "version-mismatch",
-          `Studio fala protocolo v${PROTOCOL_VERSION}, cliente fala v${hello.protocolVersion}. Atualize react-native-storage-inspector no projeto.`,
+          `Studio uses protocol v${PROTOCOL_VERSION}, but the client uses v${hello.protocolVersion}. Update react-native-nativescope in the project.`,
         );
         return;
       }
@@ -165,11 +206,13 @@ export function startLocalServer(options: LocalServerOptions) {
       };
       role = hello.role;
 
-      // Última conexão vence — cobre reload do app e refresh da UI.
+      // O runtime é único por app. Studios são leitores independentes: várias
+      // abas podem observar e editar a mesma sessão sem expulsarem umas às outras.
       if (role === "studio") {
-        studio?.socket.close();
-        studio = session;
+        studios.add(session);
       } else {
+        clearCommandRoutes();
+        clearStreamRoutes();
         runtime?.socket.close();
         runtime = session;
       }
@@ -183,8 +226,8 @@ export function startLocalServer(options: LocalServerOptions) {
       );
 
       if (role === "runtime") {
-        log(`app conectado: ${hello.client.name} (${hello.client.platform})`);
-        sendTo(studio, {
+        log(`app connected: ${hello.client.name} (${hello.client.platform})`);
+        sendToStudios({
           kind: "event",
           protocolVersion: PROTOCOL_VERSION,
           timestamp: Date.now(),
@@ -193,7 +236,7 @@ export function startLocalServer(options: LocalServerOptions) {
         });
       } else if (runtime) {
         // Studio chegou depois do app: replay do connected para não perder estado.
-        sendTo(studio, {
+        sendTo(session, {
           kind: "event",
           protocolVersion: PROTOCOL_VERSION,
           timestamp: Date.now(),
@@ -206,7 +249,7 @@ export function startLocalServer(options: LocalServerOptions) {
     ws.on("message", (data) => {
       const parsed = parseMessage(data.toString());
       if (!parsed.ok) {
-        if (!session) reject("invalid-message", "mensagem malformada no handshake");
+        if (!session) reject("invalid-message", "malformed handshake message");
         return; // pós-handshake: descarta silenciosamente
       }
       const message = parsed.message;
@@ -216,17 +259,55 @@ export function startLocalServer(options: LocalServerOptions) {
           clearTimeout(handshakeTimer);
           acceptHello(message);
         } else {
-          reject("invalid-message", "esperava hello");
+          reject("invalid-message", "expected a hello message");
         }
         return;
       }
 
-      // Bridge: commands do Studio vão para o runtime; results e events do
-      // runtime vão para o Studio. O serviço valida e roteia — não interpreta.
+      // Cada aba gera requestIds locais (normalmente req-1, req-2...). O bridge
+      // troca por um id global antes de enviar ao runtime e restaura o original
+      // na volta, evitando colisões entre Studios simultâneos.
       if (role === "studio" && message.kind === "command") {
-        sendTo(runtime, message);
-      } else if (role === "runtime" && (message.kind === "command-result" || message.kind === "event")) {
-        sendTo(studio, message);
+        if (!runtime || runtime.socket.readyState !== WebSocket.OPEN) return;
+        if (message.type === "stream.cancel") {
+          deleteStreamRoute(message.payload.streamId);
+        }
+        const bridgeRequestId = `bridge-${nextBridgeRequestId++}`;
+        commandRoutes.set(bridgeRequestId, {
+          studio: session,
+          studioRequestId: message.requestId,
+          timer: setTimeout(
+            () => deleteCommandRoute(bridgeRequestId),
+            COMMAND_ROUTE_TTL_MS,
+          ),
+        });
+        sendTo(runtime, { ...message, requestId: bridgeRequestId });
+      } else if (role === "runtime" && message.kind === "command-result") {
+        const route = commandRoutes.get(message.requestId);
+        if (!route) return;
+        deleteCommandRoute(message.requestId);
+        if (
+          message.ok &&
+          message.result &&
+          typeof message.result === "object" &&
+          "streamId" in message.result &&
+          typeof message.result.streamId === "string"
+        ) {
+          const streamId = message.result.streamId;
+          streamRoutes.set(streamId, {
+            studio: route.studio,
+            timer: setTimeout(() => deleteStreamRoute(streamId), STREAM_ROUTE_TTL_MS),
+          });
+        }
+        sendTo(route.studio, { ...message, requestId: route.studioRequestId });
+      } else if (role === "runtime" && message.kind === "event") {
+        if (message.type === "stream.chunk" || message.type === "stream.end") {
+          const route = streamRoutes.get(message.payload.streamId);
+          if (route) sendTo(route.studio, message);
+          if (message.type === "stream.end") deleteStreamRoute(message.payload.streamId);
+        } else {
+          sendToStudios(message);
+        }
       }
     });
 
@@ -235,16 +316,24 @@ export function startLocalServer(options: LocalServerOptions) {
       if (!session) return;
       if (role === "runtime" && runtime === session) {
         runtime = null;
-        log(`app desconectado: ${session.client.name}`);
-        sendTo(studio, {
+        clearCommandRoutes();
+        clearStreamRoutes();
+        log(`app disconnected: ${session.client.name}`);
+        sendToStudios({
           kind: "event",
           protocolVersion: PROTOCOL_VERSION,
           timestamp: Date.now(),
           type: "session.disconnected",
           payload: { sessionId: session.sessionId },
         });
-      } else if (role === "studio" && studio === session) {
-        studio = null;
+      } else if (role === "studio") {
+        studios.delete(session);
+        for (const [requestId, route] of commandRoutes) {
+          if (route.studio === session) deleteCommandRoute(requestId);
+        }
+        for (const [streamId, route] of streamRoutes) {
+          if (route.studio === session) deleteStreamRoute(streamId);
+        }
       }
     });
   });
@@ -254,7 +343,7 @@ export function startLocalServer(options: LocalServerOptions) {
       if (err.code === "EADDRINUSE") {
         reject(
           new Error(
-            `porta ${port} já está em uso. Outro rn-storage-inspector rodando? Use --port para trocar.`,
+            `Port ${port} is already in use. Is another NativeScope process running? Use --port to choose another port.`,
           ),
         );
       } else {
@@ -264,6 +353,8 @@ export function startLocalServer(options: LocalServerOptions) {
     httpServer.listen(port, "127.0.0.1", () => {
       resolve({
         close() {
+          clearCommandRoutes();
+          clearStreamRoutes();
           wss.close();
           httpServer.close();
         },

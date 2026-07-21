@@ -62,6 +62,33 @@ describe("orçamentos de escala", () => {
     expect(Math.max(...batchSizes)).toBeLessThanOrEqual(KEY_READ_BATCH);
   });
 
+  it("reutiliza o índice de nomes entre páginas da mesma varredura", async () => {
+    const storage = createFakeAsyncStorage();
+    for (let i = 0; i < 900; i += 1) {
+      await storage.setItem(`k.${String(i).padStart(4, "0")}`, String(i));
+    }
+    let enumerations = 0;
+    const instrumented = {
+      ...storage,
+      getAllKeys: async () => {
+        enumerations += 1;
+        return storage.getAllKeys();
+      },
+    };
+    const adapter = createAsyncStorageAdapter(instrumented);
+
+    const first = await adapter.listKeys("default", { limit: 500 });
+    const afterKey = first.nextAfterKey;
+    expect(afterKey).not.toBeNull();
+    if (afterKey === null) throw new Error("expected a second page");
+    await adapter.listKeys("default", {
+      afterKey,
+      limit: 500,
+    });
+
+    expect(enumerations).toBe(1);
+  });
+
   it("resposta de listKeys fica dentro do orçamento mesmo com valores de MB", async () => {
     const storage = createFakeAsyncStorage();
     const megabyte = "v".repeat(1024 * 1024);

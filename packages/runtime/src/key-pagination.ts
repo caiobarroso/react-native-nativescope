@@ -30,8 +30,18 @@ export interface KeyPageOptions {
   limit?: number;
 }
 
-export function pageOfKeys(keys: readonly string[], options?: KeyPageOptions): KeyPageWindow {
-  const sorted = [...keys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+export function sortKeys(keys: readonly string[]): string[] {
+  return [...keys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
+ * Recorta um índice que já está ordenado. Adapters reutilizam esse índice
+ * entre páginas para que um scan de N chaves ordene N apenas uma vez.
+ */
+export function pageOfSortedKeys(
+  sorted: readonly string[],
+  options?: KeyPageOptions,
+): KeyPageWindow {
   const limit = Math.min(Math.max(options?.limit ?? DEFAULT_KEY_PAGE_LIMIT, 1), MAX_KEY_PAGE_LIMIT);
 
   // Primeiro índice com chave > afterKey (busca binária — 1M de chaves ok).
@@ -57,6 +67,10 @@ export function pageOfKeys(keys: readonly string[], options?: KeyPageOptions): K
         : null,
     total: sorted.length,
   };
+}
+
+export function pageOfKeys(keys: readonly string[], options?: KeyPageOptions): KeyPageWindow {
+  return pageOfSortedKeys(sortKeys(keys), options);
 }
 
 /**

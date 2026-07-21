@@ -10,14 +10,25 @@ export type Phase =
 export interface ActivityItem {
   id: number;
   timestamp: number;
+  providerId: string;
   providerLabel: string;
   instanceId: string;
   key: string;
   change: "created" | "updated" | "removed";
   source: ChangeSource;
   preview: string | null;
+  target:
+    | { kind: "key-value"; key: string }
+    | { kind: "database"; table: string; rowId: number | null };
   /** >1 quando o runtime fundiu uma rajada de mudanças neste item. */
   coalesced?: number;
+}
+
+export interface ActivityFocus {
+  token: number;
+  providerId: string;
+  instanceId: string;
+  target: ActivityItem["target"];
 }
 
 export interface Selection {
@@ -27,6 +38,25 @@ export interface Selection {
 
 const ACTIVITY_LIMIT = 200;
 const KEY_HISTORY_LIMIT = 20;
+const KEY_HISTORY_KEY_LIMIT = 500;
+const RECENT_CHANGE_LIMIT = 1_000;
+
+function withBoundedEntry<T>(
+  record: Record<string, T>,
+  key: string,
+  value: T,
+  limit: number,
+): Record<string, T> {
+  const next = { ...record };
+  // Reinsert existing keys so insertion order remains a useful LRU signal.
+  delete next[key];
+  next[key] = value;
+  const overflow = Object.keys(next).length - limit;
+  if (overflow > 0) {
+    for (const staleKey of Object.keys(next).slice(0, overflow)) delete next[staleKey];
+  }
+  return next;
+}
 
 export interface KeyHistoryEntry {
   timestamp: number;
@@ -48,6 +78,8 @@ interface StudioState {
    */
   keysMeta: Record<string, { nextAfterKey: string | null; total: number }>;
   activity: ActivityItem[];
+  /** Último destino aberto pelo feed de atividade; o token reinicia o destaque. */
+  activityFocus: ActivityFocus | null;
   selection: Selection | null;
   selectedKey: string | null;
   /** modo de criação de chave nova no editor */
@@ -111,6 +143,8 @@ interface StudioState {
     timestamp: number;
     coalescedCount?: number;
   }): void;
+  focusActivity(item: ActivityItem): void;
+  clearActivityFocus(token: number): void;
 }
 
 export function keysId(providerId: string, instanceId: string): string {
@@ -118,6 +152,7 @@ export function keysId(providerId: string, instanceId: string): string {
 }
 
 let nextActivityId = 1;
+let nextActivityFocusToken = 1;
 
 export const useStudio = create<StudioState>((set) => ({
   phase: "connecting",
@@ -126,6 +161,7 @@ export const useStudio = create<StudioState>((set) => ({
   keys: {},
   keysMeta: {},
   activity: [],
+  activityFocus: null,
   selection: null,
   selectedKey: null,
   creating: false,
@@ -210,12 +246,14 @@ export const useStudio = create<StudioState>((set) => ({
       const item: ActivityItem = {
         id: nextActivityId++,
         timestamp: input.timestamp,
+        providerId: input.providerId,
         providerLabel: input.providerLabel,
         instanceId: input.instanceId,
         key: input.key,
         change: input.change,
         source: input.source,
         preview: input.entry?.preview ?? null,
+        target: { kind: "key-value", key: input.key },
         ...(input.coalescedCount !== undefined ? { coalesced: input.coalescedCount } : {}),
       };
 
@@ -234,14 +272,21 @@ export const useStudio = create<StudioState>((set) => ({
             ? state.keysMeta
             : { ...state.keysMeta, [id]: nextMeta },
         activity: [item, ...state.activity].slice(0, ACTIVITY_LIMIT),
-        recentChanges: { ...state.recentChanges, [historyKey]: Date.now() },
-        keyHistory: {
-          ...state.keyHistory,
-          [historyKey]: [historyEntry, ...(state.keyHistory[historyKey] ?? [])].slice(
+        recentChanges: withBoundedEntry(
+          state.recentChanges,
+          historyKey,
+          Date.now(),
+          RECENT_CHANGE_LIMIT,
+        ),
+        keyHistory: withBoundedEntry(
+          state.keyHistory,
+          historyKey,
+          [historyEntry, ...(state.keyHistory[historyKey] ?? [])].slice(
             0,
             KEY_HISTORY_LIMIT,
           ),
-        },
+          KEY_HISTORY_KEY_LIMIT,
+        ),
       };
     }),
 
@@ -254,23 +299,29 @@ export const useStudio = create<StudioState>((set) => ({
           creating: false,
           keyFilter: "",
           selectedTable: null,
+          activityFocus: null,
         };
       }
       const id = keysId(selection.providerId, selection.instanceId);
       const tabs = state.tableTabs[id] ?? [];
       return {
         selection,
+        // Key pages can be large. Keep only the selected instance cached so
+        // switching through many stores cannot retain every visited dataset.
+        keys: state.keys[id] ? { [id]: state.keys[id] } : {},
+        keysMeta: state.keysMeta[id] ? { [id]: state.keysMeta[id] } : {},
         selectedKey: null,
         creating: false,
         keyFilter: "",
         selectedTable: tabs.includes(state.selectedTable ?? "")
           ? state.selectedTable
           : tabs[0] ?? null,
+        activityFocus: null,
       };
     }),
-  selectKey: (selectedKey) => set({ selectedKey, creating: false }),
+  selectKey: (selectedKey) => set({ selectedKey, creating: false, activityFocus: null }),
   setCreating: (creating) => set(creating ? { creating, selectedKey: null } : { creating }),
-  setKeyFilter: (keyFilter) => set({ keyFilter }),
+  setKeyFilter: (keyFilter) => set({ keyFilter, activityFocus: null }),
 
   setTables: (providerId, instanceId, tables) =>
     set((state) => {
@@ -302,6 +353,7 @@ export const useStudio = create<StudioState>((set) => ({
       return {
         selectedTable,
         tableTabs: { ...state.tableTabs, [id]: nextTabs },
+        activityFocus: null,
       };
     }),
 
@@ -316,6 +368,7 @@ export const useStudio = create<StudioState>((set) => ({
           ...state.tableTabs,
           [id]: current.includes(table) ? current : [...current, table],
         },
+        activityFocus: null,
       };
     }),
 
@@ -349,6 +402,7 @@ export const useStudio = create<StudioState>((set) => ({
       const item: ActivityItem = {
         id: nextActivityId++,
         timestamp: input.timestamp,
+        providerId: input.providerId,
         providerLabel: input.providerLabel,
         instanceId: input.instanceId,
         key: input.rowId !== null ? `${input.table} · rowid ${input.rowId}` : input.table,
@@ -360,6 +414,7 @@ export const useStudio = create<StudioState>((set) => ({
               : "updated",
         source: input.source,
         preview: null,
+        target: { kind: "database", table: input.table, rowId: input.rowId },
         ...(input.coalescedCount !== undefined ? { coalesced: input.coalescedCount } : {}),
       };
       const tableHistoryKey = `${keysId(input.providerId, input.instanceId)} ${input.table}`;
@@ -371,7 +426,57 @@ export const useStudio = create<StudioState>((set) => ({
       return {
         activity: [item, ...state.activity].slice(0, ACTIVITY_LIMIT),
         dbRefreshNonce: matchesSelection ? state.dbRefreshNonce + 1 : state.dbRefreshNonce,
-        recentChanges: { ...state.recentChanges, [tableHistoryKey]: Date.now() },
+        recentChanges: withBoundedEntry(
+          state.recentChanges,
+          tableHistoryKey,
+          Date.now(),
+          RECENT_CHANGE_LIMIT,
+        ),
       };
     }),
+
+  focusActivity: (item) =>
+    set((state) => {
+      const selection = { providerId: item.providerId, instanceId: item.instanceId };
+      const activityFocus: ActivityFocus = {
+        token: nextActivityFocusToken++,
+        ...selection,
+        target: item.target,
+      };
+
+      if (item.target.kind === "key-value") {
+        const id = keysId(item.providerId, item.instanceId);
+        return {
+          selection,
+          keys: state.keys[id] ? { [id]: state.keys[id] } : {},
+          keysMeta: state.keysMeta[id] ? { [id]: state.keysMeta[id] } : {},
+          selectedKey: item.change === "removed" ? null : item.target.key,
+          creating: false,
+          keyFilter: item.target.key,
+          selectedTable: null,
+          activityFocus,
+        };
+      }
+
+      const id = keysId(item.providerId, item.instanceId);
+      const tabs = state.tableTabs[id] ?? [];
+      return {
+        selection,
+        keys: state.keys[id] ? { [id]: state.keys[id] } : {},
+        keysMeta: state.keysMeta[id] ? { [id]: state.keysMeta[id] } : {},
+        selectedKey: null,
+        creating: false,
+        keyFilter: "",
+        selectedTable: item.target.table,
+        tableTabs: {
+          ...state.tableTabs,
+          [id]: tabs.includes(item.target.table) ? tabs : [...tabs, item.target.table],
+        },
+        activityFocus,
+      };
+    }),
+  clearActivityFocus: (token) =>
+    set((state) =>
+      state.activityFocus?.token === token ? { activityFocus: null } : {},
+    ),
 }));

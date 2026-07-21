@@ -56,7 +56,7 @@ if (runtime) {
 
     runtime.registry.register(adapter);
   } catch (error) {
-    console.warn("[storage-inspector] falha ao instrumentar AsyncStorage:", error);
+    console.warn("[nativescope] failed to instrument AsyncStorage:", error);
   }
 }
 

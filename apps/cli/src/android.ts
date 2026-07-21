@@ -68,8 +68,8 @@ export async function applyReverse(port: number): Promise<AdbState> {
       devices: [],
       reversed: [],
       problem: missing
-        ? "adb não encontrado no PATH — instale o platform-tools do Android SDK (só é necessário para Android)."
-        : `adb falhou: ${listing.stderr.trim()}`,
+        ? "adb was not found in PATH. Install Android SDK Platform Tools (Android only)."
+        : `adb failed: ${listing.stderr.trim()}`,
     };
   }
 
@@ -82,7 +82,7 @@ export async function applyReverse(port: number): Promise<AdbState> {
       reversed: [],
       problem:
         unauthorized.length > 0
-          ? "device conectado mas não autorizado — aceite a depuração USB na tela do aparelho."
+          ? "A connected device is not authorized. Accept USB debugging on the device."
           : null,
     };
   }
@@ -101,7 +101,7 @@ export async function applyReverse(port: number): Promise<AdbState> {
     available: true,
     devices: ready,
     reversed,
-    problem: failures.length > 0 ? `adb reverse falhou — ${failures.join("; ")}` : null,
+    problem: failures.length > 0 ? `adb reverse failed: ${failures.join("; ")}` : null,
   };
 }
 
@@ -116,14 +116,21 @@ export function startAdbWatcher(
 ): () => void {
   let previous = "";
   let stopped = false;
+  let ticking = false;
 
   const tick = async (): Promise<void> => {
-    if (stopped) return;
-    const state = await applyReverse(port);
-    const fingerprint = JSON.stringify(state);
-    if (fingerprint !== previous) {
-      previous = fingerprint;
-      onChange(state);
+    if (stopped || ticking) return;
+    ticking = true;
+    try {
+      const state = await applyReverse(port);
+      if (stopped) return;
+      const fingerprint = JSON.stringify(state);
+      if (fingerprint !== previous) {
+        previous = fingerprint;
+        onChange(state);
+      }
+    } finally {
+      ticking = false;
     }
   };
 

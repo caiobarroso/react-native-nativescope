@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useStudio } from "./lib/store.ts";
 import { connect } from "./lib/studio-client.ts";
 import { Header } from "./components/Header.tsx";
@@ -10,9 +10,12 @@ import { TableList } from "./components/TableList.tsx";
 import { RowGrid } from "./components/RowGrid.tsx";
 import { ActivityStrip } from "./components/ActivityStrip.tsx";
 import { GlobalSearch } from "./components/GlobalSearch.tsx";
+import { StorageOverview } from "./components/StorageOverview.tsx";
 
 export default function App() {
   const phase = useStudio((s) => s.phase);
+  const selection = useStudio((s) => s.selection);
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const isDatabase = useStudio((s) => {
     if (!s.selection) return false;
     const provider = s.providers.find((p) => p.providerId === s.selection?.providerId);
@@ -30,7 +33,7 @@ export default function App() {
         <>
           <div className="flex min-h-0 flex-1">
             <Sidebar />
-            <main className="flex min-w-0 flex-1">
+            <main className="relative flex min-w-0 flex-1 overflow-hidden">
               {isDatabase ? (
                 <>
                   <TableList />
@@ -38,8 +41,13 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <KeyList />
+                  <KeyList onOpenOverview={() => setOverviewOpen(true)} />
                   <ValueEditor />
+                  <StorageOverview
+                    open={overviewOpen}
+                    selection={selection}
+                    onClose={() => setOverviewOpen(false)}
+                  />
                 </>
               )}
             </main>

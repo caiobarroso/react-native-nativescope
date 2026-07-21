@@ -17,9 +17,12 @@
     "react": "19.2.3",
     "react-native": "0.86.0",
     "react-native-mmkv": "^3.2.0",
-    "react-native-storage-inspector": "file:../cli"
+    "react-native-nativescope": "file:../cli"
   },
   "devDependencies": {
     "@types/react": "~19.2.4"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   }
 }
