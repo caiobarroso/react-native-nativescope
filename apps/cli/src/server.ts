@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile, stat } from "node:fs/promises";
+import { networkInterfaces } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import {
@@ -20,6 +21,12 @@ export interface LocalServerOptions {
   uiDir: string | null;
   project: DetectedProject;
   log: (line: string) => void;
+  /**
+   * Interface de bind. Default `127.0.0.1` (loopback only). `0.0.0.0` habilita
+   * o modo LAN (opt-in via --lan) para conectar iPhone físico na mesma rede —
+   * o token de sessão passa a ser a barreira, já que o app não manda Origin.
+   */
+  host?: string;
 }
 
 interface Session {
@@ -50,10 +57,26 @@ const MIME: Record<string, string> = {
  * - token de sessão exigido no handshake de todo cliente;
  * - Origin validado no upgrade — browser malicioso em outra origem não
  *   conecta nem com token vazado (WS de browser não passa por CORS);
- * - loopback only, nunca 0.0.0.0.
+ * - loopback por padrão; 0.0.0.0 só sob opt-in explícito (--lan), onde o
+ *   token vira a barreira (o Studio browser continua preso ao loopback pelo
+ *   Origin; só o runtime RN, que não manda Origin, entra pela LAN).
  */
 export function startLocalServer(options: LocalServerOptions) {
   const { port, sessionToken, uiDir, project, log } = options;
+  const host = options.host ?? "127.0.0.1";
+
+  // Origens aceitas no upgrade WS. Loopback sempre; em LAN (host != loopback) o
+  // runtime RN manda Origin = a URL do ws (http://<ip-desta-máquina>:porta), que
+  // batemos contra os IPs reais da máquina. Browser não forja Origin, então
+  // liberar os próprios IPs não abre porta para página maliciosa.
+  const allowedOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
+  if (host !== "127.0.0.1") {
+    for (const addrs of Object.values(networkInterfaces())) {
+      for (const addr of addrs ?? []) {
+        if (addr.family === "IPv4" && !addr.internal) allowedOrigins.add(`http://${addr.address}:${port}`);
+      }
+    }
+  }
 
   const studios = new Set<Session>();
   let runtime: Session | null = null;
@@ -160,12 +183,10 @@ export function startLocalServer(options: LocalServerOptions) {
     // Origin presente = browser. Só a nossa própria origem é aceita.
     // Origin ausente = cliente não-browser (runtime RN, Node) — segue para
     // o handshake, onde o token decide.
-    if (origin) {
-      const allowed = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
-      if (!allowed.includes(origin)) {
-        socket.destroy();
-        return;
-      }
+    if (origin && !allowedOrigins.has(origin)) {
+      log(`ws rejected: origin ${origin} not in allowlist`);
+      socket.destroy();
+      return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
   });
@@ -180,6 +201,7 @@ export function startLocalServer(options: LocalServerOptions) {
     }, 5000);
 
     function reject(code: Parameters<typeof protocolError>[0], message: string): void {
+      log(`handshake rejected (${code}): ${message}`);
       ws.send(
         serializeMessage({ kind: "hello-reject", error: protocolError(code, message) }),
       );
@@ -350,7 +372,7 @@ export function startLocalServer(options: LocalServerOptions) {
         reject(err);
       }
     });
-    httpServer.listen(port, "127.0.0.1", () => {
+    httpServer.listen(port, host, () => {
       resolve({
         close() {
           clearCommandRoutes();

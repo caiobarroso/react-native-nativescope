@@ -36,27 +36,10 @@ required for that core workflow.
 
 ## Keep cached screens in sync (optional)
 
-NativeScope changes the real storage value immediately. If your screen renders that value through
-React Query, its in-memory cache may continue showing the previous value until the query runs
-again. Add this root file when you want NativeScope to invalidate that cache automatically:
-
-```ts
-// nativescope.config.ts
-import { defineNativeScopeConfig } from "react-native-nativescope/app";
-
-export default defineNativeScopeConfig({
-  modules: {
-    storage: {
-      reactQuery: true,
-      indicator: true,
-    },
-  },
-});
-```
-
-`reactQuery: true` keeps React Query-backed screens reactive. `indicator: true` adds the small
-in-app confirmation when an edit arrives from the studio. Both are optional and neither is needed
-for storage discovery. See [Configuration](/docs/configuration) for individual options and filters.
+NativeScope writes the real storage value immediately, but if your screen renders that value
+through React Query, the cache can keep showing the old one until something invalidates it. A small,
+optional config file closes that gap — see the [React Query bridge](/docs/react-query). Neither it
+nor the in-app [indicator](/docs/configuration) is needed for storage discovery.
 
 ## Verify it worked
 
@@ -77,21 +60,9 @@ you expected is missing here, check the target project's `package.json` and the 
 
 ## Already running Metro?
 
-If you manage Metro yourself, start NativeScope without it and point your own Metro config at the
-NativeScope wrapper.
-
-<InstallCommand run="nativescope --no-metro" />
-
-```js
-// metro.config.js
-const { withNativeScope } = require("react-native-nativescope/metro");
-
-module.exports = withNativeScope(config);
-```
-
-NativeScope deliberately leaves `metro.config.cjs`, `.mjs`, and `.ts` files untouched because
-rewriting their module format would be unsafe. For those variants, add the wrapper manually as
-shown above; the CLI prints the same instruction and does not start a second Metro process.
+If you manage Metro yourself, run `nativescope --no-metro` and attach the wrapper to your own Metro
+config. [Devices & connection](/docs/devices#bring-your-own-metro) covers that setup, when to choose
+it, and how it compares to letting NativeScope start Metro for you.
 
 ## Common adjustments
 

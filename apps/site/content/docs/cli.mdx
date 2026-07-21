@@ -19,21 +19,15 @@ NativeScope resolver, sets up the Android tunnel if needed, and opens the studio
 | `--token <string>` | random per session | Session token the app must present. Generated for you; set it only if you are scripting. |
 | `--no-metro` | off | Do not start Metro. Use when you run Metro yourself. |
 | `--no-open` | off | Do not open the browser. |
+| `--lan` | off | Bind the service to your local network so a physical iPhone — or an Android device over Wi-Fi — on the same network can connect. See [Devices & connection](/docs/devices). |
 | `--fake` | off | Connect a simulated app that generates activity, with no device or simulator. |
 | `--fake-scale` | off | Make the simulated app large: thousands of keys, multi-megabyte values, a 100k-row table. |
 
 ## Running Metro yourself
 
-<InstallCommand run="nativescope --no-metro" />
-
-Then attach the resolver in your own Metro config:
-
-```js
-// metro.config.js
-const { withNativeScope } = require("react-native-nativescope/metro");
-
-module.exports = withNativeScope(config);
-```
+`--no-metro` starts the service without Metro, so you attach the resolver to your own config. See
+[Devices & connection](/docs/devices#bring-your-own-metro) for the setup, the `.cjs`/`.mjs`/`.ts`
+caveat, and when to choose it over the all-in-one command.
 
 ## Android devices
 
@@ -43,6 +37,19 @@ than one device attached, debugging not authorized — instead of failing silent
 
 If `adb` is not on your `PATH`, that whole subsystem is skipped as irrelevant, which is the correct
 behaviour for iOS-only work.
+
+## iOS devices
+
+The iOS Simulator needs no flag — it shares your Mac's loopback.
+
+A physical iPhone connects over Wi-Fi. Start NativeScope with `--lan`, keep the phone on the same
+network as your Mac, and reload the app:
+
+<InstallCommand run="nativescope --lan" />
+
+NativeScope reuses the dev-server host your app already loaded its bundle from, so there is no IP to
+type. See [Devices & connection](/docs/devices) for the full picture and the security note on
+`--lan`.
 
 ## Developing without an app
 

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -47,19 +48,31 @@ function openBrowser(url: string): void {
 
 /**
  * Sessão para o shim do Metro: porta + token viram um módulo JS bundlável,
- * resolvido pelo withNativeScope como "__rnsi_session__".
+ * resolvido pelo withNativeScope como "__rnsi_session__". `lan` avisa o shim
+ * para descobrir o host pelo scriptURL do Metro (iPhone físico) em vez do
+ * loopback.
  */
-function writeSessionFile(projectDir: string, port: number, token: string): void {
+function writeSessionFile(projectDir: string, port: number, token: string, lan: boolean): void {
   try {
     const dir = join(projectDir, "node_modules", ".cache", "rnsi");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "session.js"),
-      `"use strict";\nmodule.exports = ${JSON.stringify({ port, token })};\n`,
+      `"use strict";\nmodule.exports = ${JSON.stringify({ port, token, lan })};\n`,
     );
   } catch {
     /* sem node_modules ainda: o shim vira no-op, nada quebra */
   }
+}
+
+/** Primeiro IPv4 não-interno — usado só para imprimir a URL de LAN. */
+function lanIp(): string | null {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.family === "IPv4" && !addr.internal) return addr.address;
+    }
+  }
+  return null;
 }
 
 /**
@@ -84,6 +97,8 @@ function watchAndroid(port: number): void {
 async function main(): Promise<void> {
   const port = Number(option("port") ?? DEFAULT_PORT);
   const sessionToken = option("token") ?? randomBytes(16).toString("hex");
+  // Opt-in: expõe o serviço na LAN para conectar iPhone físico na mesma Wi-Fi.
+  const lan = flag("lan");
 
   if (args[0] === "fake-runtime") {
     // Uso interno/testes: conecta um app falso num serviço já de pé.
@@ -113,9 +128,10 @@ async function main(): Promise<void> {
     uiDir,
     project,
     log: (line) => console.log(line),
+    host: lan ? "0.0.0.0" : "127.0.0.1",
   });
 
-  writeSessionFile(projectDir, port, sessionToken);
+  writeSessionFile(projectDir, port, sessionToken, lan);
   watchAndroid(port);
 
   // Zero config: garante o wrap do Metro e sobe o Metro do projeto junto.
@@ -143,6 +159,14 @@ async function main(): Promise<void> {
   console.log("");
   console.log(`Local service: ws://127.0.0.1:${port}`);
   console.log(`Studio: ${url}`);
+  if (lan) {
+    const ip = lanIp();
+    console.log("");
+    console.log("LAN mode (--lan): a physical iPhone on the same Wi-Fi can connect.");
+    if (ip) console.log(`  The app reaches the service at ws://${ip}:${port}`);
+    console.log("  ⚠ Reachable on your local network, gated only by the session token — use on trusted networks only.");
+    console.log("  (Android and the iOS Simulator keep using loopback.)");
+  }
   console.log("");
 
   if (flag("fake")) {

@@ -1,0 +1,137 @@
+---
+title: Devices & connection
+description: Every platform NativeScope supports, how the app reaches the studio, and the two ways to run it.
+---
+
+NativeScope is a local service on your machine, and your app connects to it over a WebSocket. Which
+platforms are supported is the easy part — **all of them**. The only thing that changes between a
+simulator, an emulator, and a physical device is *how* the app reaches that service. This page
+covers every combination, plus the two ways to launch NativeScope.
+
+## Two ways to run
+
+NativeScope is really two pieces: the **local service** (the WebSocket bridge and the studio UI)
+and **Metro** (your bundler, with the NativeScope resolver attached). You can let NativeScope manage
+both, or run Metro yourself.
+
+### All in one — recommended
+
+<InstallCommand run="nativescope" />
+
+NativeScope starts Metro for you with the resolver already attached, brings up the service, sets up
+the Android tunnel, and opens the studio. One command, nothing to wire. This is the intended path
+and what the [Quickstart](/docs/quickstart) uses.
+
+### Bring your own Metro
+
+<InstallCommand run="nativescope --no-metro" />
+
+NativeScope starts only the service and leaves Metro to you. Use this when you already run
+`npm start` / `expo start` in your own terminal, have a custom start script, or launch Metro from
+an IDE. You attach the resolver once in your Metro config:
+
+```js
+// metro.config.js
+const { withNativeScope } = require("react-native-nativescope/metro");
+
+module.exports = withNativeScope(config);
+```
+
+`withNativeScope(config)` **wraps** your existing Metro config — it doesn't replace it. All it adds
+is a resolver that, in development, swaps your storage imports (`@react-native-async-storage/async-storage`,
+`react-native-mmkv`, `expo-sqlite`) for instrumented versions and injects the session so the app
+knows which port and token to connect with. That resolver is the entire mechanism behind "no app
+code changes" — and in the all-in-one flow the CLI writes and wraps this file for you, so this is
+the only place you'd ever touch it by hand. In a release build it's a no-op: the real storage
+modules resolve directly.
+
+| | All in one (`nativescope`) | Separate (`--no-metro`) |
+| --- | --- | --- |
+| Starts Metro | Yes | No — you do |
+| Metro config | Created or wrapped automatically | You add the wrapper once |
+| Terminals | One | Two (your Metro + the service) |
+| Best for | Most projects, first run | Existing Metro workflow or custom start script |
+
+**Recommendation:** start with the all-in-one command. Drop to `--no-metro` only when you already
+have a Metro workflow you'd rather NativeScope didn't touch. The two are identical from the app's
+point of view — the choice only decides who launches Metro, not how the app connects.
+
+<Callout kind="note">
+With `--no-metro`, NativeScope never rewrites `metro.config.cjs`, `.mjs`, or `.ts` files — adding
+the wrapper by hand is up to you (the CLI prints the exact line for those variants).
+</Callout>
+
+## Platform compatibility
+
+NativeScope works with every React Native target. Storage support is identical everywhere —
+AsyncStorage, MMKV and SQLite — so the only axis that matters is how the app reaches the service.
+
+| Environment | iOS | Android |
+| --- | --- | --- |
+| Simulator / Emulator | ✅ zero-config | ✅ zero-config |
+| Physical device | ✅ same Wi-Fi + `--lan` | ✅ USB cable (auto), or same Wi-Fi + `--lan` |
+
+MMKV and SQLite are native modules, so on a physical device you're running a development build (not
+Expo Go) — which is exactly the setup NativeScope is built for.
+
+## How the connection works, and why
+
+The app always dials the service over a WebSocket. The address it uses is what differs:
+
+### Simulators and emulators — loopback
+
+The **iOS Simulator** shares your Mac's network stack, so `127.0.0.1` on the simulator already *is*
+your Mac. Nothing to configure.
+
+For the **Android emulator** — and for Android phones over USB — NativeScope runs `adb reverse`, which
+tunnels the device's `127.0.0.1` to your machine through the cable. It reapplies the tunnel on its
+own when a device is plugged in later, the cable drops, or the adb server restarts.
+
+### Physical iPhone — same Wi-Fi + `--lan`
+
+A physical iPhone has no `adb reverse` equivalent, and its `127.0.0.1` is the *phone*, not your Mac.
+So the app has to reach your Mac by its address on the local network. Start NativeScope with
+`--lan`:
+
+<InstallCommand run="nativescope --lan" />
+
+Two requirements:
+
+1. The iPhone and your Mac are on the **same Wi-Fi**.
+2. Metro serves over the LAN — the default. With Expo, keep the dev server in **LAN** mode (not
+   Tunnel or localhost).
+
+Then reload the app and it connects. You don't type an IP: NativeScope reuses the dev-server host
+your app *already* used to load its bundle from Metro, so it finds your Mac automatically.
+
+### Physical Android — USB or Wi-Fi
+
+Over **USB** it's zero-config — the `adb reverse` tunnel handles everything, no flag needed. If you'd
+rather go wireless, `--lan` works exactly as it does for the iPhone: same Wi-Fi, LAN dev server, no
+cable.
+
+## `--lan` and security
+
+<Callout kind="warning">
+`--lan` binds the service to your local network so a physical device can reach it. It is gated by
+the session token, but anyone on the same network who has that token can read and write your app's
+storage. Use it on **trusted networks** — your home or office Wi-Fi — not on shared or public ones.
+Without `--lan`, the service stays bound to loopback and is never exposed.
+</Callout>
+
+The studio in your browser stays on loopback either way. `--lan` only opens the door for the app
+runtime, and even then the origin check plus the session token still guard every connection.
+
+## Troubleshooting
+
+- **iPhone stuck on "Waiting for the app to connect…"** — confirm you passed `--lan`, that both
+  devices are on the same Wi-Fi, and (Expo) that the dev server shows **LAN**, not Tunnel.
+- **Nothing changes after an update** — restart with a cleared Metro cache: `npx expo start --clear`
+  (Expo) or `npx react-native start --reset-cache` (bare), then run NativeScope again.
+- **Works on the simulator but not on a device** — this is almost always the network path: a
+  physical device needs `--lan` (iOS) or the USB cable (Android).
+
+## Next
+
+- [CLI reference](/docs/cli) — every flag, including `--lan`, `--no-metro` and `--port`.
+- [Storage providers](/docs/storage-providers) — what's supported, per provider.

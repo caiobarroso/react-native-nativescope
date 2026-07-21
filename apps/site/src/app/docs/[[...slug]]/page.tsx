@@ -7,6 +7,7 @@ import { useMDXComponents } from "@/mdx-components";
 import { OnThisPage } from "@/components/site/OnThisPage";
 import rehypePrettyCode from "rehype-pretty-code";
 import rehypeSlug from "rehype-slug";
+import remarkGfm from "remark-gfm";
 
 interface PageProps {
   params: Promise<{ slug?: string[] }>;
@@ -75,6 +76,7 @@ export default async function DocPage({ params }: PageProps) {
             components={useMDXComponents()}
             options={{
               mdxOptions: {
+                remarkPlugins: [remarkGfm],
                 rehypePlugins: [
                   rehypeSlug,
                   [rehypePrettyCode, {

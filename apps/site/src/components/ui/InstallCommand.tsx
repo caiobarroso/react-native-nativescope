@@ -2,6 +2,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { Check, Copy } from "lucide-react";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   DEFAULT_PACKAGE_MANAGER,
   PACKAGE_MANAGERS,
@@ -98,12 +99,9 @@ export function InstallCommand({ install, run }: InstallCommandProps) {
   const spec = { ...(install ? { install } : {}), ...(run ? { run } : {}) };
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(commandFor(manager, spec));
+    if (await copyToClipboard(commandFor(manager, spec))) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      /* clipboard bloqueado: o texto continua selecionável */
     }
   }
 
@@ -127,6 +125,7 @@ export function InstallCommand({ install, run }: InstallCommandProps) {
         <button
           type="button"
           data-install-copy
+          data-copied={copied || undefined}
           onClick={copy}
           aria-label={copied ? "Copied" : "Copy command"}
         >

@@ -36,17 +36,10 @@ Detected from `expo-sqlite`. Every database your app opens becomes an instance.
 For each database you get the table list with row counts, a schema view, an editable row grid, and
 a SQL console that runs arbitrary statements against the live database on the device.
 
-Two behaviours are worth knowing about:
-
-**Row counts can be estimates.** For a large table, an exact `COUNT(*)` is slow enough to stall the
-UI, so NativeScope shows an immediate estimate and replaces it with the exact count once it has been
-computed in the background. An estimate is always rendered with a `~` prefix, never presented as
-exact.
-
-**Large cells are truncated for display.** A cell over 4 KB arrives cut, marked, and expandable. The
-full contents stream on demand. If a row contains a truncated cell, destructive shortcuts that would
-need to reconstruct it — like undoing a delete — are disabled rather than allowed to silently write
-back a shortened value.
+On large tables, row counts render as an instant estimate (always prefixed with `~`) until the exact
+count arrives, and cells over 4 KB come truncated with the full contents available on demand. Those
+mechanics — and the guarantees that keep them from ever corrupting data — live in
+[Large datasets](/docs/large-datasets).
 
 ## Change attribution
 

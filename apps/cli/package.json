@@ -53,8 +53,8 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@rnsi/protocol": "0.1.0",
-    "@rnsi/runtime": "0.1.0",
+    "@rnsi/protocol": "workspace:*",
+    "@rnsi/runtime": "workspace:*",
     "@types/node": "^22.15.0",
     "@types/ws": "^8.18.0",
     "esbuild": "^0.25.0",

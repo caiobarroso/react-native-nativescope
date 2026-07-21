@@ -18,7 +18,6 @@ import { defineNativeScopeConfig } from "react-native-nativescope/app";
 export default defineNativeScopeConfig({
   modules: {
     storage: {
-      indicator: true,
       reactQuery: true,
     },
   },
@@ -87,22 +86,10 @@ round trip.
 
 ## Installing it manually
 
-If your app needs to install the bridge imperatively — for example because the `QueryClient` lives
-somewhere the automatic discovery cannot reach — do it behind a `__DEV__` guard.
-
-```tsx
-import { getQueryClient } from "@/infrastructure/reactQuery/query-client";
-
-if (__DEV__) {
-  const { installNativeScopeDevtools } = require("react-native-nativescope/app");
-  installNativeScopeDevtools({
-    modules: { storage: { reactQuery: getQueryClient() } },
-  });
-}
-```
-
-Use `require` rather than a top-level `import` so the module is never part of the production module
-graph.
+If automatic discovery cannot reach your `QueryClient` — because it lives somewhere the shim cannot
+find it — install the bridge imperatively with `installNativeScopeDevtools`, passing the client
+directly and guarding it with `__DEV__`. The full example is in
+[`installNativeScopeDevtools`](/docs/api#installing-imperatively).
 
 ## Other cache layers
 

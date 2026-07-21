@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { copyToClipboard } from "@/lib/clipboard";
 
 /**
  * Bloco de código com botão de copiar.
@@ -20,12 +21,9 @@ export function CodeBlock({ children }: { children: React.ReactNode }) {
   async function copy() {
     const text = preRef.current?.textContent ?? "";
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyToClipboard(text)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      /* clipboard bloqueado: o usuário ainda pode selecionar o texto */
     }
   }
 
@@ -36,6 +34,7 @@ export function CodeBlock({ children }: { children: React.ReactNode }) {
         type="button"
         onClick={copy}
         data-copy-button
+        data-copied={copied || undefined}
         aria-label={copied ? "Copied" : "Copy code"}
       >
         {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}

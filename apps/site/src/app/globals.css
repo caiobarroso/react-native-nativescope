@@ -380,6 +380,55 @@ summary {
   color: var(--text);
 }
 
+/* Feedback de cópia — sutil e premium, compartilhado pelos dois botões.
+   O ícone vira um check verde com um leve pop, o botão ganha um tom, e um
+   rótulo "Copied" surge à esquerda com um deslize curto. */
+[data-copy-button] { transition: color 200ms ease, border-color 200ms ease, background-color 200ms ease; }
+[data-install-copy] { position: relative; }
+
+[data-copy-button] svg,
+[data-install-copy] svg { transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+[data-copy-button][data-copied],
+[data-install-copy][data-copied] {
+  color: var(--created);
+  border-color: color-mix(in srgb, var(--created) 45%, var(--border));
+  background: color-mix(in srgb, var(--created) 12%, var(--surface-raised));
+}
+[data-copy-button][data-copied] svg,
+[data-install-copy][data-copied] svg { transform: scale(1.12); }
+
+[data-copy-button]::after,
+[data-install-copy]::after {
+  content: "Copied";
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: var(--surface-raised);
+  border: 1px solid color-mix(in srgb, var(--created) 40%, var(--border));
+  color: var(--created);
+  font: 600 11px var(--site-mono);
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-50%) translateX(6px);
+  transition: opacity 200ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-copy-button][data-copied]::after,
+[data-install-copy][data-copied]::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-copy-button] svg, [data-install-copy] svg,
+  [data-copy-button]::after, [data-install-copy]::after { transition: none; }
+}
+
 [data-install-body] { min-width: 0; }
 
 [data-install-cmd] {

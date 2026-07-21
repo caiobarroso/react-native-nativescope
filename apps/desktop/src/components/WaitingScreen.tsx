@@ -39,6 +39,9 @@ export function WaitingScreen() {
             Open or reload the app in the simulator.
             <br />
             Physical Android device: the CLI already ran <code className="font-mono">adb reverse</code>.
+            <br />
+            Physical iPhone: restart the CLI with <code className="font-mono">--lan</code> and keep the
+            phone on the same Wi-Fi.
           </li>
         </ul>
       )}

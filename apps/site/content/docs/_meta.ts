@@ -21,6 +21,7 @@ export const docsNav: DocGroup[] = [
     items: [
       { slug: "introduction", title: "Introduction" },
       { slug: "quickstart", title: "Quickstart" },
+      { slug: "devices", title: "Devices & connection" },
       { slug: "storage-providers", title: "Storage providers" },
     ],
   },

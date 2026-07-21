@@ -252,6 +252,46 @@ function installConfigOnce() {
   }
 }
 
+/**
+ * Host do serviço da CLI. Loopback por padrão — cobre iOS Simulator (compartilha
+ * o loopback do Mac) e Android (a CLI aplica `adb reverse`). No modo LAN (opt-in
+ * --lan, iPhone físico), reusa o host de onde o bundle veio: o `scriptURL` do
+ * Metro já aponta para o IP do Mac na Wi-Fi.
+ */
+/**
+ * URL do dev server (Metro). `getDevServer` é o caminho interno do RN usado
+ * pelo próprio reload — funciona na Nova Arquitetura/bridgeless, onde o
+ * `NativeModules.SourceCode.scriptURL` legado vem `undefined`. Fallbacks para
+ * arquiteturas antigas.
+ */
+function readDevServerUrl() {
+  try {
+    const mod = require("react-native/Libraries/Core/Devtools/getDevServer");
+    const getDevServer = mod && (mod.default || mod);
+    const info = typeof getDevServer === "function" ? getDevServer() : null;
+    if (info && info.url) return info.url;
+  } catch {
+    /* segue para os fallbacks */
+  }
+  try {
+    const SourceCode = require("react-native").NativeModules?.SourceCode;
+    const scriptURL =
+      SourceCode?.scriptURL ?? (SourceCode?.getConstants ? SourceCode.getConstants().scriptURL : null);
+    if (scriptURL) return scriptURL;
+  } catch {
+    /* sem SourceCode — cai no loopback */
+  }
+  return null;
+}
+
+function resolveInspectorHost() {
+  if (!session || !session.lan) return "127.0.0.1";
+  const devUrl = readDevServerUrl();
+  const host = /^[a-z][a-z0-9+.-]*:\/\/([^/:]+)/i.exec(devUrl || "")?.[1];
+  if (host && host !== "localhost" && host !== "127.0.0.1") return host;
+  return "127.0.0.1";
+}
+
 /** null quando não há sessão da CLI — os shims viram no-op. */
 function getRuntime() {
   if (!session || typeof session.port !== "number" || typeof session.token !== "string") {
@@ -259,7 +299,7 @@ function getRuntime() {
   }
   if (!runtime) {
     runtime = rnsi.startRuntime({
-      url: `ws://127.0.0.1:${session.port}`,
+      url: `ws://${resolveInspectorHost()}:${session.port}`,
       sessionToken: session.token,
       client: { name: "react-native-app", platform: detectPlatform() },
     });
