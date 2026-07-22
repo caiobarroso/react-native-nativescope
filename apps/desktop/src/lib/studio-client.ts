@@ -162,6 +162,9 @@ function serviceUrl(): string {
 /** Recusado pelo serviço: não se reconecta mais nesta aba (ver "hello-reject"). */
 let rejected = false;
 
+/** O usuário escolheu um device no seletor — reconexões param de mover o foco. */
+let manualFocus = false;
+
 export function connect(): void {
   const token = sessionToken();
   const store = useStudio.getState();
@@ -277,6 +280,9 @@ function handleMessage(message: AnyMessage): void {
 
 const CONTINUITY_GRACE_MS = 5000;
 
+/** Duração do realce de chegada — casa com a animação rnsi-flash do tema. */
+const PROVIDER_FLASH_MS = 1000;
+
 interface NavSnapshot {
   selection: Selection | null;
   selectedKey: string | null;
@@ -348,10 +354,40 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
         platform: event.payload.client.platform,
         label: event.payload.label ?? event.payload.client.platform,
       };
+      // Um contexto JS novo do MESMO app (reload do bundle, `r` no Metro) chega
+      // com deviceId novo, e o socket anterior pode demorar até o heartbeat
+      // para morrer. Nessa janela o foco ficava preso no device zumbi: o
+      // refresh não rodava e os provider.registered do device vivo eram
+      // filtrados por deviceId — a tela mostrava metade dos storages até o
+      // usuário dar reload. Migrar o foco fecha a janela na hora. Só vale para
+      // foco automático: se o usuário escolheu um device no seletor, a escolha
+      // dele manda (dois emuladores da mesma plataforma são indistinguíveis
+      // por (name, platform), e roubar o foco ali seria pior que a doença).
+      const previous = store.devices.find((d) => d.deviceId === store.selectedDeviceId);
+      const supersedesPrevious =
+        !manualFocus &&
+        previous !== undefined &&
+        previous.deviceId !== device.deviceId &&
+        previous.name === device.name &&
+        previous.platform === device.platform;
+
+      // Abre a janela de sincronização: o lote que chega agora é o inicial,
+      // por mais eventos separados que ele use.
+      store.beginProviderSync();
       store.upsertDevice(device);
       store.setPhase("connected");
+      if (supersedesPrevious) {
+        useStudio.getState().selectDevice(device.deviceId);
+      }
+
       // Continuidade de reload primeiro; senão, se este é o foco, busca providers.
       if (!maybeContinue() && useStudio.getState().selectedDeviceId === device.deviceId) {
+        // O serviço já manda o estado conhecido do device junto do evento: pinta
+        // na hora, sem esperar round-trip. O refresh confirma logo atrás (e é o
+        // caminho único quando o app conectou antes de anunciar qualquer coisa).
+        if (event.payload.providers.length > 0) {
+          store.setProviders(event.payload.providers);
+        }
         void refreshProviders();
       }
       return;
@@ -381,7 +417,12 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
 
     case "provider.registered": {
       if (event.deviceId !== store.selectedDeviceId) return; // evento de outro device
+      const { providerId } = event.payload.provider;
       store.upsertProvider(event.payload.provider);
+      // O realce de chegada é transitório: passada a animação, o provider vira
+      // um item comum. Sem isto a marca ficaria grudada e um remount da
+      // sidebar piscaria um storage que chegou há dez minutos.
+      setTimeout(() => useStudio.getState().clearArrivedLate(providerId), PROVIDER_FLASH_MS);
       return;
     }
 
@@ -481,7 +522,10 @@ export async function refreshProviders(): Promise<void> {
 export function switchDevice(deviceId: string): void {
   const store = useStudio.getState();
   if (store.selectedDeviceId === deviceId) return;
+  // A partir daqui o foco é decisão do usuário: nenhuma reconexão o move.
+  manualFocus = true;
   failInFlight("device switched");
+  store.beginProviderSync();
   store.selectDevice(deviceId);
   void refreshProviders();
 }

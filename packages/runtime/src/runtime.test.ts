@@ -750,3 +750,90 @@ describe("recusa no handshake", () => {
     }
   });
 });
+
+describe("resync de providers no handshake", () => {
+  function bootWithProviders(): { sockets: FakeSocket[] } {
+    const sockets: FakeSocket[] = [];
+    const runtime = startRuntime({
+      url: "ws://test",
+      sessionToken: "token",
+      client: { name: "test-runtime", platform: "node" },
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    // Registro ANTES de qualquer handshake — é o que acontece de verdade: os
+    // shims registram no import da lib, muito antes do WebSocket conectar.
+    runtime.registry.register(createMemoryAdapter({ providerId: "mmkv", label: "MMKV" }));
+    runtime.registry.register(
+      createMemoryAdapter({ providerId: "sqlite", label: "SQLite" }),
+    );
+    return { sockets };
+  }
+
+  function announced(socket: FakeSocket): string[] {
+    return socket.sent
+      .map(decode)
+      .filter((m) => m.kind === "event" && m.type === "provider.registered")
+      .map((m) => (m.kind === "event" && m.type === "provider.registered"
+        ? m.payload.provider.providerId
+        : ""));
+  }
+
+  it("anuncia todos os providers registrados antes da conexão", () => {
+    const { sockets } = bootWithProviders();
+    const socket = sockets[0]!;
+
+    socket.emit("open");
+    // Antes do hello-ack nada pode sair no fio (o serviço ainda não validou).
+    expect(announced(socket)).toEqual([]);
+
+    socket.emit("message", {
+      data: serializeMessage({
+        kind: "hello-ack",
+        protocolVersion: PROTOCOL_VERSION,
+        sessionId: "s1",
+      }),
+    });
+
+    // Os dois chegam juntos, no mesmo lote — nada depende do Studio perguntar.
+    expect(announced(socket).sort()).toEqual(["mmkv", "sqlite"]);
+  });
+
+  it("reanuncia depois de reconectar", () => {
+    vi.useFakeTimers();
+    try {
+      const { sockets } = bootWithProviders();
+      const first = sockets[0]!;
+      first.emit("open");
+      first.emit("message", {
+        data: serializeMessage({
+          kind: "hello-ack",
+          protocolVersion: PROTOCOL_VERSION,
+          sessionId: "s1",
+        }),
+      });
+      expect(announced(first)).toHaveLength(2);
+
+      // Queda e reconexão: o estado tem que voltar sozinho no socket novo.
+      first.emit("close");
+      vi.advanceTimersByTime(5000);
+      const second = sockets[1];
+      expect(second).toBeDefined();
+      second!.emit("open");
+      second!.emit("message", {
+        data: serializeMessage({
+          kind: "hello-ack",
+          protocolVersion: PROTOCOL_VERSION,
+          sessionId: "s2",
+        }),
+      });
+
+      expect(announced(second!).sort()).toEqual(["mmkv", "sqlite"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

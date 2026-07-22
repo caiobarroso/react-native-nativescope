@@ -214,6 +214,25 @@ export function startRuntime(options: RuntimeOptions): Runtime {
       const message = parsed.message;
       if (message.kind === "hello-ack") {
         handshakeDone = true;
+        // Resync de estado, não fila de eventos atrasados.
+        //
+        // Os shims registram seus adapters no import da lib — que acontece no
+        // boot do app, dezenas ou centenas de ms ANTES do WebSocket conectar.
+        // Todo anúncio dessa fase caía no gate de sendEvent e era descartado em
+        // silêncio; a lista só se recompunha porque o Studio, por sorte, pedia
+        // provider.list depois. Reanunciar aqui torna o device dono da própria
+        // verdade: tudo que existe no momento da conexão chega junto, sempre,
+        // na primeira conexão e em toda reconexão. upsertProvider no Studio é
+        // idempotente por providerId, então repetir não duplica nada.
+        for (const provider of registry.describe()) {
+          sendEvent({
+            kind: "event",
+            protocolVersion: PROTOCOL_VERSION,
+            timestamp: Date.now(),
+            type: "provider.registered",
+            payload: { provider },
+          });
+        }
         return;
       }
       if (message.kind === "hello-reject") {

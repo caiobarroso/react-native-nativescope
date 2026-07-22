@@ -94,6 +94,14 @@ interface StudioState {
   /** Device em foco; comandos e a view inteira são escopados a ele. */
   selectedDeviceId: string | null;
   providers: ProviderDescriptor[];
+  /**
+   * Providers que chegaram DEPOIS da lista inicial — porque o app importou a
+   * lib de storage mais tarde (tela lazy, import dinâmico). Sem sinal, o item
+   * brota no meio da sidebar e parece glitch; com sinal, é informação.
+   */
+  arrivedLate: string[];
+  /** Início da janela de sincronização do device em foco (ver PROVIDER_SYNC_GRACE_MS). */
+  syncStartedAt: number;
   /** chaves por `${providerId} ${instanceId}` — só a janela já carregada */
   keys: Record<string, KeyEntry[]>;
   /**
@@ -128,6 +136,8 @@ interface StudioState {
   keyHistory: Record<string, KeyHistoryEntry[]>;
 
   setPhase(phase: Phase): void;
+  /** Abre uma janela de sincronização: o que chegar dentro dela é lote inicial. */
+  beginProviderSync(): void;
   /** Entra no estado terminal de recusa. Nenhuma fase posterior o sobrescreve. */
   setRejected(rejection: Rejection): void;
   upsertDevice(device: Device): void;
@@ -137,6 +147,8 @@ interface StudioState {
   selectDevice(deviceId: string): void;
   setProviders(providers: ProviderDescriptor[]): void;
   upsertProvider(provider: ProviderDescriptor): void;
+  /** "Recém-chegado" é estado transitório: some quando o realce termina. */
+  clearArrivedLate(providerId: string): void;
   setKeys(
     providerId: string,
     instanceId: string,
@@ -182,11 +194,21 @@ export function keysId(providerId: string, instanceId: string): string {
   return `${providerId} ${instanceId}`;
 }
 
+/**
+ * O lote inicial chega como N eventos separados (um provider.registered por
+ * storage), então "tardio" não pode ser decidido por ordem — do segundo em
+ * diante tudo pareceria tardio. É decidido por tempo: o que chega depois que a
+ * tela já se estabeleceu é que merece sinal.
+ */
+const PROVIDER_SYNC_GRACE_MS = 1500;
+
 /** Estado zerado da view ao trocar/perder o device em foco. Os caches valem
  * para um device por vez (single-active-view); trocar re-busca lazy. */
 function clearedView(): Partial<StudioState> {
   return {
     providers: [],
+    arrivedLate: [],
+    syncStartedAt: Date.now(),
     keys: {},
     keysMeta: {},
     tables: {},
@@ -212,6 +234,8 @@ export const useStudio = create<StudioState>((set) => ({
   devices: [],
   selectedDeviceId: null,
   providers: [],
+  arrivedLate: [],
+  syncStartedAt: Date.now(),
   keys: {},
   keysMeta: {},
   activity: [],
@@ -233,6 +257,8 @@ export const useStudio = create<StudioState>((set) => ({
   setPhase: (phase) => set((state) => (state.phase === "rejected" ? {} : { phase })),
 
   setRejected: (rejection) => set({ phase: "rejected", rejection }),
+
+  beginProviderSync: () => set({ syncStartedAt: Date.now() }),
 
   upsertDevice: (device) =>
     set((state) => ({
@@ -258,15 +284,31 @@ export const useStudio = create<StudioState>((set) => ({
         : { ...clearedView(), selectedDeviceId: deviceId },
     ),
 
-  setProviders: (providers) => set({ providers }),
+  // Snapshot: é a lista inicial por definição, ninguém "chegou depois".
+  setProviders: (providers) => set({ providers, arrivedLate: [] }),
 
   upsertProvider: (provider) =>
-    set((state) => ({
-      providers: [
-        ...state.providers.filter((p) => p.providerId !== provider.providerId),
-        provider,
-      ].sort((a, b) => a.label.localeCompare(b.label)),
-    })),
+    set((state) => {
+      const known = state.providers.some((p) => p.providerId === provider.providerId);
+      return {
+        providers: [
+          ...state.providers.filter((p) => p.providerId !== provider.providerId),
+          provider,
+        ].sort((a, b) => a.label.localeCompare(b.label)),
+        // Tardio = chegou fora da janela de sincronização do device.
+        arrivedLate:
+          known || Date.now() - state.syncStartedAt <= PROVIDER_SYNC_GRACE_MS
+            ? state.arrivedLate
+            : [...state.arrivedLate, provider.providerId],
+      };
+    }),
+
+  clearArrivedLate: (providerId) =>
+    set((state) =>
+      state.arrivedLate.includes(providerId)
+        ? { arrivedLate: state.arrivedLate.filter((id) => id !== providerId) }
+        : {},
+    ),
 
   setKeys: (providerId, instanceId, page, mode) =>
     set((state) => {

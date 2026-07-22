@@ -12,6 +12,7 @@ import {
   protocolError,
   type AnyMessage,
   type HelloMessage,
+  type ProviderDescriptor,
 } from "@rnsi/protocol";
 import type { DetectedProject } from "./detect.ts";
 import { createThrottledLogger } from "./log-throttle.ts";
@@ -140,6 +141,19 @@ export function startLocalServer(options: LocalServerOptions) {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
+  /**
+   * Último estado anunciado por device — o bridge já vê todo
+   * provider.registered passando, então lembrar custa quase nada e paga caro:
+   * um Studio que abre DEPOIS do app (ou uma segunda aba, ou um F5) recebe a
+   * lista completa dentro do próprio session.connected, sem round-trip e sem
+   * janela em que a tela mostra metade dos storages.
+   */
+  const providersByDevice = new Map<string, Map<string, ProviderDescriptor>>();
+
+  function providersOf(deviceId: string): ProviderDescriptor[] {
+    return [...(providersByDevice.get(deviceId)?.values() ?? [])];
+  }
+
   // Índice reverso p/ traduzir chunk/end vindos do runtime:
   // `${deviceId} ${localStreamId}` → id global.
   const streamIdByLocal = new Map<string, string>();
@@ -335,6 +349,9 @@ export function startLocalServer(options: LocalServerOptions) {
       } else {
         runtimes.get(deviceId)?.socket.close();
         runtimes.set(deviceId, session);
+        // Contexto novo do app: esquece o que o anterior tinha anunciado. O
+        // runtime reanuncia tudo logo após este handshake.
+        providersByDevice.set(deviceId, new Map());
       }
 
       ws.send(
@@ -368,7 +385,7 @@ export function startLocalServer(options: LocalServerOptions) {
             payload: {
               sessionId: rt.sessionId,
               client: rt.client,
-              providers: [],
+              providers: providersOf(rt.deviceId),
               deviceId: rt.deviceId,
               label: rt.label,
             },
@@ -473,6 +490,12 @@ export function startLocalServer(options: LocalServerOptions) {
             if (message.type === "stream.end") deleteStreamRoute(globalStreamId);
           }
         } else {
+          if (message.type === "provider.registered") {
+            const known =
+              providersByDevice.get(session.deviceId) ?? new Map<string, ProviderDescriptor>();
+            known.set(message.payload.provider.providerId, message.payload.provider);
+            providersByDevice.set(session.deviceId, known);
+          }
           // Demais eventos (provider.registered, key-value.changed, ...) vão a
           // todos os studios, carimbados com o device de origem p/ filtragem.
           sendToStudios({ ...message, deviceId: session.deviceId });
@@ -487,6 +510,7 @@ export function startLocalServer(options: LocalServerOptions) {
       // já pôs um socket novo no lugar, não mexe (quem manda agora é o novo).
       if (role === "runtime" && runtimes.get(session.deviceId) === session) {
         runtimes.delete(session.deviceId);
+        providersByDevice.delete(session.deviceId);
         clearRoutesForDevice(session.deviceId);
         log(`app disconnected: ${session.client.name}`);
         sendToStudios({

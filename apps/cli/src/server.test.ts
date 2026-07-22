@@ -544,3 +544,93 @@ describe("ruído de rejeição", () => {
     expect(lines[0]).toContain("origin http://evil.example not in allowlist");
   });
 });
+
+describe("estado de providers no bridge", () => {
+  function providerEvent(providerId: string, label: string): AnyMessage {
+    return {
+      kind: "event",
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp: Date.now(),
+      type: "provider.registered",
+      payload: {
+        provider: {
+          providerId,
+          label,
+          capabilities: ["key-value.read"],
+          instances: [{ instanceId: "default", label: "default" }],
+        },
+      },
+    } as AnyMessage;
+  }
+
+  /** Coletor persistente: hello-ack e session.connected chegam no mesmo chunk,
+   * então um listener por mensagem perderia o segundo. */
+  function collect(ws: WebSocket): AnyMessage[] {
+    const received: AnyMessage[] = [];
+    ws.on("message", (data) => {
+      const parsed = parseMessage(data.toString());
+      if (parsed.ok) received.push(parsed.message);
+    });
+    return received;
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 80));
+
+  async function connectRuntime(deviceId: string, providers: string[]): Promise<WebSocket> {
+    const ws = await connect();
+    collect(ws);
+    ws.send(serializeMessage(hello("runtime", TOKEN, deviceId)));
+    await settle();
+    for (const providerId of providers) {
+      ws.send(serializeMessage(providerEvent(providerId, providerId.toUpperCase())));
+    }
+    await settle();
+    return ws;
+  }
+
+  function connectedProviders(received: AnyMessage[]): string[] {
+    const event = received.find(
+      (m) => m.kind === "event" && m.type === "session.connected",
+    );
+    if (event?.kind !== "event" || event.type !== "session.connected") return [];
+    return event.payload.providers.map((p) => p.providerId).sort();
+  }
+
+  it("entrega a lista completa a um Studio que abre DEPOIS do app", async () => {
+    await startServer();
+    const runtime = await connectRuntime("dev-1", ["mmkv", "sqlite"]);
+
+    // Só agora o Studio abre. Sem o cache, ele receberia providers: [] e
+    // dependeria de perguntar na hora certa para não mostrar meia tela.
+    const studio = await connect();
+    const received = collect(studio);
+    studio.send(serializeMessage(hello("studio")));
+    await settle();
+
+    expect(connectedProviders(received)).toEqual(["mmkv", "sqlite"]);
+
+    runtime.close();
+    studio.close();
+  });
+
+  it("um contexto novo do app zera o estado do anterior", async () => {
+    await startServer();
+
+    const first = await connectRuntime("dev-1", ["mmkv"]);
+    first.close();
+    await settle();
+
+    // Reload do app: mesmo device, contexto novo que não usa mais MMKV.
+    const second = await connectRuntime("dev-1", ["sqlite"]);
+
+    const studio = await connect();
+    const received = collect(studio);
+    studio.send(serializeMessage(hello("studio")));
+    await settle();
+
+    expect(connectedProviders(received)).toEqual(["sqlite"]);
+
+    second.close();
+    studio.close();
+  });
+});
