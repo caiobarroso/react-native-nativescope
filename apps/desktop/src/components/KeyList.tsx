@@ -13,6 +13,7 @@ import type { KeyEntry, StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
 import { useLayout } from "../lib/layout.ts";
 import { ResizeHandle } from "./ResizeHandle.tsx";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import {
   getValueComplete,
   loadKeys,
@@ -85,6 +86,8 @@ export function KeyList({ onOpenOverview }: { onOpenOverview?: () => void }) {
     selection ? s.keysMeta[keysId(selection.providerId, selection.instanceId)] : undefined,
   );
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
   // Busca NO DEVICE (plano §D), não filtro client-side sobre a página
@@ -190,10 +193,15 @@ export function KeyList({ onOpenOverview }: { onOpenOverview?: () => void }) {
 
   async function deleteEntry(key: string): Promise<void> {
     if (!selection) return;
-    await removeKey(selection.providerId, selection.instanceId, key);
-    if (selectedKey === key) selectKey(null);
-    await loadKeys(selection.providerId, selection.instanceId);
-    setOpenMenu(null);
+    setDeleting(true);
+    try {
+      await removeKey(selection.providerId, selection.instanceId, key);
+      if (selectedKey === key) selectKey(null);
+      await loadKeys(selection.providerId, selection.instanceId);
+      setDeleteCandidate(null);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function duplicateEntry(key: string): Promise<void> {
@@ -355,7 +363,10 @@ export function KeyList({ onOpenOverview }: { onOpenOverview?: () => void }) {
                   Duplicate
                 </button>
                 <button
-                  onClick={() => void deleteEntry(entry.key)}
+                  onClick={() => {
+                    setOpenMenu(null);
+                    setDeleteCandidate(entry.key);
+                  }}
                   className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-deleted hover:bg-deleted-wash"
                 >
                   <Trash2 size={13} strokeWidth={1.5} />
@@ -397,6 +408,20 @@ export function KeyList({ onOpenOverview }: { onOpenOverview?: () => void }) {
         )
       )}
       </div>
+      {deleteCandidate && (
+        <ConfirmDialog
+          title="Delete key?"
+          description="This permanently removes this value from the connected app."
+          loading={deleting}
+          onCancel={() => setDeleteCandidate(null)}
+          onConfirm={() => void deleteEntry(deleteCandidate)}
+          detail={
+            <code className="block truncate rounded-md border border-border bg-surface-sunken px-2.5 py-2 font-mono text-[12px] text-text">
+              {deleteCandidate}
+            </code>
+          }
+        />
+      )}
       <ResizeHandle panelId="keyList" edge="right" />
     </div>
   );

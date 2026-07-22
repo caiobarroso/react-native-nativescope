@@ -39,7 +39,7 @@ export function TableList() {
     >
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-3">
         <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-          Tabelas
+          Tables
         </span>
         <button
           onClick={() => toggleCollapsed("tableList")}

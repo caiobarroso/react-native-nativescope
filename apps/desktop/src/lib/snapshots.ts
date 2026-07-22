@@ -171,7 +171,9 @@ export function diffSnapshots(before: StorageSnapshot, after: StorageSnapshot): 
     after,
     keyDiffs,
     tableDiffs,
-    errors: [...collectErrors(before), ...collectErrors(after)],
+    // Os dois lados costumam repetir o mesmo aviso (ex.: instância parcial em
+    // ambas as capturas); mostrar duas vezes é só ruído.
+    errors: [...new Set([...collectErrors(before), ...collectErrors(after)])],
   };
 }
 
@@ -190,7 +192,7 @@ export async function restoreKeyDiff(diff: KeyValueDiff): Promise<void> {
 }
 
 export function valuePreview(value: StorageValue | null): string {
-  if (!value) return "ausente";
+  if (!value) return "absent";
   if (value.type === "string") return truncate(JSON.stringify(value.value), 96);
   if (value.type === "json") {
     try {

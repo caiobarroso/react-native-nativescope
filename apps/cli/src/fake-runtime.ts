@@ -34,7 +34,7 @@ function seedScale(raw: DatabaseSync, adapter: ReturnType<typeof createMemoryAda
     );
     INSERT INTO events (kind, payload)
     WITH RECURSIVE cnt(v) AS (SELECT 1 UNION ALL SELECT v + 1 FROM cnt WHERE v < 100000)
-    SELECT 'evento-' || (v % 7), 'payload ' || v FROM cnt;
+    SELECT 'event-' || (v % 7), 'payload ' || v FROM cnt;
   `);
   raw
     .prepare("INSERT INTO events (kind, payload) VALUES ('gigante', ?)")

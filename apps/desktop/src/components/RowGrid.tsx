@@ -46,6 +46,8 @@ import {
   updateCell,
 } from "../lib/studio-client.ts";
 import { createFileSink } from "../lib/export.ts";
+import { AppToast, type AppToastState } from "./AppToast.tsx";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { JsonWorkspace } from "./ValueEditor.tsx";
 
 const PAGE = 50;
@@ -68,10 +70,8 @@ function sameRef(a: RowRef | null, b: RowRef | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-interface TableToastState {
+interface TableToastState extends AppToastState {
   id: number;
-  message: string;
-  undo?: () => Promise<void>;
 }
 
 interface InsertDraft {
@@ -234,44 +234,6 @@ function InsertRowDrawer({
         </button>
       </footer>
     </aside>
-  );
-}
-
-function TableToast({
-  toast,
-  onClose,
-}: {
-  toast: TableToastState;
-  onClose: () => void;
-}) {
-  const [undoing, setUndoing] = useState(false);
-
-  return (
-    <div className="rnsi-snackbar pointer-events-auto absolute bottom-3 right-3 z-20 flex min-h-11 w-[min(360px,calc(100%-24px))] items-center gap-2 rounded-md border border-border-strong bg-surface-sunken px-3 py-2 text-[12px] text-text shadow-md shadow-black/5">
-      <span className="min-w-0 flex-1 truncate font-medium">{toast.message}</span>
-      {toast.undo && (
-        <button
-          onClick={() => {
-            setUndoing(true);
-            void toast.undo?.().finally(() => {
-              setUndoing(false);
-              onClose();
-            });
-          }}
-          disabled={undoing}
-          className="shrink-0 font-medium text-accent underline decoration-accent/45 underline-offset-3 hover:text-accent-hover disabled:opacity-50"
-        >
-          {undoing ? "undoing..." : "undo"}
-        </button>
-      )}
-      <button
-        onClick={onClose}
-        title="Close"
-        className="shrink-0 rounded p-0.5 text-text-muted hover:bg-surface-hover hover:text-text"
-      >
-        <X size={13} strokeWidth={1.5} />
-      </button>
-    </div>
   );
 }
 
@@ -480,6 +442,8 @@ export function RowGrid() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deletingRows, setDeletingRows] = useState(false);
+  const [deleteRowsConfirmOpen, setDeleteRowsConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ ref: RowRef; column: string; draft: string } | null>(
     null,
@@ -799,7 +763,7 @@ export function RowGrid() {
       const rowBefore = rows.find((row) => sameRef(row.ref, current.ref));
       const previous = rowBefore?.cells[current.column] ?? null;
       showToast({
-        message: "Cell updated",
+        message: `${selectedTable}.${current.column} updated`,
         undo: async () => {
           await updateCell(
             selection.providerId,
@@ -1133,7 +1097,7 @@ export function RowGrid() {
         (received) => setExporting(received),
       );
       await sink.close();
-      showToast({ message: `${selectedTable} exported` });
+      showToast({ message: `${selectedTable}: table exported as NDJSON` });
     } catch (cause) {
       await sink.abort();
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -1150,6 +1114,7 @@ export function RowGrid() {
       (row) => (row.truncatedColumns?.length ?? 0) === 0,
     );
     setLoading(true);
+    setDeletingRows(true);
     setError(null);
     try {
       for (const row of selectedVisibleRows) {
@@ -1158,9 +1123,10 @@ export function RowGrid() {
         }
       }
       setSelectedRows(new Set());
+      setDeleteRowsConfirmOpen(false);
       await refreshVisibleWindow();
       showToast({
-        message: `${deletedRows.length} row${deletedRows.length > 1 ? "s" : ""} deleted${
+        message: `${selectedTable}: ${deletedRows.length} row${deletedRows.length > 1 ? "s" : ""} deleted${
           undoSafe ? "" : " (undo unavailable: large cell was truncated)"
         }`,
         undo: undoSafe
@@ -1175,6 +1141,7 @@ export function RowGrid() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
+      setDeletingRows(false);
       setLoading(false);
     }
   }
@@ -1224,7 +1191,7 @@ export function RowGrid() {
       const ref = await insertRow(selection.providerId, selection.instanceId, selectedTable, values);
       await refreshVisibleWindow();
       showToast({
-        message: "Row inserted",
+        message: `${selectedTable}: row inserted`,
         undo: ref
           ? async () => {
               await deleteRow(selection.providerId, selection.instanceId, selectedTable, ref);
@@ -1278,7 +1245,7 @@ export function RowGrid() {
       );
       await refreshVisibleWindow();
       showToast({
-        message: "JSON updated",
+        message: `${selectedTable}.${savedCell.column} JSON updated`,
         undo: async () => {
           await updateCell(
             selection.providerId,
@@ -1321,8 +1288,8 @@ export function RowGrid() {
               {selectedVisibleRows.length} selected
             </span>
             <button
-              onClick={() => void deleteSelectedRows()}
-              disabled={loading || readOnly}
+              onClick={() => setDeleteRowsConfirmOpen(true)}
+              disabled={loading || deletingRows || readOnly}
               className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted disabled:opacity-40"
             >
               <Trash2 size={12} strokeWidth={1.5} />
@@ -1529,7 +1496,7 @@ export function RowGrid() {
             </button>
           )}
         </div>
-        {toast && <TableToast toast={toast} onClose={() => setToast(null)} />}
+        {toast && <AppToast toast={toast} onClose={() => setToast(null)} />}
         {insertOpen && (
           <InsertRowDrawer
             table={selectedTable}
@@ -1556,6 +1523,25 @@ export function RowGrid() {
               setJsonCell(null);
               setJsonError(null);
             }}
+          />
+        )}
+        {deleteRowsConfirmOpen && selectedVisibleRows.length > 0 && (
+          <ConfirmDialog
+            title="Delete selected rows?"
+            description="This permanently removes the selected rows from the connected database."
+            loading={deletingRows}
+            onCancel={() => setDeleteRowsConfirmOpen(false)}
+            onConfirm={() => void deleteSelectedRows()}
+            detail={
+              <div className="rounded-md border border-border bg-surface-sunken px-2.5 py-2 text-[12px] text-text">
+                <span className="font-mono font-semibold">{selectedTable}</span>
+                <span className="text-text-muted">
+                  {" "}
+                  · {selectedVisibleRows.length} row
+                  {selectedVisibleRows.length > 1 ? "s" : ""}
+                </span>
+              </div>
+            }
           />
         )}
       </div>

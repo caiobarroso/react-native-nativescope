@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -11,6 +11,7 @@ import {
   Database,
   FileCode2,
   History,
+  ListFilter,
   ListTree,
   Maximize2,
   Minimize2,
@@ -27,6 +28,19 @@ import type { StorageValue } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
 import { useLayout } from "../lib/layout.ts";
 import { getFullValue, getValue, setValue, removeKey } from "../lib/studio-client.ts";
+import { AppToast, type AppToastState } from "./AppToast.tsx";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
+import {
+  JsonFilterDrawer,
+  describeJsonFilter,
+  inferJsonFilterFields,
+  isJsonFilterConditionComplete,
+  matchesJsonFilters,
+  objectEntryFilterFields,
+  type JsonFilterCondition,
+  type JsonFilterField,
+  type JsonFilterMode,
+} from "./JsonFilterBuilder.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 
 const HISTORY_LABEL = {
@@ -277,10 +291,8 @@ type JsonAddModalState =
   | { kind: "array"; path: JsonPath; array: unknown[] }
   | { kind: "field"; path: JsonPath; keys: string[] };
 
-interface EditorToastState {
+interface EditorToastState extends AppToastState {
   id: number;
-  message: string;
-  undo?: () => Promise<void>;
 }
 
 function pathLabel(segment: string | number): string {
@@ -455,18 +467,18 @@ function parseNewValue(type: JsonNewValueType, raw: string): { value: unknown } 
   }
 }
 
-function jsonActionMessage(action: JsonChangeAction): string {
+function jsonActionMessage(action: JsonChangeAction, key: string): string {
   switch (action) {
     case "row-created":
-      return "Row created";
+      return `${key}: item added`;
     case "field-created":
-      return "Field created";
+      return `${key}: field added`;
     case "deleted":
-      return "Removed";
+      return `${key}: selection deleted`;
     case "duplicated":
-      return "Duplicated";
+      return `${key}: selection duplicated`;
     case "edited":
-      return "Change saved";
+      return `${key}: value saved`;
   }
 }
 
@@ -968,6 +980,82 @@ function JsonAddDrawer({
   );
 }
 
+function JsonFilterButton({
+  activeCount,
+  disabled,
+  onClick,
+}: {
+  activeCount: number;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
+        activeCount > 0
+          ? "border-accent bg-accent-wash text-accent"
+          : "border-border text-text-muted hover:bg-surface-hover hover:text-text"
+      }`}
+    >
+      <ListFilter size={12} strokeWidth={1.6} />
+      Filters
+      {activeCount > 0 && (
+        <span className="flex h-4 min-w-4 items-center justify-center rounded bg-accent px-1 font-mono text-[9px] text-white">
+          {activeCount}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function JsonFilterChipBar({
+  conditions,
+  fields,
+  mode,
+  onRemove,
+  onClear,
+}: {
+  conditions: JsonFilterCondition[];
+  fields: JsonFilterField[];
+  mode: JsonFilterMode;
+  onRemove: (id: string) => void;
+  onClear: () => void;
+}) {
+  const active = conditions.filter(isJsonFilterConditionComplete);
+  if (active.length === 0) return null;
+  return (
+    <div className="flex min-h-9 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border bg-surface-sunken px-3 py-1.5">
+      <span className="mr-0.5 shrink-0 font-mono text-[9px] uppercase text-text-subtle">
+        {mode === "all" ? "all" : "any"}
+      </span>
+      {active.map((condition) => (
+        <span
+          key={condition.id}
+          title={describeJsonFilter(condition, fields)}
+          className="inline-flex h-6 max-w-72 shrink-0 items-center gap-1 rounded-md border border-border bg-surface-raised pl-2 pr-1 font-mono text-[10px] text-text-muted"
+        >
+          <span className="truncate">{describeJsonFilter(condition, fields)}</span>
+          <button
+            onClick={() => onRemove(condition.id)}
+            title="Remove filter"
+            className="rounded p-0.5 text-text-subtle hover:bg-surface-hover hover:text-text"
+          >
+            <X size={11} strokeWidth={1.5} />
+          </button>
+        </span>
+      ))}
+      <button
+        onClick={onClear}
+        className="ml-1 h-6 shrink-0 rounded px-1.5 text-[10px] text-text-subtle hover:bg-surface-hover hover:text-text"
+      >
+        Clear all
+      </button>
+    </div>
+  );
+}
+
 function JsonVisualExplorer({
   value,
   sourceName,
@@ -979,9 +1067,30 @@ function JsonVisualExplorer({
 }) {
   const [path, setPath] = useState<JsonPath>([]);
   const [query, setQuery] = useState("");
+  const [filterConditions, setFilterConditions] = useState<JsonFilterCondition[]>([]);
+  const [filterMode, setFilterMode] = useState<JsonFilterMode>("all");
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [addModal, setAddModal] = useState<JsonAddModalState | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(() => new Set());
+  const [deleteConfirm, setDeleteConfirm] = useState<"array" | "object" | null>(null);
   const current = getAtPath(value, path);
+  const deferredQuery = useDeferredValue(query);
+  const deferredFilterConditions = useDeferredValue(filterConditions);
+  const rawObjectEntries = useMemo<Array<[string, unknown]>>(
+    () => (isPlainObject(current) ? Object.entries(current) : []),
+    [current],
+  );
+  const filterFields = useMemo(
+    () =>
+      Array.isArray(current)
+        ? inferJsonFilterFields(current)
+        : objectEntryFilterFields(rawObjectEntries),
+    [current, rawObjectEntries],
+  );
+  const activeFilterCount = filterConditions.filter(isJsonFilterConditionComplete).length;
+  const deferredActiveFilterCount = deferredFilterConditions.filter(
+    isJsonFilterConditionComplete,
+  ).length;
 
   function updatePath(targetPath: JsonPath, nextValue: unknown, action: JsonChangeAction = "edited"): void {
     onChange(setAtPath(value, targetPath, nextValue), action);
@@ -990,7 +1099,19 @@ function JsonVisualExplorer({
   function navigate(nextPath: JsonPath): void {
     setPath(nextPath);
     setQuery("");
+    setFilterConditions([]);
+    setFilterMode("all");
+    setFilterDrawerOpen(false);
     setSelectedItems(new Set());
+  }
+
+  function updateFilters(conditions: JsonFilterCondition[]): void {
+    setFilterConditions(conditions);
+    setSelectedItems(new Set());
+  }
+
+  function removeFilter(id: string): void {
+    updateFilters(filterConditions.filter((condition) => condition.id !== id));
   }
 
   // Todas as linhas que casam (sem paginar): a virtualização do grid mantém o
@@ -1001,8 +1122,8 @@ function JsonVisualExplorer({
     if (!Array.isArray(current)) {
       return { rows: [] as JsonTableRow[], limited: false };
     }
-    const q = query.trim().toLowerCase();
-    if (!q) {
+    const q = deferredQuery.trim().toLowerCase();
+    if (!q && deferredActiveFilterCount === 0) {
       return {
         rows: current.map((item, index) => ({ index, value: item })),
         limited: false,
@@ -1012,18 +1133,49 @@ function JsonVisualExplorer({
     const matchedRows: JsonTableRow[] = [];
     for (let index = 0; index < scanLimit; index += 1) {
       const item = current[index];
-      if (searchPreview(item).includes(q)) matchedRows.push({ index, value: item });
+      const matchesSearch = !q || searchPreview(item).includes(q);
+      const matchesFilters = matchesJsonFilters(
+        item,
+        { index },
+        filterFields,
+        deferredFilterConditions,
+        filterMode,
+      );
+      if (matchesSearch && matchesFilters) matchedRows.push({ index, value: item });
     }
     return { rows: matchedRows, limited: scanLimit < current.length };
-  }, [current, query]);
+  }, [
+    current,
+    deferredActiveFilterCount,
+    deferredFilterConditions,
+    deferredQuery,
+    filterFields,
+    filterMode,
+  ]);
 
   const objectEntries = useMemo<Array<[string, unknown]>>(() => {
-    if (!isPlainObject(current)) return [];
-    const entries = Object.entries(current);
-    const q = query.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter(([key, child]) => key.toLowerCase().includes(q) || searchPreview(child).includes(q));
-  }, [current, query]);
+    const q = deferredQuery.trim().toLowerCase();
+    return rawObjectEntries.filter(([key, child]) => {
+      const matchesSearch =
+        !q || key.toLowerCase().includes(q) || searchPreview(child).includes(q);
+      return (
+        matchesSearch &&
+        matchesJsonFilters(
+          child,
+          { key },
+          filterFields,
+          deferredFilterConditions,
+          filterMode,
+        )
+      );
+    });
+  }, [
+    deferredFilterConditions,
+    deferredQuery,
+    filterFields,
+    filterMode,
+    rawObjectEntries,
+  ]);
 
   const arrayRows = arrayView.rows;
   const visibleArrayKeys = arrayRows.map((row) => String(row.index));
@@ -1069,6 +1221,7 @@ function JsonVisualExplorer({
 
   function clearSelection(): void {
     setSelectedItems(new Set());
+    setDeleteConfirm(null);
   }
 
   function deleteSelectedArrayRows(): void {
@@ -1381,7 +1534,7 @@ function JsonVisualExplorer({
 
       {Array.isArray(current) ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+          <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-3">
             <div className="relative w-56 shrink-0">
               <Search
                 size={13}
@@ -1390,11 +1543,27 @@ function JsonVisualExplorer({
               />
               <input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={`Search ${path[path.length - 1] ?? "array"}...`}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setSelectedItems(new Set());
+                }}
+                placeholder="Search records..."
                 className="h-7 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none focus:border-accent"
               />
             </div>
+            <JsonFilterButton
+              activeCount={activeFilterCount}
+              disabled={filterFields.length === 0}
+              onClick={() => {
+                setAddModal(null);
+                setFilterDrawerOpen(true);
+              }}
+            />
+            {(query.trim() || activeFilterCount > 0) && (
+              <span className="shrink-0 font-mono text-[10px] text-text-subtle">
+                {arrayRows.length} {arrayRows.length === 1 ? "result" : "results"}
+              </span>
+            )}
             {selectedItems.size > 0 && (
               <>
                 <span className="ml-2 inline-flex h-7 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
@@ -1410,7 +1579,7 @@ function JsonVisualExplorer({
                   </button>
                 )}
                 <button
-                  onClick={deleteSelectedArrayRows}
+                  onClick={() => setDeleteConfirm("array")}
                   className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted"
                 >
                   <Trash2 size={12} strokeWidth={1.5} />
@@ -1425,32 +1594,54 @@ function JsonVisualExplorer({
               </>
             )}
             <button
-              onClick={() => setAddModal({ kind: "array", path, array: current })}
+              onClick={() => {
+                setFilterDrawerOpen(false);
+                setAddModal({ kind: "array", path, array: current });
+              }}
               className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
             >
               <Plus size={12} strokeWidth={1.5} />
               Add
             </button>
           </div>
+          <JsonFilterChipBar
+            conditions={filterConditions}
+            fields={filterFields}
+            mode={filterMode}
+            onRemove={removeFilter}
+            onClear={() => updateFilters([])}
+          />
           <JsonDataGrid
             columns={arrayGridColumns}
             rows={arrayRows}
             getRowKey={(row) => String(row.index)}
-            emptyLabel={arrayRowsHaveObjectShape ? "No records found." : "No items found."}
+            emptyLabel={
+              query.trim() || activeFilterCount > 0
+                ? "No records match this search and filter set."
+                : arrayRowsHaveObjectShape
+                  ? "No records found."
+                  : "No items found."
+            }
           />
           <div className="flex h-10 shrink-0 items-center gap-2 border-t border-border px-3 text-[12px] text-text-muted">
             <span>
               {arrayRows.length} {arrayRows.length === 1 ? "item" : "items"}
-              {query.trim() ? " found" : ""}
+              {query.trim() || activeFilterCount > 0 ? " found" : ""}
             </span>
             {arrayView.limited && (
-              <span className="ml-auto text-text-subtle">searching the first 5,000 items</span>
+              <span className="ml-auto text-text-subtle">
+                {query.trim() && activeFilterCount > 0
+                  ? "searching and filtering the first 5,000 items"
+                  : activeFilterCount > 0
+                    ? "filtering the first 5,000 items"
+                    : "searching the first 5,000 items"}
+              </span>
             )}
           </div>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+          <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-3">
             <div className="relative w-56 shrink-0">
               <Search
                 size={13}
@@ -1467,8 +1658,18 @@ function JsonVisualExplorer({
                 className="h-7 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none focus:border-accent"
               />
             </div>
+            <JsonFilterButton
+              activeCount={activeFilterCount}
+              disabled={filterFields.length === 0}
+              onClick={() => {
+                setAddModal(null);
+                setFilterDrawerOpen(true);
+              }}
+            />
             <span className="font-mono text-[12px] font-semibold text-text">
-              {query.trim() ? `${objectEntries.length} of ${objectKeys.length}` : objectKeys.length} fields
+              {query.trim() || activeFilterCount > 0
+                ? `${objectEntries.length} of ${objectKeys.length}`
+                : objectKeys.length} fields
             </span>
             {selectedItems.size > 0 && (
               <>
@@ -1485,7 +1686,7 @@ function JsonVisualExplorer({
                   </button>
                 )}
                 <button
-                  onClick={deleteSelectedObjectFields}
+                  onClick={() => setDeleteConfirm("object")}
                   className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted"
                 >
                   <Trash2 size={12} strokeWidth={1.5} />
@@ -1500,18 +1701,32 @@ function JsonVisualExplorer({
               </>
             )}
             <button
-              onClick={() => setAddModal({ kind: "field", path, keys: objectKeys })}
+              onClick={() => {
+                setFilterDrawerOpen(false);
+                setAddModal({ kind: "field", path, keys: objectKeys });
+              }}
               className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
             >
               <Plus size={12} strokeWidth={1.5} />
               Add field
             </button>
           </div>
+          <JsonFilterChipBar
+            conditions={filterConditions}
+            fields={filterFields}
+            mode={filterMode}
+            onRemove={removeFilter}
+            onClear={() => updateFilters([])}
+          />
           <JsonDataGrid
             columns={objectGridColumns}
             rows={objectGridRows}
             getRowKey={(row) => row.key}
-            emptyLabel="No fields found."
+            emptyLabel={
+              query.trim() || activeFilterCount > 0
+                ? "No fields match this search and filter set."
+                : "No fields found."
+            }
           />
         </div>
       )}
@@ -1521,6 +1736,59 @@ function JsonVisualExplorer({
           onClose={() => setAddModal(null)}
           onCreateArrayItem={createArrayItem}
           onCreateField={createField}
+        />
+      )}
+      {filterDrawerOpen && (
+        <JsonFilterDrawer
+          fields={filterFields}
+          conditions={filterConditions}
+          mode={filterMode}
+          matchCount={Array.isArray(current) ? arrayRows.length : objectEntries.length}
+          totalCount={Array.isArray(current) ? current.length : objectKeys.length}
+          onConditionsChange={updateFilters}
+          onModeChange={(mode) => {
+            setFilterMode(mode);
+            setSelectedItems(new Set());
+          }}
+          onClose={() => setFilterDrawerOpen(false)}
+        />
+      )}
+      {deleteConfirm === "array" && selectedItems.size > 0 && (
+        <ConfirmDialog
+          title="Delete selected items?"
+          description="This permanently removes the selected items from this JSON value."
+          onCancel={() => setDeleteConfirm(null)}
+          onConfirm={deleteSelectedArrayRows}
+          detail={
+            <div className="rounded-md border border-border bg-surface-sunken px-2.5 py-2 text-[12px] text-text">
+              <span className="font-mono font-semibold">
+                {path[path.length - 1] ?? sourceName ?? "root"}
+              </span>
+              <span className="text-text-muted">
+                {" "}
+                · {selectedItems.size} item{selectedItems.size > 1 ? "s" : ""}
+              </span>
+            </div>
+          }
+        />
+      )}
+      {deleteConfirm === "object" && selectedItems.size > 0 && (
+        <ConfirmDialog
+          title="Delete selected fields?"
+          description="This permanently removes the selected fields from this JSON value."
+          onCancel={() => setDeleteConfirm(null)}
+          onConfirm={deleteSelectedObjectFields}
+          detail={
+            <div className="rounded-md border border-border bg-surface-sunken px-2.5 py-2 text-[12px] text-text">
+              <span className="font-mono font-semibold">
+                {path[path.length - 1] ?? sourceName ?? "root"}
+              </span>
+              <span className="text-text-muted">
+                {" "}
+                · {selectedItems.size} field{selectedItems.size > 1 ? "s" : ""}
+              </span>
+            </div>
+          }
         />
       )}
     </div>
@@ -1837,44 +2105,6 @@ export function JsonWorkspace({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function EditorToast({
-  toast,
-  onClose,
-}: {
-  toast: EditorToastState;
-  onClose: () => void;
-}) {
-  const [undoing, setUndoing] = useState(false);
-
-  return (
-    <div className="rnsi-snackbar pointer-events-auto absolute bottom-3 right-3 z-20 flex min-h-11 w-[min(360px,calc(100%-24px))] items-center gap-2 rounded-md border border-border-strong bg-surface-sunken px-3 py-2 text-[12px] text-text shadow-md shadow-black/5">
-      <span className="min-w-0 flex-1 truncate font-medium">{toast.message}</span>
-      {toast.undo && (
-        <button
-          onClick={() => {
-            setUndoing(true);
-            void toast.undo?.().finally(() => {
-              setUndoing(false);
-              onClose();
-            });
-          }}
-          disabled={undoing}
-          className="shrink-0 font-medium text-accent underline decoration-accent/45 underline-offset-3 hover:text-accent-hover disabled:opacity-50"
-        >
-          {undoing ? "undoing..." : "undo"}
-        </button>
-      )}
-      <button
-        onClick={onClose}
-        title="Close"
-        className="shrink-0 rounded p-0.5 text-text-muted hover:bg-surface-hover hover:text-text"
-      >
-        <X size={13} strokeWidth={1.5} />
-      </button>
     </div>
   );
 }
@@ -2280,7 +2510,7 @@ export function ValueEditor() {
           setState("ready");
           setToast({
             id: toastIdRef.current++,
-            message: jsonActionMessage(action),
+            message: jsonActionMessage(action, key),
             undo: async () => {
               await setValue(providerId, instanceId, key, previousValue);
               applyValue(previousValue);
@@ -2599,7 +2829,7 @@ export function ValueEditor() {
         </div>
       </div>
     )}
-    {toast && <EditorToast toast={toast} onClose={() => setToast(null)} />}
+    {toast && <AppToast toast={toast} onClose={() => setToast(null)} />}
     <KeyHistory
       historyKey={`${keysId(selection.providerId, selection.instanceId)} ${selectedKey}`}
     />

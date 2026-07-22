@@ -50,6 +50,12 @@ export function GlobalSearch() {
   }, []);
 
   useEffect(() => {
+    const openSearch = () => setOpen(true);
+    window.addEventListener("nativescope:open-global-search", openSearch);
+    return () => window.removeEventListener("nativescope:open-global-search", openSearch);
+  }, []);
+
+  useEffect(() => {
     if (!open) {
       setQuery("");
       setCursor(0);
@@ -103,15 +109,15 @@ export function GlobalSearch() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 pt-24"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/25 px-4 pt-[15vh] backdrop-blur-[2px]"
       onClick={() => setOpen(false)}
     >
       <div
-        className="w-[560px] overflow-hidden rounded-lg border border-border bg-surface-raised shadow-lg"
+        className="w-full max-w-[620px] overflow-hidden rounded-2xl border border-border/80 bg-surface-raised/95 shadow-2xl shadow-black/20 backdrop-blur-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 border-b border-border px-3">
-          <Search size={14} strokeWidth={1.5} className="text-text-subtle" />
+        <div className="flex h-16 items-center gap-3 px-5">
+          <Search size={18} strokeWidth={1.5} className="text-text-subtle" />
           <input
             ref={inputRef}
             value={query}
@@ -127,13 +133,19 @@ export function GlobalSearch() {
                 navigate(grouped[cursor]);
               }
             }}
-            placeholder="Search across all storage…"
-            className="h-11 flex-1 bg-transparent text-[13px] outline-none placeholder:text-text-subtle"
+            placeholder="Search storage…"
+            className="h-full flex-1 bg-transparent text-left text-[16px] outline-none placeholder:text-text-subtle focus-visible:!outline-none"
           />
-          {loading && <span className="text-[11px] text-text-subtle">searching on device…</span>}
+          {loading ? (
+            <span className="text-[11px] text-text-subtle">searching on device…</span>
+          ) : (
+            <kbd className="rounded-md border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-[10px] text-text-subtle">
+              esc
+            </kbd>
+          )}
         </div>
 
-        <ol className="max-h-80 overflow-y-auto p-1">
+        <ol className="max-h-80 overflow-y-auto border-t border-border/70 p-1.5">
           {query.trim() !== "" && !loading && grouped.length === 0 && (
             <li className="px-3 py-4 text-[12px] text-text-subtle">
               Nothing found in any storage.

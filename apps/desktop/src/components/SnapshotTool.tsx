@@ -132,7 +132,7 @@ export function SnapshotTool() {
       <button
         onClick={() => setOpen(true)}
         title="Snapshots and diff"
-        className="flex items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2.5 py-1.5 text-[12px] text-text-muted hover:bg-surface-hover hover:text-text"
+        className="flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
       >
         <Camera size={13} strokeWidth={1.5} />
         Snapshots
