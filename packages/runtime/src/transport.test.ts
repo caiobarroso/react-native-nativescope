@@ -87,3 +87,87 @@ describe("transport backoff", () => {
     expect(sockets).toHaveLength(2);
   });
 });
+
+describe("teto do backoff", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0); // delay = base/2
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  /** Falha a conexão N vezes e devolve o intervalo esperado até a próxima. */
+  function failTimes(sockets: FakeSocket[], times: number): void {
+    for (let i = 0; i < times; i += 1) {
+      const socket = sockets[sockets.length - 1]!;
+      socket.emit("error");
+      // Avança o suficiente para qualquer teto: 30s cobre os dois estágios.
+      vi.advanceTimersByTime(30_000);
+    }
+  }
+
+  it("segura 5s no começo e cai para 30s depois de insistir sem sucesso", () => {
+    const sockets: FakeSocket[] = [];
+    createTransport({
+      url: "ws://test",
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      onMessage: () => {},
+      onOpen: () => {},
+      onClose: () => {},
+    });
+
+    // Estágio rápido: na 5a falha o teto de 5s já está valendo → delay 2500ms.
+    failTimes(sockets, 5);
+    const beforeFast = sockets.length;
+    sockets[sockets.length - 1]!.emit("error");
+    vi.advanceTimersByTime(2499);
+    expect(sockets).toHaveLength(beforeFast); // ainda não
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(beforeFast + 1); // reconectou em 2500ms
+
+    // Estágio lento: passadas FAST_ATTEMPTS tentativas, o teto vira 30s →
+    // delay 15000ms. É o que evita 720 tentativas/hora no device do usuário.
+    failTimes(sockets, 6);
+    const beforeSlow = sockets.length;
+    sockets[sockets.length - 1]!.emit("error");
+    vi.advanceTimersByTime(14_999);
+    expect(sockets).toHaveLength(beforeSlow);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(beforeSlow + 1);
+  });
+
+  it("uma conexão estável devolve o ritmo rápido (a CLI subiu de novo)", () => {
+    const sockets: FakeSocket[] = [];
+    createTransport({
+      url: "ws://test",
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      onMessage: () => {},
+      onOpen: () => {},
+      onClose: () => {},
+    });
+
+    failTimes(sockets, 15); // já no estágio lento
+    sockets[sockets.length - 1]!.emit("open");
+    vi.advanceTimersByTime(STABLE_MS_FOR_TEST); // prova estabilidade → attempt zera
+    sockets[sockets.length - 1]!.emit("close");
+
+    const before = sockets.length;
+    vi.advanceTimersByTime(249);
+    expect(sockets).toHaveLength(before);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(before + 1); // 250ms: de volta ao início
+  });
+});
+
+/** Espelha STABLE_MS do transporte (não exportado de propósito). */
+const STABLE_MS_FOR_TEST = 3000;

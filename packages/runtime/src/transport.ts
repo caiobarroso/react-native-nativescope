@@ -34,6 +34,20 @@ export interface Transport {
  */
 const STABLE_MS = 3000;
 
+/**
+ * Teto do backoff em dois estágios.
+ *
+ * Reconectar para sempre é intencional (a CLI pode subir depois do app), mas um
+ * teto único de 5s custa ~720 tentativas por hora — e o caso comum é justamente
+ * o app rodando o dia inteiro sem inspector nenhum do outro lado. Os primeiros
+ * ~20s ficam rápidos, que é a janela de uma reconexão legítima (CLI reiniciando,
+ * Wi-Fi voltando); depois disso o ritmo cai para meio minuto. A CLI continua
+ * sendo detectada quando subir — só não custa bateria enquanto não sobe.
+ */
+const FAST_CEILING_MS = 5000;
+const SLOW_CEILING_MS = 30_000;
+const FAST_ATTEMPTS = 10;
+
 export function createTransport(options: TransportOptions): Transport {
   const factory =
     options.createWebSocket ??
@@ -98,7 +112,8 @@ export function createTransport(options: TransportOptions): Transport {
       if (closedByUser || reconnectTimer) return;
       // Half-jitter: desincroniza dois devices que reconectam em lockstep,
       // evitando reconexão em manada.
-      const base = Math.min(500 * 2 ** attempt, 5000);
+      const ceiling = attempt < FAST_ATTEMPTS ? FAST_CEILING_MS : SLOW_CEILING_MS;
+      const base = Math.min(500 * 2 ** attempt, ceiling);
       const delay = base / 2 + Math.random() * (base / 2);
       attempt += 1;
       reconnectTimer = setTimeout(() => {
