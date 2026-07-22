@@ -73,7 +73,10 @@ export function Header() {
               ? "connected"
               : phase === "waiting-app"
                 ? "waiting for app"
-                : "connecting"}
+                : // "rejected" é terminal: dizer "connecting" contradiria a tela.
+                  phase === "rejected" || phase === "no-token"
+                  ? "disconnected"
+                  : "connecting"}
           </span>
         </span>
       </div>
