@@ -23,7 +23,7 @@ import {
   type StorageValue,
 } from "@rnsi/protocol";
 import { createTransport, fnv1a32, type Transport } from "@rnsi/runtime";
-import { useStudio, keysId } from "./store.ts";
+import { useStudio, keysId, type Device, type Selection } from "./store.ts";
 
 /**
  * Cliente do Studio. Único ponto da UI que toca o WebSocket — nenhum
@@ -265,27 +265,118 @@ function handleMessage(message: AnyMessage): void {
   }
 }
 
+const CONTINUITY_GRACE_MS = 5000;
+
+interface NavSnapshot {
+  selection: Selection | null;
+  selectedKey: string | null;
+  selectedTable: string | null;
+  keyFilter: string;
+}
+
+// Navegação salva quando o device em foco cai; restaurada se um device
+// equivalente (mesmo name+platform) reconecta dentro da janela — cobre o
+// full-reload sem persistir o deviceId (Fast Refresh nem chega a reconectar).
+let dropped: { name: string; platform: string; at: number; nav: NavSnapshot } | null = null;
+
+function snapshotNav(): NavSnapshot {
+  const s = useStudio.getState();
+  return {
+    selection: s.selection,
+    selectedKey: s.selectedKey,
+    selectedTable: s.selectedTable,
+    keyFilter: s.keyFilter,
+  };
+}
+
+/** Se um device caiu há pouco e um equivalente está vivo agora, reata o foco
+ * nele e restaura a navegação. Devolve true se reatou. */
+function maybeContinue(): boolean {
+  if (!dropped) return false;
+  if (Date.now() - dropped.at > CONTINUITY_GRACE_MS) {
+    dropped = null;
+    return false;
+  }
+  const store = useStudio.getState();
+  const match = store.devices.find(
+    (d) => d.name === dropped!.name && d.platform === dropped!.platform,
+  );
+  if (!match) return false;
+  const nav = dropped.nav;
+  dropped = null;
+  store.selectDevice(match.deviceId);
+  void restoreAfterProviders(nav);
+  return true;
+}
+
+async function restoreAfterProviders(nav: NavSnapshot): Promise<void> {
+  await refreshProviders();
+  if (!nav.selection) return;
+  const store = useStudio.getState();
+  const provider = store.providers.find((p) => p.providerId === nav.selection!.providerId);
+  const instance = provider?.instances.find((i) => i.instanceId === nav.selection!.instanceId);
+  if (!provider || !instance) return; // a instância sumiu no reload
+  store.select(nav.selection);
+  if (nav.keyFilter) store.setKeyFilter(nav.keyFilter);
+  if (provider.capabilities.includes("database.query")) {
+    await loadTables(nav.selection.providerId, nav.selection.instanceId);
+    if (nav.selectedTable) store.selectTable(nav.selectedTable);
+  } else {
+    await loadKeys(nav.selection.providerId, nav.selection.instanceId);
+    if (nav.selectedKey) store.selectKey(nav.selectedKey);
+  }
+}
+
 function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
   const store = useStudio.getState();
 
   switch (event.type) {
-    case "session.connected":
-      store.setAppClient(event.payload.client);
+    case "session.connected": {
+      const device: Device = {
+        deviceId: event.payload.deviceId ?? event.payload.sessionId,
+        name: event.payload.client.name,
+        platform: event.payload.client.platform,
+        label: event.payload.label ?? event.payload.client.platform,
+      };
+      store.upsertDevice(device);
       store.setPhase("connected");
-      void refreshProviders();
+      // Continuidade de reload primeiro; senão, se este é o foco, busca providers.
+      if (!maybeContinue() && useStudio.getState().selectedDeviceId === device.deviceId) {
+        void refreshProviders();
+      }
       return;
+    }
 
-    case "session.disconnected":
-      store.setAppClient(null);
-      store.setPhase("waiting-app");
+    case "session.disconnected": {
+      const goneId = event.payload.deviceId ?? event.payload.sessionId;
+      const wasSelected = store.selectedDeviceId === goneId;
+      const gone = store.devices.find((d) => d.deviceId === goneId);
+      if (wasSelected && gone) {
+        dropped = {
+          name: gone.name,
+          platform: gone.platform,
+          at: Date.now(),
+          nav: snapshotNav(),
+        };
+      }
+      store.removeDevice(goneId);
+      const after = useStudio.getState();
+      if (after.devices.length === 0) {
+        store.setPhase("waiting-app");
+      } else if (wasSelected && !maybeContinue() && after.selectedDeviceId) {
+        void refreshProviders();
+      }
       return;
+    }
 
     case "provider.registered": {
+      if (event.deviceId !== store.selectedDeviceId) return; // evento de outro device
       store.upsertProvider(event.payload.provider);
       return;
     }
 
     case "key-value.changed": {
+      if (event.deviceId !== store.selectedDeviceId) return; // evento de outro device
       const provider = store.providers.find(
         (p) => p.providerId === event.payload.providerId,
       );
@@ -314,6 +405,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       return;
 
     case "database.changed": {
+      if (event.deviceId !== store.selectedDeviceId) return; // evento de outro device
       const provider = store.providers.find(
         (p) => p.providerId === event.payload.providerId,
       );
@@ -349,10 +441,15 @@ function sendCommand(
       reject(new Error("the app did not respond in time"));
     }, COMMAND_TIMEOUT_MS);
     pending.set(requestId, { resolve, reject, timer });
+    // Roteamento stateless: todo comando carrega o device em foco. Capturado no
+    // disparo (não na resolução) — trocar de device no meio não desvia o
+    // comando já enviado, e o resultado atrasado é descartado no failInFlight.
+    const deviceId = useStudio.getState().selectedDeviceId;
     send({
       kind: "command",
       protocolVersion: PROTOCOL_VERSION,
       requestId,
+      ...(deviceId ? { deviceId } : {}),
       ...partial,
     } as CommandMessage);
   });
@@ -364,6 +461,19 @@ export async function refreshProviders(): Promise<void> {
   const result = await sendCommand({ type: "provider.list", payload: {} });
   const parsed = providerListResultSchema.safeParse(result);
   if (parsed.success) useStudio.getState().setProviders(parsed.data.providers);
+}
+
+/**
+ * Troca manual de device pelo seletor. Cancela o in-flight (evita que um
+ * resultado do device antigo caia na view do novo — o cache é single-device),
+ * foca o novo e rebusca os providers dele.
+ */
+export function switchDevice(deviceId: string): void {
+  const store = useStudio.getState();
+  if (store.selectedDeviceId === deviceId) return;
+  failInFlight("device switched");
+  store.selectDevice(deviceId);
+  void refreshProviders();
 }
 
 /** Tamanho de página da lista de chaves — mantém cada resposta leve. */

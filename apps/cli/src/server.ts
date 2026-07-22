@@ -27,16 +27,31 @@ export interface LocalServerOptions {
    * o token de sessão passa a ser a barreira, já que o app não manda Origin.
    */
   host?: string;
+  /** Intervalo do heartbeat em ms; default HEARTBEAT_INTERVAL_MS. Exposto p/ testes. */
+  heartbeatIntervalMs?: number;
 }
 
 interface Session {
   socket: WebSocket;
   sessionId: string;
   client: { name: string; platform: string };
+  /** Runtime: id estável do device (chave do mapa `runtimes`). Studio: o próprio
+   * sessionId (placeholder — studios não são roteados por device). */
+  deviceId: string;
+  /** Rótulo legível do device (runtime). Studio: irrelevante. */
+  label: string;
+  /** Studio: device que ele inspeciona agora. Runtime: sempre null. */
+  targetDeviceId: string | null;
 }
 
 const COMMAND_ROUTE_TTL_MS = 10_000;
 const STREAM_ROUTE_TTL_MS = 10 * 60_000;
+/**
+ * Intervalo do ping de liveness. Socket sem pong nem tráfego entre dois ticks
+ * é considerado morto e derrubado — pega conexão meia-aberta (device dormiu,
+ * WiFi caiu) que o close de TCP não entrega por minutos.
+ */
+const HEARTBEAT_INTERVAL_MS = 15_000;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -79,17 +94,37 @@ export function startLocalServer(options: LocalServerOptions) {
   }
 
   const studios = new Set<Session>();
-  let runtime: Session | null = null;
+  // Runtimes vivos, keyed por deviceId (estável entre reconexões). Substitui o
+  // slot único: iOS e Android coexistem em vez de se expulsarem.
+  const runtimes = new Map<string, Session>();
+  // Liveness por socket (ver HEARTBEAT_INTERVAL_MS). WeakSet: some no GC sozinho.
+  const alive = new WeakSet<WebSocket>();
   let nextSessionId = 1;
   let nextBridgeRequestId = 1;
+  let nextGlobalStreamId = 1;
   const commandRoutes = new Map<
     string,
-    { studio: Session; studioRequestId: string; timer: ReturnType<typeof setTimeout> }
+    {
+      studio: Session;
+      studioRequestId: string;
+      deviceId: string;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
+  // Streams: o id local (do runtime) só é único por-device; o bridge reescreve
+  // para um id global (gstream-N) e mapeia os dois sentidos. Chave = id global.
   const streamRoutes = new Map<
     string,
-    { studio: Session; timer: ReturnType<typeof setTimeout> }
+    {
+      studio: Session;
+      deviceId: string;
+      localStreamId: string;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
+  // Índice reverso p/ traduzir chunk/end vindos do runtime:
+  // `${deviceId} ${localStreamId}` → id global.
+  const streamIdByLocal = new Map<string, string>();
 
   function deleteCommandRoute(requestId: string): void {
     const route = commandRoutes.get(requestId);
@@ -107,10 +142,22 @@ export function startLocalServer(options: LocalServerOptions) {
     if (!route) return;
     clearTimeout(route.timer);
     streamRoutes.delete(streamId);
+    streamIdByLocal.delete(`${route.deviceId} ${route.localStreamId}`);
   }
 
   function clearStreamRoutes(): void {
     for (const streamId of streamRoutes.keys()) deleteStreamRoute(streamId);
+  }
+
+  /** Limpa rotas de comando/stream de UM device (self-replace ou desconexão) —
+   * sem tocar nas dos outros devices, que seguem vivos. */
+  function clearRoutesForDevice(deviceId: string): void {
+    for (const [requestId, route] of commandRoutes) {
+      if (route.deviceId === deviceId) deleteCommandRoute(requestId);
+    }
+    for (const [streamId, route] of streamRoutes) {
+      if (route.deviceId === deviceId) deleteStreamRoute(streamId);
+    }
   }
 
   function sendTo(session: Session | null, message: AnyMessage): void {
@@ -195,6 +242,12 @@ export function startLocalServer(options: LocalServerOptions) {
     let session: Session | null = null;
     let role: "studio" | "runtime" | null = null;
 
+    // Heartbeat: nasce vivo; o pong (resposta nativa do device ao nosso ping) e
+    // qualquer mensagem renovam a vida. Só um socket 100% ocioso depende do
+    // auto-pong — mensagem também conta, então app ativo nunca é derrubado.
+    alive.add(ws);
+    ws.on("pong", () => alive.add(ws));
+
     // Sem hello válido em 5s, a conexão cai.
     const handshakeTimer = setTimeout(() => {
       if (!session) ws.close();
@@ -221,29 +274,37 @@ export function startLocalServer(options: LocalServerOptions) {
         return;
       }
 
+      const sessionId = `session-${nextSessionId++}`;
+      // Runtime: id estável vindo do device (fallback anon- p/ shim antigo, único
+      // por conexão). Studio: o próprio sessionId, nunca usado como chave.
+      const deviceId =
+        hello.role === "runtime" ? (hello.client.deviceId ?? `anon-${sessionId}`) : sessionId;
+      const label = hello.client.label ?? hello.client.platform;
       session = {
         socket: ws,
-        sessionId: `session-${nextSessionId++}`,
+        sessionId,
         client: hello.client,
+        deviceId,
+        label,
+        targetDeviceId: null,
       };
       role = hello.role;
 
-      // O runtime é único por app. Studios são leitores independentes: várias
-      // abas podem observar e editar a mesma sessão sem expulsarem umas às outras.
+      // Studios são leitores independentes (N abas). Runtimes coexistem keyed por
+      // deviceId: um device novo NÃO expulsa outro. Só o MESMO deviceId se
+      // auto-substitui (reload/duplicata) — fecha só o socket velho dele.
       if (role === "studio") {
         studios.add(session);
       } else {
-        clearCommandRoutes();
-        clearStreamRoutes();
-        runtime?.socket.close();
-        runtime = session;
+        runtimes.get(deviceId)?.socket.close();
+        runtimes.set(deviceId, session);
       }
 
       ws.send(
         serializeMessage({
           kind: "hello-ack",
           protocolVersion: PROTOCOL_VERSION,
-          sessionId: session.sessionId,
+          sessionId,
         }),
       );
 
@@ -253,22 +314,34 @@ export function startLocalServer(options: LocalServerOptions) {
           kind: "event",
           protocolVersion: PROTOCOL_VERSION,
           timestamp: Date.now(),
+          deviceId,
           type: "session.connected",
-          payload: { sessionId: session.sessionId, client: hello.client, providers: [] },
+          payload: { sessionId, client: hello.client, providers: [], deviceId, label },
         });
-      } else if (runtime) {
-        // Studio chegou depois do app: replay do connected para não perder estado.
-        sendTo(session, {
-          kind: "event",
-          protocolVersion: PROTOCOL_VERSION,
-          timestamp: Date.now(),
-          type: "session.connected",
-          payload: { sessionId: runtime.sessionId, client: runtime.client, providers: [] },
-        });
+      } else {
+        // Studio recém-chegado: replay de TODOS os runtimes vivos para popular o
+        // seletor sem perder quem já estava conectado.
+        for (const rt of runtimes.values()) {
+          sendTo(session, {
+            kind: "event",
+            protocolVersion: PROTOCOL_VERSION,
+            timestamp: Date.now(),
+            deviceId: rt.deviceId,
+            type: "session.connected",
+            payload: {
+              sessionId: rt.sessionId,
+              client: rt.client,
+              providers: [],
+              deviceId: rt.deviceId,
+              label: rt.label,
+            },
+          });
+        }
       }
     }
 
     ws.on("message", (data) => {
+      alive.add(ws);
       const parsed = parseMessage(data.toString());
       if (!parsed.ok) {
         if (!session) reject("invalid-message", "malformed handshake message");
@@ -290,24 +363,34 @@ export function startLocalServer(options: LocalServerOptions) {
       // troca por um id global antes de enviar ao runtime e restaura o original
       // na volta, evitando colisões entre Studios simultâneos.
       if (role === "studio" && message.kind === "command") {
-        if (!runtime || runtime.socket.readyState !== WebSocket.OPEN) return;
+        // Roteamento stateless: o comando diz o device-alvo. Sem alvo vivo, dropa
+        // (o Studio reenvia ao reselecionar; o timeout dele cobre a corrida).
+        const target = message.deviceId ? runtimes.get(message.deviceId) : undefined;
+        if (!target || target.socket.readyState !== WebSocket.OPEN) return;
+        let outbound: typeof message = message;
         if (message.type === "stream.cancel") {
+          // O studio cancela pelo id GLOBAL; traduz de volta pro id local do device.
+          const route = streamRoutes.get(message.payload.streamId);
+          const localStreamId = route?.localStreamId ?? message.payload.streamId;
           deleteStreamRoute(message.payload.streamId);
+          outbound = { ...message, payload: { ...message.payload, streamId: localStreamId } };
         }
         const bridgeRequestId = `bridge-${nextBridgeRequestId++}`;
         commandRoutes.set(bridgeRequestId, {
           studio: session,
           studioRequestId: message.requestId,
+          deviceId: target.deviceId,
           timer: setTimeout(
             () => deleteCommandRoute(bridgeRequestId),
             COMMAND_ROUTE_TTL_MS,
           ),
         });
-        sendTo(runtime, { ...message, requestId: bridgeRequestId });
+        sendTo(target, { ...outbound, requestId: bridgeRequestId });
       } else if (role === "runtime" && message.kind === "command-result") {
         const route = commandRoutes.get(message.requestId);
         if (!route) return;
         deleteCommandRoute(message.requestId);
+        let outbound: typeof message = { ...message, requestId: route.studioRequestId };
         if (
           message.ok &&
           message.result &&
@@ -315,20 +398,47 @@ export function startLocalServer(options: LocalServerOptions) {
           "streamId" in message.result &&
           typeof message.result.streamId === "string"
         ) {
-          const streamId = message.result.streamId;
-          streamRoutes.set(streamId, {
+          // Reescreve o id local (único só por-device) para um id global e
+          // registra os dois sentidos — espelha o bridging de requestId.
+          const localStreamId = message.result.streamId;
+          const globalStreamId = `gstream-${nextGlobalStreamId++}`;
+          streamRoutes.set(globalStreamId, {
             studio: route.studio,
-            timer: setTimeout(() => deleteStreamRoute(streamId), STREAM_ROUTE_TTL_MS),
+            deviceId: route.deviceId,
+            localStreamId,
+            timer: setTimeout(() => deleteStreamRoute(globalStreamId), STREAM_ROUTE_TTL_MS),
           });
+          streamIdByLocal.set(`${route.deviceId} ${localStreamId}`, globalStreamId);
+          outbound = {
+            ...message,
+            requestId: route.studioRequestId,
+            result: { ...message.result, streamId: globalStreamId },
+          };
         }
-        sendTo(route.studio, { ...message, requestId: route.studioRequestId });
+        sendTo(route.studio, outbound);
       } else if (role === "runtime" && message.kind === "event") {
         if (message.type === "stream.chunk" || message.type === "stream.end") {
-          const route = streamRoutes.get(message.payload.streamId);
-          if (route) sendTo(route.studio, message);
-          if (message.type === "stream.end") deleteStreamRoute(message.payload.streamId);
+          // chunk/end trazem o id LOCAL do runtime; traduz p/ o global e reescreve.
+          const globalStreamId = streamIdByLocal.get(
+            `${session.deviceId} ${message.payload.streamId}`,
+          );
+          if (globalStreamId !== undefined) {
+            const route = streamRoutes.get(globalStreamId);
+            if (route) {
+              // Cast: o spread da união confunde o excess-check do TS no literal
+              // de payload; a forma em runtime é um stream.chunk/end válido.
+              sendTo(route.studio, {
+                ...message,
+                deviceId: session.deviceId,
+                payload: { ...message.payload, streamId: globalStreamId },
+              } as AnyMessage);
+            }
+            if (message.type === "stream.end") deleteStreamRoute(globalStreamId);
+          }
         } else {
-          sendToStudios(message);
+          // Demais eventos (provider.registered, key-value.changed, ...) vão a
+          // todos os studios, carimbados com o device de origem p/ filtragem.
+          sendToStudios({ ...message, deviceId: session.deviceId });
         }
       }
     });
@@ -336,17 +446,19 @@ export function startLocalServer(options: LocalServerOptions) {
     ws.on("close", () => {
       clearTimeout(handshakeTimer);
       if (!session) return;
-      if (role === "runtime" && runtime === session) {
-        runtime = null;
-        clearCommandRoutes();
-        clearStreamRoutes();
+      // Só remove se ESTE socket ainda é o dono do deviceId — se um self-replace
+      // já pôs um socket novo no lugar, não mexe (quem manda agora é o novo).
+      if (role === "runtime" && runtimes.get(session.deviceId) === session) {
+        runtimes.delete(session.deviceId);
+        clearRoutesForDevice(session.deviceId);
         log(`app disconnected: ${session.client.name}`);
         sendToStudios({
           kind: "event",
           protocolVersion: PROTOCOL_VERSION,
           timestamp: Date.now(),
+          deviceId: session.deviceId,
           type: "session.disconnected",
-          payload: { sessionId: session.sessionId },
+          payload: { sessionId: session.sessionId, deviceId: session.deviceId },
         });
       } else if (role === "studio") {
         studios.delete(session);
@@ -359,6 +471,23 @@ export function startLocalServer(options: LocalServerOptions) {
       }
     });
   });
+
+  // Um único tick varre todos os sockets (studios + runtimes): derruba os que
+  // não deram sinal desde o último ping, pinga o resto.
+  const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (!alive.has(ws)) {
+        ws.terminate();
+        continue;
+      }
+      alive.delete(ws);
+      try {
+        ws.ping();
+      } catch {
+        // socket já fechando: o próximo tick derruba se preciso
+      }
+    }
+  }, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
 
   return new Promise<{ close: () => void }>((resolve, reject) => {
     httpServer.once("error", (err: NodeJS.ErrnoException) => {
@@ -375,6 +504,7 @@ export function startLocalServer(options: LocalServerOptions) {
     httpServer.listen(port, host, () => {
       resolve({
         close() {
+          clearInterval(heartbeat);
           clearCommandRoutes();
           clearStreamRoutes();
           wss.close();

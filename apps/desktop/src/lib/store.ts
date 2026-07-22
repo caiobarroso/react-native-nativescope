@@ -36,6 +36,14 @@ export interface Selection {
   instanceId: string;
 }
 
+export interface Device {
+  deviceId: string;
+  name: string;
+  platform: string;
+  /** Rótulo legível pro seletor (ex. "iOS", "Android"). */
+  label: string;
+}
+
 const ACTIVITY_LIMIT = 200;
 const KEY_HISTORY_LIMIT = 20;
 const KEY_HISTORY_KEY_LIMIT = 500;
@@ -67,7 +75,10 @@ export interface KeyHistoryEntry {
 
 interface StudioState {
   phase: Phase;
-  appClient: { name: string; platform: string } | null;
+  /** Devices (runtimes) conectados agora — o seletor lê daqui. */
+  devices: Device[];
+  /** Device em foco; comandos e a view inteira são escopados a ele. */
+  selectedDeviceId: string | null;
   providers: ProviderDescriptor[];
   /** chaves por `${providerId} ${instanceId}` — só a janela já carregada */
   keys: Record<string, KeyEntry[]>;
@@ -103,7 +114,11 @@ interface StudioState {
   keyHistory: Record<string, KeyHistoryEntry[]>;
 
   setPhase(phase: Phase): void;
-  setAppClient(client: StudioState["appClient"]): void;
+  upsertDevice(device: Device): void;
+  removeDevice(deviceId: string): void;
+  /** Troca o device em foco: reseta a view (refetch lazy) — nunca mistura dados
+   * de dois devices. No-op se já for o selecionado. */
+  selectDevice(deviceId: string): void;
   setProviders(providers: ProviderDescriptor[]): void;
   upsertProvider(provider: ProviderDescriptor): void;
   setKeys(
@@ -151,12 +166,34 @@ export function keysId(providerId: string, instanceId: string): string {
   return `${providerId} ${instanceId}`;
 }
 
+/** Estado zerado da view ao trocar/perder o device em foco. Os caches valem
+ * para um device por vez (single-active-view); trocar re-busca lazy. */
+function clearedView(): Partial<StudioState> {
+  return {
+    providers: [],
+    keys: {},
+    keysMeta: {},
+    tables: {},
+    tableTabs: {},
+    recentChanges: {},
+    keyHistory: {},
+    activity: [],
+    selection: null,
+    selectedKey: null,
+    selectedTable: null,
+    creating: false,
+    keyFilter: "",
+    activityFocus: null,
+  };
+}
+
 let nextActivityId = 1;
 let nextActivityFocusToken = 1;
 
 export const useStudio = create<StudioState>((set) => ({
   phase: "connecting",
-  appClient: null,
+  devices: [],
+  selectedDeviceId: null,
   providers: [],
   keys: {},
   keysMeta: {},
@@ -174,7 +211,31 @@ export const useStudio = create<StudioState>((set) => ({
   keyHistory: {},
 
   setPhase: (phase) => set({ phase }),
-  setAppClient: (appClient) => set({ appClient }),
+
+  upsertDevice: (device) =>
+    set((state) => ({
+      devices: [...state.devices.filter((d) => d.deviceId !== device.deviceId), device],
+      // Primeiro device a chegar entra em foco automaticamente.
+      selectedDeviceId: state.selectedDeviceId ?? device.deviceId,
+    })),
+
+  removeDevice: (deviceId) =>
+    set((state) => {
+      const devices = state.devices.filter((d) => d.deviceId !== deviceId);
+      if (state.selectedDeviceId !== deviceId) return { devices };
+      // Caiu o device em foco: passa o foco pro próximo vivo (ou nada) e zera a
+      // view — os dados eram daquele device.
+      const next = devices[0]?.deviceId ?? null;
+      return { ...clearedView(), devices, selectedDeviceId: next };
+    }),
+
+  selectDevice: (deviceId) =>
+    set((state) =>
+      state.selectedDeviceId === deviceId
+        ? {}
+        : { ...clearedView(), selectedDeviceId: deviceId },
+    ),
+
   setProviders: (providers) => set({ providers }),
 
   upsertProvider: (provider) =>

@@ -15,6 +15,7 @@ import { StorageOverview } from "./components/StorageOverview.tsx";
 export default function App() {
   const phase = useStudio((s) => s.phase);
   const selection = useStudio((s) => s.selection);
+  const selectedDeviceId = useStudio((s) => s.selectedDeviceId);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const isDatabase = useStudio((s) => {
     if (!s.selection) return false;
@@ -25,6 +26,11 @@ export default function App() {
   useEffect(() => {
     connect();
   }, []);
+
+  // Trocar de device fecha a visão geral — ela pertence ao device anterior.
+  useEffect(() => {
+    setOverviewOpen(false);
+  }, [selectedDeviceId]);
 
   return (
     <div className="flex h-full flex-col">

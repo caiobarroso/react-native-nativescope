@@ -94,7 +94,14 @@ export function startFakeRuntime(options: {
   sessionToken: string;
   /** true: semente GB-scale — 100k linhas SQLite, 5k chaves, valores de MB. */
   scale?: boolean;
+  /** Plataforma reportada no hello; default "android". Um segundo fake com
+   * --platform ios testa multi-device. */
+  platform?: string;
+  /** Id do device; default derivado da plataforma. */
+  deviceId?: string;
 }) {
+  const platform = options.platform ?? "android";
+  const deviceId = options.deviceId ?? `fake-${platform}`;
   const adapter = createMemoryAdapter({
     providerId: "async-storage",
     label: "AsyncStorage",
@@ -145,7 +152,12 @@ export function startFakeRuntime(options: {
   const runtime = startRuntime({
     url: `ws://127.0.0.1:${options.port}`,
     sessionToken: options.sessionToken,
-    client: { name: "app-playground (fake)", platform: "android" },
+    client: {
+      name: "app-playground (fake)",
+      platform,
+      deviceId,
+      label: platform === "ios" ? "iOS" : platform === "android" ? "Android" : platform,
+    },
     createWebSocket: (url) => new WebSocket(url) as unknown as WebSocketLike,
   });
 

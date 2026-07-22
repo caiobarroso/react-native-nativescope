@@ -12,7 +12,7 @@ const TOKEN = "test-token";
 let server: { close: () => void } | null = null;
 let port = 0;
 
-async function startServer(): Promise<void> {
+async function startServer(extra?: { heartbeatIntervalMs?: number }): Promise<void> {
   port = 20000 + Math.floor(Math.random() * 10000);
   server = await startLocalServer({
     port,
@@ -20,6 +20,7 @@ async function startServer(): Promise<void> {
     uiDir: null,
     project: { name: "test", flavor: "unknown", providers: [] },
     log: () => {},
+    ...extra,
   });
 }
 
@@ -28,9 +29,9 @@ afterEach(() => {
   server = null;
 });
 
-function connect(): Promise<WebSocket> {
+function connect(options?: { autoPong?: boolean }): Promise<WebSocket> {
   return new Promise((resolveWs, rejectWs) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, options);
     ws.once("open", () => resolveWs(ws));
     ws.once("error", rejectWs);
   });
@@ -46,13 +47,13 @@ function nextMessage(ws: WebSocket): Promise<AnyMessage> {
   });
 }
 
-function hello(role: "studio" | "runtime", token = TOKEN): AnyMessage {
+function hello(role: "studio" | "runtime", token = TOKEN, deviceId?: string): AnyMessage {
   return {
     kind: "hello",
     protocolVersion: PROTOCOL_VERSION,
     role,
     sessionToken: token,
-    client: { name: "test", platform: "node" },
+    client: { name: "test", platform: "node", ...(deviceId ? { deviceId } : {}) },
   };
 }
 
@@ -98,19 +99,22 @@ describe("local server", () => {
     await nextMessage(studio); // ack
 
     const runtime = await connect();
-    runtime.send(serializeMessage(hello("runtime")));
+    runtime.send(serializeMessage(hello("runtime", TOKEN, "dev-a")));
     await nextMessage(runtime); // ack
 
-    // studio recebe session.connected quando o runtime chega
+    // studio recebe session.connected (com o deviceId) quando o runtime chega
     const connected = await nextMessage(studio);
     expect(connected.kind).toBe("event");
-    if (connected.kind === "event") expect(connected.type).toBe("session.connected");
+    if (connected.kind === "event" && connected.type === "session.connected") {
+      expect(connected.payload.deviceId).toBe("dev-a");
+    }
 
-    // command flui para o runtime
+    // command flui para o runtime (roteado pelo deviceId)
     const commandFromStudio: AnyMessage = {
       kind: "command",
       protocolVersion: PROTOCOL_VERSION,
       requestId: "r1",
+      deviceId: "dev-a",
       type: "provider.list",
       payload: {},
     };
@@ -152,7 +156,7 @@ describe("local server", () => {
     const connectedA = nextMessage(studioA);
     const connectedB = nextMessage(studioB);
     const runtime = await connect();
-    runtime.send(serializeMessage(hello("runtime")));
+    runtime.send(serializeMessage(hello("runtime", TOKEN, "dev-a")));
     await nextMessage(runtime);
     expect((await connectedA).kind).toBe("event");
     expect((await connectedB).kind).toBe("event");
@@ -161,6 +165,7 @@ describe("local server", () => {
       kind: "command",
       protocolVersion: PROTOCOL_VERSION,
       requestId: "req-1",
+      deviceId: "dev-a",
       type: "provider.list",
       payload: {},
     };
@@ -217,6 +222,7 @@ describe("local server", () => {
       kind: "command",
       protocolVersion: PROTOCOL_VERSION,
       requestId: "stream-request",
+      deviceId: "dev-a",
       type: "key-value.export",
       payload: { providerId: "mmkv", instanceId: "cache" },
     };
@@ -249,8 +255,15 @@ describe("local server", () => {
         result: { streamId: "stream-b" },
       }),
     );
-    await streamResultA;
-    await streamResultB;
+    // O id que chega no studio é GLOBAL (reescrito pelo bridge), não o local.
+    const resA = await streamResultA;
+    const resB = await streamResultB;
+    if (resA.kind !== "command-result" || !resA.ok) throw new Error("expected result A");
+    if (resB.kind !== "command-result" || !resB.ok) throw new Error("expected result B");
+    const globalA = (resA.result as { streamId: string }).streamId;
+    const globalB = (resB.result as { streamId: string }).streamId;
+    expect(globalA).not.toBe("stream-a");
+    expect(globalA).not.toBe(globalB);
 
     const chunkA = nextMessage(studioA);
     const chunkB = nextMessage(studioB);
@@ -272,8 +285,8 @@ describe("local server", () => {
         payload: { streamId: "stream-b", seq: 0, data: "B" },
       }),
     );
-    expect(await chunkA).toMatchObject({ type: "stream.chunk", payload: { streamId: "stream-a" } });
-    expect(await chunkB).toMatchObject({ type: "stream.chunk", payload: { streamId: "stream-b" } });
+    expect(await chunkA).toMatchObject({ type: "stream.chunk", payload: { streamId: globalA, data: "A" } });
+    expect(await chunkB).toMatchObject({ type: "stream.chunk", payload: { streamId: globalB, data: "B" } });
 
     studioA.close();
     studioB.close();
@@ -299,5 +312,169 @@ describe("local server", () => {
     if (event.kind === "event") expect(event.type).toBe("session.disconnected");
 
     studio.close();
+  });
+});
+
+describe("heartbeat", () => {
+  it("derruba runtime que não responde ao ping (conexão meia-aberta)", async () => {
+    await startServer({ heartbeatIntervalMs: 50 });
+
+    // autoPong:false simula device morto/dormindo: recebe o ping e não responde.
+    const runtime = await connect({ autoPong: false });
+    runtime.send(serializeMessage(hello("runtime")));
+    await nextMessage(runtime); // hello-ack
+
+    // Sem pong nem tráfego: em poucos ticks o servidor faz terminate().
+    await new Promise<void>((resolve) => runtime.once("close", () => resolve()));
+    expect(runtime.readyState).toBe(WebSocket.CLOSED);
+  });
+
+  it("mantém runtime que responde ao ping (auto-pong padrão)", async () => {
+    await startServer({ heartbeatIntervalMs: 50 });
+
+    const runtime = await connect(); // auto-pong ligado (padrão do ws)
+    runtime.send(serializeMessage(hello("runtime")));
+    await nextMessage(runtime); // hello-ack
+
+    // Vários ticks sem tráfego, só o auto-pong nativo: deve seguir aberto.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(runtime.readyState).toBe(WebSocket.OPEN);
+    runtime.close();
+  });
+});
+
+describe("multi-device", () => {
+  it("dois devices coexistem e comandos roteiam por deviceId", async () => {
+    await startServer();
+
+    const studio = await connect();
+    studio.send(serializeMessage(hello("studio")));
+    await nextMessage(studio); // ack
+
+    const runtimeA = await connect();
+    runtimeA.send(serializeMessage(hello("runtime", TOKEN, "dev-a")));
+    await nextMessage(runtimeA); // ack
+    const connA = await nextMessage(studio);
+
+    const runtimeB = await connect();
+    runtimeB.send(serializeMessage(hello("runtime", TOKEN, "dev-b")));
+    await nextMessage(runtimeB); // ack
+    const connB = await nextMessage(studio);
+
+    // Dois session.connected distintos — nenhum expulsou o outro.
+    expect(connA.kind).toBe("event");
+    if (connA.kind === "event" && connA.type === "session.connected") {
+      expect(connA.payload.deviceId).toBe("dev-a");
+    }
+    expect(connB.kind).toBe("event");
+    if (connB.kind === "event" && connB.type === "session.connected") {
+      expect(connB.payload.deviceId).toBe("dev-b");
+    }
+
+    // Comando p/ dev-b chega no runtimeB (roteado por deviceId), e o resultado volta.
+    const onB = nextMessage(runtimeB);
+    studio.send(
+      serializeMessage({
+        kind: "command",
+        protocolVersion: PROTOCOL_VERSION,
+        requestId: "rb",
+        deviceId: "dev-b",
+        type: "provider.list",
+        payload: {},
+      }),
+    );
+    const fwdB = await onB;
+    expect(fwdB.kind).toBe("command");
+    if (fwdB.kind !== "command") throw new Error("expected command");
+    expect(fwdB.deviceId).toBe("dev-b");
+
+    const resB = nextMessage(studio);
+    runtimeB.send(
+      serializeMessage({
+        kind: "command-result",
+        requestId: fwdB.requestId,
+        ok: true,
+        result: { providers: [] },
+      }),
+    );
+    expect(await resB).toEqual({
+      kind: "command-result",
+      requestId: "rb",
+      ok: true,
+      result: { providers: [] },
+    });
+
+    studio.close();
+    runtimeA.close();
+    runtimeB.close();
+  });
+
+  it("self-replace: mesmo deviceId reconecta e o socket antigo cai", async () => {
+    await startServer();
+
+    const studio = await connect();
+    studio.send(serializeMessage(hello("studio")));
+    await nextMessage(studio);
+
+    const first = await connect();
+    first.send(serializeMessage(hello("runtime", TOKEN, "dev-x")));
+    await nextMessage(first); // ack
+    await nextMessage(studio); // session.connected
+
+    // Segundo runtime com o MESMO deviceId → o servidor fecha só o socket velho dele.
+    const firstClosed = new Promise<void>((resolve) => first.once("close", () => resolve()));
+    const second = await connect();
+    second.send(serializeMessage(hello("runtime", TOKEN, "dev-x")));
+    await nextMessage(second); // ack
+    await firstClosed;
+    expect(first.readyState).toBe(WebSocket.CLOSED);
+
+    studio.close();
+    second.close();
+  });
+
+  it("disconnect é por-device: um cai, o outro segue roteando", async () => {
+    await startServer();
+
+    const studio = await connect();
+    studio.send(serializeMessage(hello("studio")));
+    await nextMessage(studio);
+
+    const runtimeA = await connect();
+    runtimeA.send(serializeMessage(hello("runtime", TOKEN, "dev-a")));
+    await nextMessage(runtimeA);
+    await nextMessage(studio); // connected A
+
+    const runtimeB = await connect();
+    runtimeB.send(serializeMessage(hello("runtime", TOKEN, "dev-b")));
+    await nextMessage(runtimeB);
+    await nextMessage(studio); // connected B
+
+    // A cai → o studio recebe disconnected SÓ de dev-a.
+    const disc = nextMessage(studio);
+    runtimeA.close();
+    const discEvent = await disc;
+    expect(discEvent.kind).toBe("event");
+    if (discEvent.kind === "event" && discEvent.type === "session.disconnected") {
+      expect(discEvent.payload.deviceId).toBe("dev-a");
+    }
+
+    // B segue roteando normalmente.
+    const onB = nextMessage(runtimeB);
+    studio.send(
+      serializeMessage({
+        kind: "command",
+        protocolVersion: PROTOCOL_VERSION,
+        requestId: "rb2",
+        deviceId: "dev-b",
+        type: "provider.list",
+        payload: {},
+      }),
+    );
+    const fwdB = await onB;
+    expect(fwdB.kind).toBe("command");
+
+    studio.close();
+    runtimeB.close();
   });
 });

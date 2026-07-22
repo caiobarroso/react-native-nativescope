@@ -79,6 +79,61 @@ describe("parseMessage", () => {
     const result = parseMessage(serializeMessage(event));
     expect(result.ok).toBe(true);
   });
+
+  it("faz roundtrip de um hello com deviceId e label (multi-device)", () => {
+    const hello: AnyMessage = {
+      kind: "hello",
+      protocolVersion: PROTOCOL_VERSION,
+      role: "runtime",
+      sessionToken: "abc123",
+      client: { name: "react-native-app", platform: "ios", deviceId: "d-abc", label: "iOS" },
+    };
+    const result = parseMessage(serializeMessage(hello));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.message).toEqual(hello);
+  });
+
+  it("carrega deviceId no command (roteamento stateless)", () => {
+    const command: AnyMessage = {
+      kind: "command",
+      protocolVersion: PROTOCOL_VERSION,
+      requestId: "req-1",
+      deviceId: "d-abc",
+      type: "provider.list",
+      payload: {},
+    };
+    const result = parseMessage(serializeMessage(command));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.message).toEqual(command);
+  });
+
+  it("carrega deviceId no envelope e no payload de session.connected", () => {
+    const event: AnyMessage = {
+      kind: "event",
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp: Date.now(),
+      deviceId: "d-abc",
+      type: "session.connected",
+      payload: {
+        sessionId: "session-1",
+        client: { name: "react-native-app", platform: "android" },
+        providers: [],
+        deviceId: "d-abc",
+        label: "Android",
+      },
+    };
+    const result = parseMessage(serializeMessage(event));
+    expect(result.ok).toBe(true);
+    if (
+      result.ok &&
+      result.message.kind === "event" &&
+      result.message.type === "session.connected"
+    ) {
+      expect(result.message.deviceId).toBe("d-abc");
+      expect(result.message.payload.deviceId).toBe("d-abc");
+      expect(result.message.payload.label).toBe("Android");
+    }
+  });
 });
 
 describe("commandMessageSchema", () => {

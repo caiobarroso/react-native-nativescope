@@ -1,9 +1,11 @@
 import { useStudio } from "../lib/store.ts";
+import { switchDevice } from "../lib/studio-client.ts";
 import { SnapshotTool } from "./SnapshotTool.tsx";
 
 export function Header() {
   const phase = useStudio((s) => s.phase);
-  const appClient = useStudio((s) => s.appClient);
+  const devices = useStudio((s) => s.devices);
+  const selectedDeviceId = useStudio((s) => s.selectedDeviceId);
 
   return (
     <header className="flex h-11 items-center gap-3 border-b border-border bg-surface px-4">
@@ -23,11 +25,38 @@ export function Header() {
 
       <div className="ml-auto flex items-center gap-3">
         {phase === "connected" && <SnapshotTool />}
-        {appClient && (
+        {devices.length === 1 && (
           <span className="text-text-muted">
-            {appClient.name}
-            <span className="text-text-subtle"> · {appClient.platform}</span>
+            {devices[0]!.name}
+            <span className="text-text-subtle"> · {devices[0]!.label}</span>
           </span>
+        )}
+        {devices.length >= 2 && (
+          <div
+            role="tablist"
+            aria-label="Connected devices"
+            className="flex items-center gap-0.5 rounded-md bg-surface-sunken p-0.5"
+          >
+            {devices.map((d) => {
+              const active = d.deviceId === selectedDeviceId;
+              return (
+                <button
+                  key={d.deviceId}
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => switchDevice(d.deviceId)}
+                  title={`${d.name} · ${d.label}`}
+                  className={`rounded px-2 py-1 text-[12px] transition-colors ${
+                    active
+                      ? "bg-surface-raised text-text shadow-sm"
+                      : "text-text-muted hover:text-text"
+                  }`}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
         )}
         <span className="flex items-center gap-1.5">
           <span

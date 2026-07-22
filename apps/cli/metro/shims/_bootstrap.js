@@ -24,6 +24,26 @@ function detectPlatform() {
   }
 }
 
+// Id estável por-launch deste device. NÃO persiste de propósito: persistir
+// sujaria o storage inspecionado. O heartbeat do servidor limpa a entrada
+// antiga após um full-reload, e o desktop reata a navegação por (name,
+// platform). Dois emuladores da mesma plataforma ganham ids distintos → não
+// brigam por um slot.
+let deviceId = null;
+function getDeviceId() {
+  if (deviceId === null) {
+    deviceId = "d-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  }
+  return deviceId;
+}
+
+function deviceLabel(platform) {
+  if (platform === "ios") return "iOS";
+  if (platform === "android") return "Android";
+  if (platform === "web") return "Web";
+  return platform;
+}
+
 function loadInspectorConfig() {
   const config = configModule && (configModule.default || configModule);
   return typeof config === "function" ? config() : config;
@@ -298,10 +318,16 @@ function getRuntime() {
     return null;
   }
   if (!runtime) {
+    const platform = detectPlatform();
     runtime = rnsi.startRuntime({
       url: `ws://${resolveInspectorHost()}:${session.port}`,
       sessionToken: session.token,
-      client: { name: "react-native-app", platform: detectPlatform() },
+      client: {
+        name: "react-native-app",
+        platform,
+        deviceId: getDeviceId(),
+        label: deviceLabel(platform),
+      },
     });
     installConfigOnce();
   }

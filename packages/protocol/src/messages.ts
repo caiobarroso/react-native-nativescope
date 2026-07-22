@@ -25,6 +25,11 @@ export const helloMessageSchema = z.object({
   client: z.object({
     name: z.string(),
     platform: z.string(),
+    /** Id estável por-device (o shim gera; o roteamento multi-device usa como
+     * chave). Opcional: shim antigo não manda e o servidor sintetiza um. */
+    deviceId: z.string().optional(),
+    /** Rótulo legível pro seletor (ex. "iOS", "Android"). */
+    label: z.string().optional(),
   }),
 });
 
@@ -47,6 +52,9 @@ const commandBase = {
   kind: z.literal("command"),
   protocolVersion: z.number().int().positive(),
   requestId: z.string().min(1),
+  /** Device-alvo do comando (roteamento stateless no bridge). Opcional: sem
+   * ele o bridge não tem pra quem rotear e descarta — o Studio sempre manda. */
+  deviceId: z.string().optional(),
 } as const;
 
 const kvTarget = {
@@ -285,6 +293,9 @@ const eventBase = {
   kind: z.literal("event"),
   protocolVersion: z.number().int().positive(),
   timestamp: z.number(),
+  /** Device de origem, carimbado pelo bridge no relay. Deixa o Studio filtrar
+   * eventos do device selecionado. Opcional (eventos internos podem não ter). */
+  deviceId: z.string().optional(),
 } as const;
 
 export const eventMessageSchema = z.discriminatedUnion("type", [
@@ -355,12 +366,16 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
       sessionId: z.string(),
       client: z.object({ name: z.string(), platform: z.string() }),
       providers: z.array(providerDescriptorSchema),
+      /** Id e rótulo do device — no payload (não em client) porque o Zod
+       * descarta chaves desconhecidas; o Studio lê daqui. */
+      deviceId: z.string().optional(),
+      label: z.string().optional(),
     }),
   }),
   z.object({
     ...eventBase,
     type: z.literal("session.disconnected"),
-    payload: z.object({ sessionId: z.string() }),
+    payload: z.object({ sessionId: z.string(), deviceId: z.string().optional() }),
   }),
 ]);
 

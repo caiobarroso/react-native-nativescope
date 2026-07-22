@@ -101,9 +101,18 @@ async function main(): Promise<void> {
   const lan = flag("lan");
 
   if (args[0] === "fake-runtime") {
-    // Uso interno/testes: conecta um app falso num serviço já de pé.
-    startFakeRuntime({ port, sessionToken, scale: flag("fake-scale") });
-    console.log(`fake-runtime connecting to ws://127.0.0.1:${port}`);
+    // Uso interno/testes: conecta um app falso num serviço já de pé. Com
+    // --platform ios (+ um `--fake` android noutro terminal) testa multi-device.
+    const platform = option("platform");
+    const deviceId = option("device-id");
+    startFakeRuntime({
+      port,
+      sessionToken,
+      scale: flag("fake-scale"),
+      ...(platform ? { platform } : {}),
+      ...(deviceId ? { deviceId } : {}),
+    });
+    console.log(`fake-runtime (${platform ?? "android"}) connecting to ws://127.0.0.1:${port}`);
     return;
   }
 

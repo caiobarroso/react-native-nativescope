@@ -14,7 +14,8 @@ export interface WebSocketLike {
 export interface TransportOptions {
   url: string;
   createWebSocket?: (url: string) => WebSocketLike;
-  /** Backoff: 500ms, 1s, 2s, 4s, teto de 5s. Reconecta para sempre — a CLI pode subir depois do app. */
+  /** Backoff com half-jitter, teto de 5s; só amortece de fato após STABLE_MS
+   * de conexão estável. Reconecta para sempre — a CLI pode subir depois do app. */
   onMessage: (raw: string) => void;
   onOpen: () => void;
   onClose: () => void;
@@ -26,6 +27,13 @@ export interface Transport {
   isConnected(): boolean;
 }
 
+/**
+ * Tempo que uma conexão precisa ficar aberta para o backoff considerá-la
+ * estável e zerar o `attempt`. Curto o bastante para reconexões legítimas,
+ * longo o bastante para o flap (open→morte em ~500ms) não resetar nada.
+ */
+const STABLE_MS = 3000;
+
 export function createTransport(options: TransportOptions): Transport {
   const factory =
     options.createWebSocket ??
@@ -36,6 +44,10 @@ export function createTransport(options: TransportOptions): Transport {
   let closedByUser = false;
   let attempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Só zera o backoff quando a conexão PROVA estabilidade (ficou aberta
+  // STABLE_MS). Um socket que abre e morre logo — o caso do flap — não conta
+  // como sucesso, então o attempt segue subindo até o teto.
+  let stableTimer: ReturnType<typeof setTimeout> | null = null;
 
   function connect(): void {
     if (closedByUser) return;
@@ -48,7 +60,12 @@ export function createTransport(options: TransportOptions): Transport {
         return;
       }
       connected = true;
-      attempt = 0;
+      // Estabilidade em vez de reset imediato: só zera o backoff se a conexão
+      // sobreviver STABLE_MS. Ver a declaração de stableTimer.
+      stableTimer = setTimeout(() => {
+        stableTimer = null;
+        attempt = 0;
+      }, STABLE_MS);
       options.onOpen();
     });
 
@@ -60,6 +77,12 @@ export function createTransport(options: TransportOptions): Transport {
     const scheduleReconnect = () => {
       if (socket !== ws) return; // socket antigo, ignora
       socket = null;
+      // A conexão caiu: cancela o reset pendente. Se caiu antes de STABLE_MS,
+      // o attempt NÃO zera — o backoff sobe e amortece o flap.
+      if (stableTimer) {
+        clearTimeout(stableTimer);
+        stableTimer = null;
+      }
       // Some WebSocket implementations emit `error` without closing the
       // underlying connection. Close it explicitly before replacing it so a
       // reconnect cycle cannot leave stale native sockets behind.
@@ -73,7 +96,10 @@ export function createTransport(options: TransportOptions): Transport {
         options.onClose();
       }
       if (closedByUser || reconnectTimer) return;
-      const delay = Math.min(500 * 2 ** attempt, 5000);
+      // Half-jitter: desincroniza dois devices que reconectam em lockstep,
+      // evitando reconexão em manada.
+      const base = Math.min(500 * 2 ** attempt, 5000);
+      const delay = base / 2 + Math.random() * (base / 2);
       attempt += 1;
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -94,6 +120,7 @@ export function createTransport(options: TransportOptions): Transport {
     close() {
       closedByUser = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (stableTimer) clearTimeout(stableTimer);
       socket?.close();
     },
     isConnected() {
