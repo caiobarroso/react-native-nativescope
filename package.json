@@ -7,9 +7,11 @@
     "dev": "pnpm --filter @rnsi/desktop dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "capture:screenshots": "node scripts/capture-screenshots.mjs"
   },
   "devDependencies": {
+    "playwright-core": "^1.49.1",
     "typescript": "~5.8.3"
   },
   "packageManager": "pnpm@10.4.1",

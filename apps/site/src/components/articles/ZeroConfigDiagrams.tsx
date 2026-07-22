@@ -209,7 +209,7 @@ export function ReleaseBoundaryDiagram() {
 export function OptionalConfigDiagram() {
   return (
     <DiagramFigure
-      caption={<><strong>Fig. 5</strong> Configuration describes behavior NativeScope cannot infer. It never becomes an inventory of the app's storage.</>}
+      caption={<><strong>Fig. 5</strong> Configuration describes behavior NativeScope cannot infer. It never becomes an inventory of the app&apos;s storage.</>}
     >
       <svg viewBox="0 0 720 280" role="img" aria-label="Storage providers, namespaces and database names are inferred automatically. An optional NativeScope config is reserved for behavior such as cache invalidation after dashboard edits.">
         <text x="28" y="28" data-svg-eyebrow data-svg-muted-fill>AUTOMATIC · DEFAULT PATH</text>

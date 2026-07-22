@@ -37,7 +37,7 @@ const rows = [
   },
   {
     label: "Product shape",
-    native: "Dedicated local storage studio",
+    native: "One local DevTools environment, storage module first",
     rozenite: "DevTools plugin platform with a broader plugin ecosystem",
   },
 ];
@@ -169,19 +169,20 @@ useRozeniteSqlitePlugin({ adapters })`}</code></pre>
       <section data-when-to-choose>
         <article>
           <p data-section-kicker>Choose NativeScope when</p>
-          <h2>Storage is the job.</h2>
+          <h2>You want the quiet debugger that keeps expanding.</h2>
           <p className="mt-3">
-            You want one focused studio, automatic discovery, bidirectional editing and the smallest
-            possible integration surface for AsyncStorage, MMKV and SQLite.
+            You want one local command, no account, no cloud, no ceremony. Storage is the first
+            module because it was the sharpest daily pain; the product direction is a complete
+            React Native debugging room where new modules appear without new setup rituals.
           </p>
         </article>
         <article>
           <p data-section-kicker>Choose Rozenite when</p>
-          <h2>The plugin platform is the job.</h2>
+          <h2>You want to assemble the room yourself.</h2>
           <p className="mt-3">
-            You want storage alongside a wider React Native DevTools ecosystem. Their official
-            directory includes navigation, network, Redux, performance, forms and agent tools, and
-            the Storage plugin also documents SecureStore and snapshot import/export.
+            You prefer a broad DevTools platform where each capability is registered explicitly.
+            That model gives teams direct control over storage, navigation, network, Redux,
+            performance, forms and agent tools inside the same plugin ecosystem.
           </p>
         </article>
       </section>

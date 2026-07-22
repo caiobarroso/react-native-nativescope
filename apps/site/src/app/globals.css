@@ -854,7 +854,8 @@ summary {
   border: 1px solid var(--border-strong);
   background: var(--surface-raised);
 }
-[data-founder-photo] { aspect-ratio: 4 / 5; display: grid; place-items: center; border: 1px solid var(--border); background-color: var(--surface-sunken); background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 18px 18px; }
+[data-founder-photo] { position: relative; aspect-ratio: 4 / 5; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--border); background-color: var(--surface-sunken); background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 18px 18px; }
+[data-founder-photo] img { object-fit: cover; }
 [data-founder-photo] span { color: var(--text-subtle); font: 22px var(--site-mono); }
 [data-founder-copy] > svg { margin-bottom: 18px; color: var(--accent); }
 [data-founder-copy] h2 { font-size: 34px; }
@@ -864,6 +865,9 @@ summary {
 [data-founder-signature] strong { font-size: 13px; }
 [data-founder-signature] span { color: var(--text-subtle); font-size: 11px; }
 [data-founder-signature] a { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 5px; color: var(--text-muted); }
+[data-founder-signature] [data-founder-socials] { display: flex; align-items: center; gap: 8px; }
+[data-founder-socials] a:hover { color: var(--text); border-color: var(--border-strong); }
+[data-x-logo] { color: currentColor; font: 700 13px/1 var(--site-sans); }
 
 /* FAQ */
 /* Section e lista ocupam a largura cheia (--page-max), como Features/How/Journal.

@@ -1,10 +1,11 @@
 import { Github, Quote } from "lucide-react";
+import Image from "next/image";
 
 export function Founder() {
   return (
     <section data-founder aria-labelledby="founder-title">
       <div data-founder-photo aria-hidden>
-        <span>CB</span>
+        <Image src="/me/caio.jpeg" alt="" fill sizes="(max-width: 768px) 100vw, 420px" />
       </div>
       <div data-founder-copy>
         <Quote size={22} aria-hidden />
@@ -20,14 +21,24 @@ export function Founder() {
         </p>
         <div data-founder-signature>
           <div><strong>Caio Barroso</strong><span>Creator of NativeScope</span></div>
-          <a
-            href="https://github.com/caiobarroso"
-            target="_blank"
-            rel="noreferrer noopener"
-            aria-label="Caio Barroso on GitHub"
-          >
-            <Github size={18} aria-hidden />
-          </a>
+          <div data-founder-socials>
+            <a
+              href="https://github.com/caiobarroso"
+              target="_blank"
+              rel="noreferrer noopener"
+              aria-label="Caio Barroso on GitHub"
+            >
+              <Github size={18} aria-hidden />
+            </a>
+            <a
+              href="#"
+              target="_blank"
+              rel="noreferrer noopener"
+              aria-label="Caio Barroso on X"
+            >
+              <span data-x-logo aria-hidden="true">X</span>
+            </a>
+          </div>
         </div>
       </div>
     </section>

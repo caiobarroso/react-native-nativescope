@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { getAllSlugs, getDoc, getFirstSlug, getNeighbours } from "@/lib/content";
-import { useMDXComponents } from "@/mdx-components";
+import { useMDXComponents as getMDXComponents } from "@/mdx-components";
 import { OnThisPage } from "@/components/site/OnThisPage";
 import rehypePrettyCode from "rehype-pretty-code";
 import rehypeSlug from "rehype-slug";
@@ -73,7 +73,7 @@ export default async function DocPage({ params }: PageProps) {
         <div data-doc-body>
           <MDXRemote
             source={doc.body}
-            components={useMDXComponents()}
+            components={getMDXComponents()}
             options={{
               mdxOptions: {
                 remarkPlugins: [remarkGfm],

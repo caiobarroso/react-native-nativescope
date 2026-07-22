@@ -753,7 +753,10 @@ function JsonVisualExplorer({
     setSelectedItems((c) => {
       const next = new Set(c);
       const checked = visibleArrayKeys.length > 0 && visibleArrayKeys.every((k) => next.has(k));
-      for (const k of visibleArrayKeys) checked ? next.delete(k) : next.add(k);
+      for (const k of visibleArrayKeys) {
+        if (checked) next.delete(k);
+        else next.add(k);
+      }
       return next;
     });
   }
@@ -761,7 +764,10 @@ function JsonVisualExplorer({
     setSelectedItems((c) => {
       const next = new Set(c);
       const checked = visibleObjectKeys.length > 0 && visibleObjectKeys.every((k) => next.has(k));
-      for (const k of visibleObjectKeys) checked ? next.delete(k) : next.add(k);
+      for (const k of visibleObjectKeys) {
+        if (checked) next.delete(k);
+        else next.add(k);
+      }
       return next;
     });
   }
