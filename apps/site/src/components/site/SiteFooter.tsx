@@ -22,7 +22,7 @@ export function SiteFooter() {
             <Link href="/journal">Journal</Link>
             <Link href="/docs/privacy">Privacy</Link>
             <a
-              href="https://github.com/caiobarroso/react-native-storage-inspector"
+              href="https://github.com/caiobarroso/react-native-nativescope"
               target="_blank"
               rel="noreferrer noopener"
             >

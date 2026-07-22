@@ -24,7 +24,7 @@ export function Hero({ content }: { content: LandingContent["hero"] }) {
             Getting Started
           </Button>
           <Button
-            href="https://github.com/caiobarroso/react-native-storage-inspector"
+            href="https://github.com/caiobarroso/react-native-nativescope"
             variant="secondary"
             size="lg"
             arrow={false}

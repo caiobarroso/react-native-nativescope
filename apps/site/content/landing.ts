@@ -53,7 +53,7 @@ export const landing: LandingContent = {
       "NativeScope is a plug-and-play studio for inspecting and editing AsyncStorage, MMKV and SQLite while your app runs. No provider, root component wrapper or instance registry.",
     install: "npx nativescope",
     primaryCta: { label: "Get started", href: "/docs/quickstart" },
-    secondaryCta: { label: "View on GitHub", href: "https://github.com/caiobarroso/react-native-storage-inspector" },
+    secondaryCta: { label: "View on GitHub", href: "https://github.com/caiobarroso/react-native-nativescope" },
   },
 
   features: [
