@@ -14,6 +14,7 @@ import {
   type HelloMessage,
 } from "@rnsi/protocol";
 import type { DetectedProject } from "./detect.ts";
+import { createThrottledLogger } from "./log-throttle.ts";
 
 export interface LocalServerOptions {
   port: number;
@@ -29,6 +30,18 @@ export interface LocalServerOptions {
   host?: string;
   /** Intervalo do heartbeat em ms; default HEARTBEAT_INTERVAL_MS. Exposto p/ testes. */
   heartbeatIntervalMs?: number;
+  /** Janela de agregação dos logs de rejeição; default DEFAULT_LOG_WINDOW_MS. */
+  logWindowMs?: number;
+}
+
+/** Quem está do outro lado de uma conexão recusada — sem isso, toda rejeição
+ * era uma linha anônima e aba antiga do Studio ficava indistinguível de device
+ * com bundle velho. Nunca inclui o token recebido. */
+function describePeer(req: IncomingMessage, hello: HelloMessage | null): string {
+  const remote = (req.socket.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
+  const origin = req.headers.origin;
+  const who = hello ? `${hello.role} ${hello.client.name} (${hello.client.platform})` : "unknown client";
+  return origin ? `${who} from ${remote}, origin ${origin}` : `${who} from ${remote}`;
 }
 
 interface Session {
@@ -92,6 +105,11 @@ export function startLocalServer(options: LocalServerOptions) {
       }
     }
   }
+
+  // Rejeições são disparadas por clientes que NÃO controlamos (aba antiga,
+  // bundle velho, outro projeto na mesma porta). Sem agregação, um único
+  // cliente inválido enche o terminal sozinho. Ver log-throttle.ts.
+  const rejectionLog = createThrottledLogger(log, options.logWindowMs);
 
   const studios = new Set<Session>();
   // Runtimes vivos, keyed por deviceId (estável entre reconexões). Substitui o
@@ -231,14 +249,18 @@ export function startLocalServer(options: LocalServerOptions) {
     // Origin ausente = cliente não-browser (runtime RN, Node) — segue para
     // o handshake, onde o token decide.
     if (origin && !allowedOrigins.has(origin)) {
-      log(`ws rejected: origin ${origin} not in allowlist`);
+      const remote = (req.socket.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
+      rejectionLog.log(
+        `origin ${origin} ${remote}`,
+        `ws rejected: origin ${origin} not in allowlist (from ${remote})`,
+      );
       socket.destroy();
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
   });
 
-  wss.on("connection", (ws: WebSocket) => {
+  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     let session: Session | null = null;
     let role: "studio" | "runtime" | null = null;
 
@@ -253,8 +275,22 @@ export function startLocalServer(options: LocalServerOptions) {
       if (!session) ws.close();
     }, 5000);
 
-    function reject(code: Parameters<typeof protocolError>[0], message: string): void {
-      log(`handshake rejected (${code}): ${message}`);
+    function reject(
+      code: Parameters<typeof protocolError>[0],
+      message: string,
+      hello: HelloMessage | null = null,
+    ): void {
+      const peer = describePeer(req, hello);
+      // Dica só faz sentido no caso do token: Origin presente = browser, e um
+      // browser com token velho é quase sempre uma aba esquecida aberta.
+      const hint =
+        code === "unauthorized" && req.headers.origin
+          ? " — likely a Studio tab left open from an earlier session; close it and open the Studio URL printed above"
+          : "";
+      rejectionLog.log(
+        `handshake ${code} ${peer}`,
+        `handshake rejected (${code}): ${message} — ${peer}${hint}`,
+      );
       ws.send(
         serializeMessage({ kind: "hello-reject", error: protocolError(code, message) }),
       );
@@ -263,13 +299,14 @@ export function startLocalServer(options: LocalServerOptions) {
 
     function acceptHello(hello: HelloMessage): void {
       if (hello.sessionToken !== sessionToken) {
-        reject("unauthorized", "invalid session token");
+        reject("unauthorized", "invalid session token", hello);
         return;
       }
       if (hello.protocolVersion !== PROTOCOL_VERSION) {
         reject(
           "version-mismatch",
           `Studio uses protocol v${PROTOCOL_VERSION}, but the client uses v${hello.protocolVersion}. Update react-native-nativescope in the project.`,
+          hello,
         );
         return;
       }
@@ -505,6 +542,7 @@ export function startLocalServer(options: LocalServerOptions) {
       resolve({
         close() {
           clearInterval(heartbeat);
+          rejectionLog.stop();
           clearCommandRoutes();
           clearStreamRoutes();
           wss.close();

@@ -12,7 +12,11 @@ const TOKEN = "test-token";
 let server: { close: () => void } | null = null;
 let port = 0;
 
-async function startServer(extra?: { heartbeatIntervalMs?: number }): Promise<void> {
+async function startServer(extra?: {
+  heartbeatIntervalMs?: number;
+  logWindowMs?: number;
+  log?: (line: string) => void;
+}): Promise<void> {
   port = 20000 + Math.floor(Math.random() * 10000);
   server = await startLocalServer({
     port,
@@ -476,5 +480,67 @@ describe("multi-device", () => {
 
     studio.close();
     runtimeB.close();
+  });
+});
+
+describe("ruído de rejeição", () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /** Um handshake que será recusado; resolve quando o reject chega. */
+  async function badHandshake(options?: { origin?: string }): Promise<void> {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, options);
+    await new Promise<void>((res, rej) => {
+      ws.once("open", () => res());
+      ws.once("error", rej);
+    });
+    const rejected = nextMessage(ws);
+    ws.send(serializeMessage(hello("studio", "token-de-outra-execucao")));
+    await rejected;
+    ws.close();
+  }
+
+  it("identifica quem foi recusado e sugere a ação", async () => {
+    const lines: string[] = [];
+    await startServer({ log: (line) => lines.push(line) });
+
+    await badHandshake({ origin: `http://127.0.0.1:${port}` });
+
+    expect(lines).toHaveLength(1);
+    // Sem isto, aba antiga do Studio era indistinguível de device com bundle velho.
+    expect(lines[0]).toContain("unauthorized");
+    expect(lines[0]).toContain("studio test (node)");
+    expect(lines[0]).toContain("127.0.0.1");
+    expect(lines[0]).toContain("origin http://127.0.0.1:");
+    expect(lines[0]).toContain("close it and open the Studio URL");
+    // O token recebido NUNCA aparece no log.
+    expect(lines[0]).not.toContain("token-de-outra-execucao");
+  });
+
+  it("um cliente teimoso rende uma linha por janela, não uma por tentativa", async () => {
+    const lines: string[] = [];
+    await startServer({ log: (line) => lines.push(line), logWindowMs: 60 });
+
+    for (let i = 0; i < 6; i += 1) await badHandshake();
+    expect(lines).toHaveLength(1); // 6 tentativas, 1 linha
+
+    await sleep(120);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("+5 more in the last");
+  });
+
+  it("origem fora da allowlist também é agregada", async () => {
+    const lines: string[] = [];
+    await startServer({ log: (line) => lines.push(line), logWindowMs: 60 });
+
+    for (let i = 0; i < 3; i += 1) {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`, { origin: "http://evil.example" });
+      await new Promise<void>((res) => {
+        ws.once("error", () => res());
+        ws.once("close", () => res());
+      });
+    }
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("origin http://evil.example not in allowlist");
   });
 });
