@@ -159,6 +159,9 @@ function serviceUrl(): string {
   return `ws://${host}`;
 }
 
+/** Recusado pelo serviço: não se reconecta mais nesta aba (ver "hello-reject"). */
+let rejected = false;
+
 export function connect(): void {
   const token = sessionToken();
   const store = useStudio.getState();
@@ -167,7 +170,7 @@ export function connect(): void {
     store.setPhase("no-token");
     return;
   }
-  if (transport) return;
+  if (transport || rejected) return;
 
   store.setPhase("connecting");
 
@@ -184,6 +187,7 @@ export function connect(): void {
     },
     onClose() {
       failInFlight("connection to the app was lost");
+      // setPhase é no-op depois de uma recusa (store.ts) — a tela de erro fica.
       useStudio.getState().setPhase("connecting");
     },
     onMessage(raw) {
@@ -246,7 +250,13 @@ function handleMessage(message: AnyMessage): void {
       return;
 
     case "hello-reject":
-      store.setPhase("no-token");
+      // Estado TERMINAL, igual ao runtime (bootstrap.ts): o token do serviço é
+      // fixo enquanto o processo vive, então retentar com o mesmo token nunca
+      // pode dar certo. Sem fechar o transporte, esta aba reconectava a cada
+      // 2,5–5s para sempre e enchia o terminal da CLI de rejeições anônimas.
+      rejected = true;
+      transport?.close();
+      store.setRejected({ code: message.error.code, message: message.error.message });
       return;
 
     case "command-result": {

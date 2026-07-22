@@ -3,9 +3,21 @@ import type { KeyEntry, ProviderDescriptor, ChangeSource, TableSchema } from "@r
 
 export type Phase =
   | "no-token" // aberto sem a CLI — sem token na URL
+  | "rejected" // o serviço recusou este cliente — estado terminal, ver Rejection
   | "connecting" // conectando ao serviço local
   | "waiting-app" // serviço ok, aguardando o app
   | "connected"; // app conectado
+
+/**
+ * Motivo da recusa no handshake. Guardado porque as causas pedem instruções
+ * diferentes: token de uma execução antiga (feche a aba) não é a mesma coisa
+ * que versão incompatível (atualize o pacote) — e o serviço já manda o texto
+ * certo, que antes era descartado.
+ */
+export interface Rejection {
+  code: string;
+  message: string;
+}
 
 export interface ActivityItem {
   id: number;
@@ -75,6 +87,8 @@ export interface KeyHistoryEntry {
 
 interface StudioState {
   phase: Phase;
+  /** Preenchido junto com phase "rejected"; null no resto do tempo. */
+  rejection: Rejection | null;
   /** Devices (runtimes) conectados agora — o seletor lê daqui. */
   devices: Device[];
   /** Device em foco; comandos e a view inteira são escopados a ele. */
@@ -114,6 +128,8 @@ interface StudioState {
   keyHistory: Record<string, KeyHistoryEntry[]>;
 
   setPhase(phase: Phase): void;
+  /** Entra no estado terminal de recusa. Nenhuma fase posterior o sobrescreve. */
+  setRejected(rejection: Rejection): void;
   upsertDevice(device: Device): void;
   removeDevice(deviceId: string): void;
   /** Troca o device em foco: reseta a view (refetch lazy) — nunca mistura dados
@@ -192,6 +208,7 @@ let nextActivityFocusToken = 1;
 
 export const useStudio = create<StudioState>((set) => ({
   phase: "connecting",
+  rejection: null,
   devices: [],
   selectedDeviceId: null,
   providers: [],
@@ -210,7 +227,12 @@ export const useStudio = create<StudioState>((set) => ({
   recentChanges: {},
   keyHistory: {},
 
-  setPhase: (phase) => set({ phase }),
+  // "rejected" é terminal: o transporte já está fechado e nada pode reescrever
+  // a fase por baixo. Sem esta guarda, o ciclo de reconexão devolvia a tela
+  // para "connecting" a cada tentativa — era o que fazia a UI piscar.
+  setPhase: (phase) => set((state) => (state.phase === "rejected" ? {} : { phase })),
+
+  setRejected: (rejection) => set({ phase: "rejected", rejection }),
 
   upsertDevice: (device) =>
     set((state) => ({

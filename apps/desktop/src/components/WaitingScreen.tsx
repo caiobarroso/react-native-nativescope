@@ -8,6 +8,28 @@ import { useStudio } from "../lib/store.ts";
  */
 export function WaitingScreen() {
   const phase = useStudio((s) => s.phase);
+  const rejection = useStudio((s) => s.rejection);
+
+  if (phase === "rejected") {
+    // O serviço recusou este cliente. Estado terminal: em vez de um spinner
+    // eterno (ou da tela errada de "sem token"), diz a causa real e o que fazer.
+    const staleTab = rejection?.code === "unauthorized";
+    return (
+      <Center>
+        <h1 className="mb-2 text-[15px] font-semibold">
+          {staleTab ? "This tab is from an older session" : "Studio could not connect"}
+        </h1>
+        <p className="max-w-md text-text-muted">
+          {staleTab
+            ? "The local service refused this tab's session token. It usually means the tab was left open from a previous project or a rotated token — close it and open the Studio URL printed by the CLI."
+            : (rejection?.message ?? "The local service refused the connection.")}
+        </p>
+        <p className="mt-4 text-[12px] text-text-subtle">
+          Not reconnecting: retrying with the same token can never succeed.
+        </p>
+      </Center>
+    );
+  }
 
   if (phase === "no-token") {
     return (
