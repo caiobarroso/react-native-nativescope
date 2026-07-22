@@ -705,3 +705,48 @@ describe("runtime", () => {
     runtime.close();
   });
 });
+
+describe("recusa no handshake", () => {
+  it("avisa uma vez e não tenta de novo", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      startRuntime({
+        url: "ws://test",
+        sessionToken: "token-velho",
+        client: { name: "test-runtime", platform: "node" },
+        createWebSocket: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+      });
+      const socket = sockets[0]!;
+      socket.emit("open");
+      socket.emit("message", {
+        data: serializeMessage({
+          kind: "hello-reject",
+          error: {
+            code: "version-mismatch",
+            message: "Update react-native-nativescope in the project.",
+          },
+        }),
+      });
+
+      // A mensagem que o serviço escreveu para ser lida chega ao dev — antes
+      // ela era descartada e o inspector morria em silêncio.
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]?.[0]).toContain("version-mismatch");
+      expect(warn.mock.calls[0]?.[0]).toContain("Update react-native-nativescope");
+
+      // Estado terminal: retentar com o mesmo token nunca daria certo.
+      socket.emit("close");
+      vi.advanceTimersByTime(120_000);
+      expect(sockets).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      warn.mockRestore();
+    }
+  });
+});
