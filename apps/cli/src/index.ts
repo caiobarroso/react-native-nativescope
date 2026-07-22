@@ -1,15 +1,20 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import { DEFAULT_PORT } from "@rnsi/protocol";
 import { detectProject } from "./detect.ts";
 import { startLocalServer } from "./server.ts";
 import { startFakeRuntime } from "./fake-runtime.ts";
 import { ensureMetroConfig, spawnMetro } from "./metro-config.ts";
 import { startAdbWatcher } from "./android.ts";
-import { resolveSessionToken } from "./session-token.ts";
+import {
+  removeSessionFile,
+  resolveSessionToken,
+  writeSessionFile,
+} from "./session-token.ts";
+import { createShutdown } from "./shutdown.ts";
 
 const args = process.argv.slice(2);
 
@@ -46,25 +51,6 @@ function openBrowser(url: string): void {
   });
 }
 
-/**
- * Sessão para o shim do Metro: porta + token viram um módulo JS bundlável,
- * resolvido pelo withNativeScope como "__rnsi_session__". `lan` avisa o shim
- * para descobrir o host pelo scriptURL do Metro (iPhone físico) em vez do
- * loopback.
- */
-function writeSessionFile(projectDir: string, port: number, token: string, lan: boolean): void {
-  try {
-    const dir = join(projectDir, "node_modules", ".cache", "rnsi");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, "session.js"),
-      `"use strict";\nmodule.exports = ${JSON.stringify({ port, token, lan })};\n`,
-    );
-  } catch {
-    /* sem node_modules ainda: o shim vira no-op, nada quebra */
-  }
-}
-
 /** Primeiro IPv4 não-interno — usado só para imprimir a URL de LAN. */
 function lanIp(): string | null {
   for (const addrs of Object.values(networkInterfaces())) {
@@ -81,8 +67,8 @@ function lanIp(): string | null {
  * (mais de um device, depuração não autorizada) em vez de falhar em
  * silêncio. iOS Simulator não precisa de nada disso.
  */
-function watchAndroid(port: number): void {
-  startAdbWatcher(port, (state) => {
+function watchAndroid(port: number): () => void {
+  return startAdbWatcher(port, (state) => {
     if (!state.available) return; // sem adb no PATH: irrelevante fora do Android
     if (state.problem) {
       console.log(`android: ${state.problem}`);
@@ -136,7 +122,7 @@ async function main(): Promise<void> {
     console.log("No supported storage dependency found in package.json (MMKV, AsyncStorage, expo-sqlite).");
   }
 
-  await startLocalServer({
+  const service = await startLocalServer({
     port,
     sessionToken,
     uiDir,
@@ -145,8 +131,34 @@ async function main(): Promise<void> {
     host: lan ? "0.0.0.0" : "127.0.0.1",
   });
 
-  writeSessionFile(projectDir, port, sessionToken, lan);
-  watchAndroid(port);
+  const session = writeSessionFile(projectDir, { port, token: sessionToken, lan });
+  const stopAdbWatcher = watchAndroid(port);
+
+  let metro: ChildProcess | null = null;
+
+  // Encerramento ordenado: sem isto o processo sobrevivia ao Ctrl+C que o Expo
+  // consome como tecla, e seguia segurando o terminal, a porta e o watcher.
+  const shutdown = createShutdown({
+    steps: [
+      { name: "adb", run: stopAdbWatcher },
+      { name: "service", run: () => service.close() },
+      // Sessão fora do disco: sem ela, um `expo start` posterior embutiria
+      // porta e token mortos e o app tentaria reconectar para sempre.
+      { name: "session", run: () => removeSessionFile(session) },
+      {
+        name: "metro",
+        run: () => {
+          if (metro && metro.exitCode === null && !metro.killed) metro.kill("SIGTERM");
+        },
+      },
+    ],
+    exit: (code) => process.exit(code),
+    onStepError: (name, error) =>
+      console.error(`shutdown: ${name} failed (${error instanceof Error ? error.message : String(error)})`),
+  });
+
+  process.on("SIGINT", () => shutdown(0));
+  process.on("SIGTERM", () => shutdown(0));
 
   // Zero config: garante o wrap do Metro e sobe o Metro do projeto junto.
   const isAppProject = project.flavor !== "unknown";
@@ -163,9 +175,15 @@ async function main(): Promise<void> {
       console.log(metroResult.reason);
     }
 
-    if (!flag("no-metro") && metroResult.status !== "manual") {
-      const sessionFile = join(projectDir, "node_modules", ".cache", "rnsi", "session.js");
-      spawnMetro(projectDir, project.flavor, sessionFile);
+    if (!flag("no-metro") && metroResult.status !== "manual" && session) {
+      metro = spawnMetro(projectDir, project.flavor, session.path);
+      // O Metro morrendo (inclusive pelo Ctrl+C que o Expo trata como tecla,
+      // sem sinal nenhum chegar aqui) encerra a CLI junto: o terminal volta ao
+      // prompt em vez de ficar com um serviço órfão logando sozinho.
+      metro?.on("exit", () => {
+        console.log("Metro stopped — shutting down NativeScope.");
+        shutdown(0);
+      });
     }
   }
 

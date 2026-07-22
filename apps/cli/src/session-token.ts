@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -73,4 +73,45 @@ export function resolveSessionToken(
     return { token, source: "ephemeral" };
   }
   return { token, source: "created" };
+}
+
+/**
+ * Sessão para o shim do Metro: porta + token viram um módulo JS bundlável,
+ * resolvido pelo withNativeScope como "__rnsi_session__". `lan` avisa o shim
+ * para descobrir o host pelo scriptURL do Metro (iPhone físico) em vez do
+ * loopback.
+ *
+ * O arquivo é apagado no shutdown (ver removeSessionFile): deixá-lo para trás
+ * fazia todo `expo start` posterior — sem a CLI rodando — embutir porta e token
+ * de uma sessão morta, e o app abrir um ciclo de reconexão eterno contra uma
+ * porta fechada. Ruído invisível, no device do usuário.
+ */
+export function writeSessionFile(
+  projectDir: string,
+  session: { port: number; token: string; lan: boolean },
+): { path: string; content: string } | null {
+  const path = join(projectDir, TOKEN_CACHE_DIR, "session.js");
+  const content = `"use strict";\nmodule.exports = ${JSON.stringify(session)};\n`;
+  try {
+    mkdirSync(join(projectDir, TOKEN_CACHE_DIR), { recursive: true });
+    writeFileSync(path, content);
+    return { path, content };
+  } catch {
+    return null; // sem node_modules ainda: o shim vira no-op, nada quebra
+  }
+}
+
+/**
+ * Remove a sessão — mas só se o arquivo em disco ainda for exatamente o que
+ * escrevemos. Duas CLIs no mesmo projeto (portas diferentes) não podem apagar
+ * a sessão uma da outra ao sair.
+ */
+export function removeSessionFile(written: { path: string; content: string } | null): void {
+  if (!written) return;
+  try {
+    if (readFileSync(written.path, "utf8") !== written.content) return;
+    rmSync(written.path);
+  } catch {
+    /* já sumiu ou está inacessível: nada a fazer */
+  }
 }

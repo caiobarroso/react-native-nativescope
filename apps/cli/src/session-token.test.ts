@@ -1,8 +1,22 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  statSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { TOKEN_CACHE_DIR, resolveSessionToken, tokenFilePath } from "./session-token.ts";
+import {
+  TOKEN_CACHE_DIR,
+  removeSessionFile,
+  resolveSessionToken,
+  tokenFilePath,
+  writeSessionFile,
+} from "./session-token.ts";
 
 const created: string[] = [];
 
@@ -80,5 +94,41 @@ describe("token de sessão", () => {
     const resolved = resolveSessionToken(notADir);
     expect(resolved.source).toBe("ephemeral");
     expect(resolved.token).toMatch(/^[0-9a-f]{32}$/);
+  });
+});
+
+describe("arquivo de sessão do shim", () => {
+  it("grava porta, token e lan no formato que o Metro resolve", () => {
+    const dir = project();
+    const written = writeSessionFile(dir, { port: 4782, token: "abc", lan: false });
+    expect(written).not.toBeNull();
+    expect(readFileSync(written!.path, "utf8")).toContain('{"port":4782,"token":"abc","lan":false}');
+  });
+
+  it("apaga no shutdown para não deixar sessão morta no bundle", () => {
+    const dir = project();
+    const written = writeSessionFile(dir, { port: 4782, token: "abc", lan: false });
+    removeSessionFile(written);
+    expect(existsSync(written!.path)).toBe(false);
+  });
+
+  it("não apaga a sessão de OUTRA instância da CLI", () => {
+    const dir = project();
+    const mine = writeSessionFile(dir, { port: 4782, token: "abc", lan: false });
+    // Outra CLI sobe depois, no mesmo projeto, e sobrescreve o arquivo.
+    writeSessionFile(dir, { port: 5000, token: "abc", lan: false });
+
+    removeSessionFile(mine);
+
+    expect(existsSync(mine!.path)).toBe(true);
+    expect(readFileSync(mine!.path, "utf8")).toContain('"port":5000');
+  });
+
+  it("sem node_modules gravável, não quebra", () => {
+    const dir = project();
+    const notADir = join(dir, "file");
+    writeFileSync(notADir, "");
+    expect(writeSessionFile(notADir, { port: 1, token: "t", lan: false })).toBeNull();
+    expect(() => removeSessionFile(null)).not.toThrow();
   });
 });
