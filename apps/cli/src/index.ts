@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,6 +9,7 @@ import { startLocalServer } from "./server.ts";
 import { startFakeRuntime } from "./fake-runtime.ts";
 import { ensureMetroConfig, spawnMetro } from "./metro-config.ts";
 import { startAdbWatcher } from "./android.ts";
+import { resolveSessionToken } from "./session-token.ts";
 
 const args = process.argv.slice(2);
 
@@ -96,7 +96,13 @@ function watchAndroid(port: number): void {
 
 async function main(): Promise<void> {
   const port = Number(option("port") ?? DEFAULT_PORT);
-  const sessionToken = option("token") ?? randomBytes(16).toString("hex");
+  const projectDir = resolve(option("project") ?? process.cwd());
+  // Estável por projeto: reiniciar a CLI não invalida a aba do Studio já aberta
+  // nem o bundle já carregado no device. Ver session-token.ts.
+  const { token: sessionToken } = resolveSessionToken(projectDir, {
+    override: option("token"),
+    fresh: flag("new-token"),
+  });
   // Opt-in: expõe o serviço na LAN para conectar iPhone físico na mesma Wi-Fi.
   const lan = flag("lan");
 
@@ -116,7 +122,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const projectDir = resolve(option("project") ?? process.cwd());
   const project = detectProject(projectDir);
   const uiDir = findUiDir();
 
@@ -174,6 +179,7 @@ async function main(): Promise<void> {
     console.log("LAN mode (--lan): a physical iPhone on the same Wi-Fi can connect.");
     if (ip) console.log(`  The app reaches the service at ws://${ip}:${port}`);
     console.log("  ⚠ Reachable on your local network, gated only by the session token — use on trusted networks only.");
+    console.log("  The token persists across runs (node_modules/.cache/rnsi/token); rotate it with --new-token.");
     console.log("  (Android and the iOS Simulator keep using loopback.)");
   }
   console.log("");
