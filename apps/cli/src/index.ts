@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
 import { networkInterfaces } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { execFile, type ChildProcess } from "node:child_process";
 import { DEFAULT_PORT } from "@rnsi/protocol";
 import { detectProject } from "./detect.ts";
@@ -15,6 +13,7 @@ import {
   writeSessionFile,
 } from "./session-token.ts";
 import { createShutdown } from "./shutdown.ts";
+import { findUiDir } from "./ui-dir.ts";
 
 const args = process.argv.slice(2);
 
@@ -25,22 +24,6 @@ function flag(name: string): boolean {
 function option(name: string): string | undefined {
   const index = args.indexOf(`--${name}`);
   return index >= 0 ? args[index + 1] : undefined;
-}
-
-function findUiDir(): string | null {
-  const override = process.env["RNSI_UI_DIR"];
-  if (override && existsSync(override)) return resolve(override);
-
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    join(here, "..", "..", "desktop", "dist"), // monorepo, rodando de src/
-    join(here, "..", "..", "..", "desktop", "dist"), // monorepo, rodando de dist/
-    join(here, "..", "ui"), // pacote publicado: UI embarcada
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "index.html"))) return resolve(candidate);
-  }
-  return null;
 }
 
 function openBrowser(url: string): void {

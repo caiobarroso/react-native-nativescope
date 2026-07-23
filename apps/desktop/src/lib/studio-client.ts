@@ -100,7 +100,10 @@ function awaitStream(
         activeStreams.delete(streamId);
         reject(error);
       },
-      idleTimer: setTimeout(() => fail("stream stopped — the app stopped responding"), STREAM_IDLE_TIMEOUT_MS),
+      idleTimer: setTimeout(
+        () => fail("stream stopped — the app stopped responding"),
+        STREAM_IDLE_TIMEOUT_MS,
+      ),
     };
     activeStreams.set(streamId, stream);
   });
@@ -154,8 +157,7 @@ function sessionToken(): string | null {
 function serviceUrl(): string {
   // Servido pela CLI: mesma origem. Em `vite dev` (porta 1420), aponta
   // para o serviço local default.
-  const host =
-    window.location.port === "1420" ? "127.0.0.1:4782" : window.location.host;
+  const host = window.location.port === "1420" ? "127.0.0.1:4782" : window.location.host;
   return `ws://${host}`;
 }
 
@@ -259,7 +261,10 @@ function handleMessage(message: AnyMessage): void {
       // 2,5–5s para sempre e enchia o terminal da CLI de rejeições anônimas.
       rejected = true;
       transport?.close();
-      store.setRejected({ code: message.error.code, message: message.error.message });
+      store.setRejected({
+        code: message.error.code,
+        message: message.error.message,
+      });
       return;
 
     case "command-result": {
@@ -293,7 +298,12 @@ interface NavSnapshot {
 // Navegação salva quando o device em foco cai; restaurada se um device
 // equivalente (mesmo name+platform) reconecta dentro da janela — cobre o
 // full-reload sem persistir o deviceId (Fast Refresh nem chega a reconectar).
-let dropped: { name: string; platform: string; at: number; nav: NavSnapshot } | null = null;
+let dropped: {
+  name: string;
+  platform: string;
+  at: number;
+  nav: NavSnapshot;
+} | null = null;
 
 function snapshotNav(): NavSnapshot {
   const s = useStudio.getState();
@@ -353,6 +363,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
         name: event.payload.client.name,
         platform: event.payload.client.platform,
         label: event.payload.label ?? event.payload.client.platform,
+        storageReactQuerySync: event.payload.client.features?.storageReactQuerySync ?? null,
       };
       // Um contexto JS novo do MESMO app (reload do bundle, `r` no Metro) chega
       // com deviceId novo, e o socket anterior pode demorar até o heartbeat
@@ -428,9 +439,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
 
     case "key-value.changed": {
       if (event.deviceId !== store.selectedDeviceId) return; // evento de outro device
-      const provider = store.providers.find(
-        (p) => p.providerId === event.payload.providerId,
-      );
+      const provider = store.providers.find((p) => p.providerId === event.payload.providerId);
       store.applyChange({
         providerId: event.payload.providerId,
         providerLabel: provider?.label ?? event.payload.providerId,
@@ -457,9 +466,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
 
     case "database.changed": {
       if (event.deviceId !== store.selectedDeviceId) return; // evento de outro device
-      const provider = store.providers.find(
-        (p) => p.providerId === event.payload.providerId,
-      );
+      const provider = store.providers.find((p) => p.providerId === event.payload.providerId);
       store.applyDatabaseChange({
         providerId: event.payload.providerId,
         providerLabel: provider?.label ?? event.payload.providerId,
@@ -479,9 +486,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
   }
 }
 
-function sendCommand(
-  partial: Pick<CommandMessage, "type" | "payload">,
-): Promise<unknown> {
+function sendCommand(partial: Pick<CommandMessage, "type" | "payload">): Promise<unknown> {
   if (!transport?.isConnected()) {
     return Promise.reject(new Error("the local service is not connected"));
   }
@@ -550,7 +555,12 @@ export async function loadMoreKeys(providerId: string, instanceId: string): Prom
   if (!meta?.nextAfterKey) return;
   const result = await sendCommand({
     type: "key-value.list",
-    payload: { providerId, instanceId, afterKey: meta.nextAfterKey, limit: KEY_PAGE_LIMIT },
+    payload: {
+      providerId,
+      instanceId,
+      afterKey: meta.nextAfterKey,
+      limit: KEY_PAGE_LIMIT,
+    },
   });
   const parsed = keyValueListResultSchema.safeParse(result);
   if (parsed.success) {
@@ -686,7 +696,12 @@ export async function fetchAllKeys(
   for (;;) {
     const result = await sendCommand({
       type: "key-value.list",
-      payload: { providerId, instanceId, ...(afterKey ? { afterKey } : {}), limit: 500 },
+      payload: {
+        providerId,
+        instanceId,
+        ...(afterKey ? { afterKey } : {}),
+        limit: 500,
+      },
     });
     const parsed = keyValueListResultSchema.safeParse(result);
     if (!parsed.success) return { entries, complete: false, total };
@@ -756,10 +771,18 @@ export async function scanAllKeys(
     if (options?.signal?.aborted) return { complete: false, scanned, total };
 
     // Guarda de shape leve — sem Zod profundo (é o que mantém a página barata).
-    const r = result as { entries?: unknown; nextAfterKey?: unknown; total?: unknown };
+    const r = result as {
+      entries?: unknown;
+      nextAfterKey?: unknown;
+      total?: unknown;
+    };
     const rawEntries = Array.isArray(r.entries) ? r.entries : [];
     const entries: ScanEntry[] = rawEntries.map((e) => {
-      const o = e as { key?: unknown; valueType?: unknown; approxSize?: unknown };
+      const o = e as {
+        key?: unknown;
+        valueType?: unknown;
+        approxSize?: unknown;
+      };
       return {
         key: typeof o.key === "string" ? o.key : String(o.key ?? ""),
         valueType: typeof o.valueType === "string" ? o.valueType : "string",
@@ -818,7 +841,12 @@ export async function searchDatabase(
 export async function exportInstance(
   payload:
     | { kind: "key-value"; providerId: string; instanceId: string }
-    | { kind: "database"; providerId: string; instanceId: string; table: string },
+    | {
+        kind: "database";
+        providerId: string;
+        instanceId: string;
+        table: string;
+      },
   sink: { write(chunk: string): void },
   onProgress?: (receivedChars: number) => void,
 ): Promise<void> {
@@ -826,7 +854,10 @@ export async function exportInstance(
     payload.kind === "key-value"
       ? {
           type: "key-value.export",
-          payload: { providerId: payload.providerId, instanceId: payload.instanceId },
+          payload: {
+            providerId: payload.providerId,
+            instanceId: payload.instanceId,
+          },
         }
       : {
           type: "database.export",

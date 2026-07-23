@@ -86,7 +86,13 @@ describe("parseMessage", () => {
       protocolVersion: PROTOCOL_VERSION,
       role: "runtime",
       sessionToken: "abc123",
-      client: { name: "react-native-app", platform: "ios", deviceId: "d-abc", label: "iOS" },
+      client: {
+        name: "react-native-app",
+        platform: "ios",
+        deviceId: "d-abc",
+        label: "iOS",
+        features: { storageReactQuerySync: true },
+      },
     };
     const result = parseMessage(serializeMessage(hello));
     expect(result.ok).toBe(true);
@@ -132,6 +138,36 @@ describe("parseMessage", () => {
       expect(result.message.deviceId).toBe("d-abc");
       expect(result.message.payload.deviceId).toBe("d-abc");
       expect(result.message.payload.label).toBe("Android");
+    }
+  });
+
+  it("carrega o status de refresh do app em session.connected", () => {
+    const event: AnyMessage = {
+      kind: "event",
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp: Date.now(),
+      deviceId: "d-abc",
+      type: "session.connected",
+      payload: {
+        sessionId: "session-1",
+        client: {
+          name: "react-native-app",
+          platform: "android",
+          features: { storageReactQuerySync: true },
+        },
+        providers: [],
+        deviceId: "d-abc",
+        label: "Android",
+      },
+    };
+    const result = parseMessage(serializeMessage(event));
+    expect(result.ok).toBe(true);
+    if (
+      result.ok &&
+      result.message.kind === "event" &&
+      result.message.type === "session.connected"
+    ) {
+      expect(result.message.payload.client.features?.storageReactQuerySync).toBe(true);
     }
   });
 });

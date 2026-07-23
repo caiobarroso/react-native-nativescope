@@ -644,6 +644,10 @@ function JsonDataGrid<Row>({
   emptyLabel: string;
 }) {
   const templateColumns = columns.map((column) => column.width).join(" ");
+  const minimumGridWidth = columns.reduce((total, column) => {
+    const pixelWidth = column.width.match(/([\d.]+)px/)?.[1];
+    return total + (pixelWidth ? Number(pixelWidth) : 180);
+  }, 0);
   // Virtualização (plano §C): um array/objeto com dezenas de milhares de
   // itens vira ~30 nós DOM. Spacers em fluxo normal preservam o grid e o
   // scroll horizontal (alinhados ao header sticky).
@@ -660,7 +664,10 @@ function JsonDataGrid<Row>({
 
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-      <div className="flex min-h-full min-w-full flex-col">
+      <div
+        className="flex min-h-full flex-col"
+        style={{ width: `max(100%, ${minimumGridWidth}px)` }}
+      >
         <div
           className="sticky top-0 z-10 grid h-9 shrink-0 border-b border-border bg-surface font-mono text-[12px]"
           style={{ gridTemplateColumns: templateColumns }}
@@ -2370,6 +2377,7 @@ export function ValueEditor() {
   const [toast, setToast] = useState<EditorToastState | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [convertTarget, setConvertTarget] = useState<ValueType | null>(null);
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const pendingActionRef = useRef<JsonChangeAction>("edited");
   const saveSeqRef = useRef(0);
   const toastIdRef = useRef(1);
@@ -2402,6 +2410,7 @@ export function ValueEditor() {
     setToast(null);
     setActionsOpen(false);
     setConvertTarget(null);
+    setRemoveConfirmOpen(false);
     setTruncatedInfo(null);
     setFullLoad(null);
     void getValue(selection.providerId, selection.instanceId, selectedKey)
@@ -2565,10 +2574,12 @@ export function ValueEditor() {
     setState("saving");
     try {
       await removeKey(selection.providerId, selection.instanceId, selectedKey);
+      setRemoveConfirmOpen(false);
       useStudio.getState().selectKey(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setState("ready");
+      setRemoveConfirmOpen(false);
     }
   }
 
@@ -2678,7 +2689,7 @@ export function ValueEditor() {
           )}
         </div>
         <button
-          onClick={() => void remove()}
+          onClick={() => setRemoveConfirmOpen(true)}
           disabled={state !== "ready"}
           title="Remove key"
           className="inline-flex h-7 items-center gap-1 rounded-md border border-transparent px-2 text-[11px] text-deleted hover:border-deleted/30 hover:bg-deleted-wash disabled:opacity-50"
@@ -2828,6 +2839,20 @@ export function ValueEditor() {
           </div>
         </div>
       </div>
+    )}
+    {removeConfirmOpen && (
+      <ConfirmDialog
+        title="Delete key?"
+        description="This permanently removes this value from the connected app."
+        loading={state === "saving"}
+        onCancel={() => setRemoveConfirmOpen(false)}
+        onConfirm={() => void remove()}
+        detail={
+          <code className="block truncate rounded-md border border-border bg-surface-sunken px-2.5 py-2 font-mono text-[12px] text-text">
+            {selectedKey}
+          </code>
+        }
+      />
     )}
     {toast && <AppToast toast={toast} onClose={() => setToast(null)} />}
     <KeyHistory

@@ -30,6 +30,23 @@ jobs:
             echo "published package contains a workspace dependency" >&2
             exit 1
           fi
+          mkdir "$RUNNER_TEMP/nativescope-consumer"
+          cd "$RUNNER_TEMP/nativescope-consumer"
+          npm init -y >/dev/null
+          npm install "$RUNNER_TEMP/$tarball" --ignore-scripts --no-audit --no-fund
+          test -x node_modules/.bin/nativescope
+
+          node_modules/.bin/nativescope --fake --no-open --port 4789 >nativescope.log 2>&1 &
+          nativescope_pid=$!
+          trap 'kill "$nativescope_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            if curl --fail --silent --output studio.html http://127.0.0.1:4789/; then
+              break
+            fi
+            sleep 0.25
+          done
+          test -s studio.html
+          grep -q '<div id="root"></div>' studio.html
       - name: D5 — Studio is a pure web client (zero @tauri-apps)
         run: |
           if grep -rn "@tauri-apps" apps/desktop/src; then

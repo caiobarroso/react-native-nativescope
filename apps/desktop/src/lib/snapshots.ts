@@ -73,7 +73,6 @@ export function scopeStoreId(providerId: string, instanceId: string): string {
   return `${providerId}\u0000${instanceId}`;
 }
 
-
 export interface KeyValueDiff {
   kind: "key";
   change: "created" | "updated" | "removed";
@@ -192,13 +191,17 @@ export async function restoreKeyDiff(diff: KeyValueDiff): Promise<void> {
 }
 
 export function valuePreview(value: StorageValue | null): string {
+  return truncate(valueText(value), 96);
+}
+
+export function valueText(value: StorageValue | null): string {
   if (!value) return "absent";
-  if (value.type === "string") return truncate(JSON.stringify(value.value), 96);
+  if (value.type === "string") return JSON.stringify(value.value);
   if (value.type === "json") {
     try {
-      return truncate(JSON.stringify(JSON.parse(value.value)), 96);
+      return JSON.stringify(JSON.parse(value.value));
     } catch {
-      return truncate(value.value, 96);
+      return value.value;
     }
   }
   if (value.type === "buffer") return `buffer(${value.value.length} base64 chars)`;
@@ -208,7 +211,10 @@ export function valuePreview(value: StorageValue | null): string {
 export function cellPreview(cells: Record<string, CellValue>): string {
   const entries = Object.entries(cells).slice(0, 4);
   const body = entries
-    .map(([key, value]) => `${key}: ${typeof value === "object" && value !== null ? "(blob)" : String(value)}`)
+    .map(
+      ([key, value]) =>
+        `${key}: ${typeof value === "object" && value !== null ? "(blob)" : String(value)}`,
+    )
     .join(", ");
   return truncate(body, 120);
 }
@@ -335,12 +341,26 @@ function diffKeyValueStores(before: StorageSnapshot, after: StorageSnapshot): Ke
       const truncated = (beforeItem?.truncated ?? false) || (afterItem?.truncated ?? false);
       if (!beforeItem && afterItem) {
         return [
-          { kind: "key", change: "created", ...base, before: null, after: afterItem.value, truncated },
+          {
+            kind: "key",
+            change: "created",
+            ...base,
+            before: null,
+            after: afterItem.value,
+            truncated,
+          },
         ];
       }
       if (beforeItem && !afterItem) {
         return [
-          { kind: "key", change: "removed", ...base, before: beforeItem.value, after: null, truncated },
+          {
+            kind: "key",
+            change: "removed",
+            ...base,
+            before: beforeItem.value,
+            after: null,
+            truncated,
+          },
         ];
       }
       if (
@@ -364,7 +384,11 @@ function diffKeyValueStores(before: StorageSnapshot, after: StorageSnapshot): Ke
       }
       return [];
     })
-    .sort((a, b) => `${a.providerLabel} ${a.instanceId} ${a.key}`.localeCompare(`${b.providerLabel} ${b.instanceId} ${b.key}`));
+    .sort((a, b) =>
+      `${a.providerLabel} ${a.instanceId} ${a.key}`.localeCompare(
+        `${b.providerLabel} ${b.instanceId} ${b.key}`,
+      ),
+    );
 }
 
 function diffDatabaseStores(before: StorageSnapshot, after: StorageSnapshot): DatabaseTableDiff[] {
@@ -390,7 +414,11 @@ function diffDatabaseStores(before: StorageSnapshot, after: StorageSnapshot): Da
         const afterRow = afterRows.get(rowId);
         if (!beforeRow && afterRow) added.push(afterRow);
         else if (beforeRow && !afterRow) removed.push(beforeRow);
-        else if (beforeRow && afterRow && stableStringify(beforeRow.cells) !== stableStringify(afterRow.cells)) {
+        else if (
+          beforeRow &&
+          afterRow &&
+          stableStringify(beforeRow.cells) !== stableStringify(afterRow.cells)
+        ) {
           updated.push({ before: beforeRow, after: afterRow });
         }
       }
@@ -419,7 +447,11 @@ function diffDatabaseStores(before: StorageSnapshot, after: StorageSnapshot): Da
         },
       ];
     })
-    .sort((a, b) => `${a.providerLabel} ${a.instanceId} ${a.table}`.localeCompare(`${b.providerLabel} ${b.instanceId} ${b.table}`));
+    .sort((a, b) =>
+      `${a.providerLabel} ${a.instanceId} ${a.table}`.localeCompare(
+        `${b.providerLabel} ${b.instanceId} ${b.table}`,
+      ),
+    );
 }
 
 function tableMap(snapshot: StorageSnapshot) {

@@ -30,8 +30,7 @@ export interface ActivityItem {
   source: ChangeSource;
   preview: string | null;
   target:
-    | { kind: "key-value"; key: string }
-    | { kind: "database"; table: string; rowId: number | null };
+    { kind: "key-value"; key: string } | { kind: "database"; table: string; rowId: number | null };
   /** >1 quando o runtime fundiu uma rajada de mudanças neste item. */
   coalesced?: number;
 }
@@ -54,6 +53,8 @@ export interface Device {
   platform: string;
   /** Rótulo legível pro seletor (ex. "iOS", "Android"). */
   label: string;
+  /** null = runtime antigo, sem sinal; boolean = configuração reportada pelo app. */
+  storageReactQuerySync: boolean | null;
 }
 
 const ACTIVITY_LIMIT = 200;
@@ -279,9 +280,7 @@ export const useStudio = create<StudioState>((set) => ({
 
   selectDevice: (deviceId) =>
     set((state) =>
-      state.selectedDeviceId === deviceId
-        ? {}
-        : { ...clearedView(), selectedDeviceId: deviceId },
+      state.selectedDeviceId === deviceId ? {} : { ...clearedView(), selectedDeviceId: deviceId },
     ),
 
   // Snapshot: é a lista inicial por definição, ninguém "chegou depois".
@@ -319,9 +318,7 @@ export const useStudio = create<StudioState>((set) => ({
         // chaves na janela — dedupe por chave, a versão nova vence.
         const merged = new Map((state.keys[id] ?? []).map((e) => [e.key, e]));
         for (const entry of page.entries) merged.set(entry.key, entry);
-        entries = [...merged.values()].sort((a, b) =>
-          a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
-        );
+        entries = [...merged.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
       }
       return {
         keys: { ...state.keys, [id]: entries },
@@ -406,10 +403,7 @@ export const useStudio = create<StudioState>((set) => ({
         keyHistory: withBoundedEntry(
           state.keyHistory,
           historyKey,
-          [historyEntry, ...(state.keyHistory[historyKey] ?? [])].slice(
-            0,
-            KEY_HISTORY_LIMIT,
-          ),
+          [historyEntry, ...(state.keyHistory[historyKey] ?? [])].slice(0, KEY_HISTORY_LIMIT),
           KEY_HISTORY_KEY_LIMIT,
         ),
       };
@@ -440,7 +434,7 @@ export const useStudio = create<StudioState>((set) => ({
         keyFilter: "",
         selectedTable: tabs.includes(state.selectedTable ?? "")
           ? state.selectedTable
-          : tabs[0] ?? null,
+          : (tabs[0] ?? null),
         activityFocus: null,
       };
     }),
@@ -458,7 +452,7 @@ export const useStudio = create<StudioState>((set) => ({
         state.selection?.providerId === providerId && state.selection.instanceId === instanceId;
       const selectedTable =
         isCurrentSelection && state.selectedTable && !valid.has(state.selectedTable)
-          ? nextTabs[0] ?? null
+          ? (nextTabs[0] ?? null)
           : state.selectedTable;
       return {
         tables: { ...state.tables, [id]: tables },
@@ -472,9 +466,7 @@ export const useStudio = create<StudioState>((set) => ({
       if (!selectedTable || !state.selection) return { selectedTable };
       const id = keysId(state.selection.providerId, state.selection.instanceId);
       const current = state.tableTabs[id] ?? [];
-      const nextTabs = current.includes(selectedTable)
-        ? current
-        : [...current, selectedTable];
+      const nextTabs = current.includes(selectedTable) ? current : [...current, selectedTable];
       return {
         selectedTable,
         tableTabs: { ...state.tableTabs, [id]: nextTabs },
@@ -562,7 +554,10 @@ export const useStudio = create<StudioState>((set) => ({
 
   focusActivity: (item) =>
     set((state) => {
-      const selection = { providerId: item.providerId, instanceId: item.instanceId };
+      const selection = {
+        providerId: item.providerId,
+        instanceId: item.instanceId,
+      };
       const activityFocus: ActivityFocus = {
         token: nextActivityFocusToken++,
         ...selection,
@@ -601,7 +596,5 @@ export const useStudio = create<StudioState>((set) => ({
       };
     }),
   clearActivityFocus: (token) =>
-    set((state) =>
-      state.activityFocus?.token === token ? { activityFocus: null } : {},
-    ),
+    set((state) => (state.activityFocus?.token === token ? { activityFocus: null } : {})),
 }));

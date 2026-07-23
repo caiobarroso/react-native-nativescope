@@ -145,37 +145,47 @@ export function GlobalSearch() {
           )}
         </div>
 
-        <ol className="max-h-80 overflow-y-auto border-t border-border/70 p-1.5">
-          {query.trim() !== "" && !loading && grouped.length === 0 && (
-            <li className="px-3 py-4 text-[12px] text-text-subtle">
-              Nothing found in any storage.
-            </li>
-          )}
-          {grouped.map((hit, i) => (
-            <li key={`${hit.providerId}-${hit.instanceId}-${hit.kind}-${hit.name}-${i}`}>
-              <button
-                onClick={() => navigate(hit)}
-                onMouseEnter={() => setCursor(i)}
-                className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left ${
-                  i === cursor ? "bg-accent-wash" : ""
-                }`}
-              >
-                {hit.kind === "table" ? (
-                  <Database size={13} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
-                ) : (
-                  <KeyRound size={13} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
-                )}
-                <span className="shrink-0 font-mono text-[12px]">{hit.name}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-subtle">
-                  {hit.preview}
-                </span>
-                <span className="shrink-0 text-[10px] text-text-muted">
-                  {hit.providerLabel} · {hit.instanceId}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ol>
+        {query.trim() !== "" && !loading && (
+          <ol className="max-h-80 overflow-y-auto border-t border-border/70 p-1.5">
+            {grouped.length === 0 && (
+              <li className="px-3 py-4 text-[12px] text-text-subtle">
+                Nothing found in any storage.
+              </li>
+            )}
+            {grouped.map((hit, i) => (
+              <li key={`${hit.providerId}-${hit.instanceId}-${hit.kind}-${hit.name}-${i}`}>
+                <button
+                  onClick={() => navigate(hit)}
+                  onMouseEnter={() => setCursor(i)}
+                  className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left ${
+                    i === cursor ? "bg-accent-wash" : ""
+                  }`}
+                >
+                  {hit.kind === "table" ? (
+                    <Database
+                      size={13}
+                      strokeWidth={1.5}
+                      className="shrink-0 text-text-subtle"
+                    />
+                  ) : (
+                    <KeyRound
+                      size={13}
+                      strokeWidth={1.5}
+                      className="shrink-0 text-text-subtle"
+                    />
+                  )}
+                  <span className="shrink-0 font-mono text-[12px]">{hit.name}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-subtle">
+                    {hit.preview}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-text-muted">
+                    {hit.providerLabel} · {hit.instanceId}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
     </div>
   );

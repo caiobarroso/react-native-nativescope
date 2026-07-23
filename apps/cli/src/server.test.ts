@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import {
-  PROTOCOL_VERSION,
-  parseMessage,
-  serializeMessage,
-  type AnyMessage,
-} from "@rnsi/protocol";
+import { PROTOCOL_VERSION, parseMessage, serializeMessage, type AnyMessage } from "@rnsi/protocol";
 import { startLocalServer } from "./server.ts";
 
 const TOKEN = "test-token";
@@ -51,13 +46,23 @@ function nextMessage(ws: WebSocket): Promise<AnyMessage> {
   });
 }
 
-function hello(role: "studio" | "runtime", token = TOKEN, deviceId?: string): AnyMessage {
+function hello(
+  role: "studio" | "runtime",
+  token = TOKEN,
+  deviceId?: string,
+  storageReactQuerySync?: boolean,
+): AnyMessage {
   return {
     kind: "hello",
     protocolVersion: PROTOCOL_VERSION,
     role,
     sessionToken: token,
-    client: { name: "test", platform: "node", ...(deviceId ? { deviceId } : {}) },
+    client: {
+      name: "test",
+      platform: "node",
+      ...(deviceId ? { deviceId } : {}),
+      ...(storageReactQuerySync === undefined ? {} : { features: { storageReactQuerySync } }),
+    },
   };
 }
 
@@ -86,7 +91,10 @@ describe("local server", () => {
     await startServer();
     const ws = await connect();
     ws.send(
-      serializeMessage({ ...hello("runtime"), protocolVersion: 999 } as AnyMessage),
+      serializeMessage({
+        ...hello("runtime"),
+        protocolVersion: 999,
+      } as AnyMessage),
     );
     const rejectMsg = await nextMessage(ws);
     expect(rejectMsg.kind).toBe("hello-reject");
@@ -103,7 +111,7 @@ describe("local server", () => {
     await nextMessage(studio); // ack
 
     const runtime = await connect();
-    runtime.send(serializeMessage(hello("runtime", TOKEN, "dev-a")));
+    runtime.send(serializeMessage(hello("runtime", TOKEN, "dev-a", true)));
     await nextMessage(runtime); // ack
 
     // studio recebe session.connected (com o deviceId) quando o runtime chega
@@ -111,6 +119,7 @@ describe("local server", () => {
     expect(connected.kind).toBe("event");
     if (connected.kind === "event" && connected.type === "session.connected") {
       expect(connected.payload.deviceId).toBe("dev-a");
+      expect(connected.payload.client.features?.storageReactQuerySync).toBe(true);
     }
 
     // command flui para o runtime (roteado pelo deviceId)
@@ -140,7 +149,10 @@ describe("local server", () => {
     };
     const receivedByStudio = nextMessage(studio);
     runtime.send(serializeMessage(resultFromRuntime));
-    expect(await receivedByStudio).toEqual({ ...resultFromRuntime, requestId: "r1" });
+    expect(await receivedByStudio).toEqual({
+      ...resultFromRuntime,
+      requestId: "r1",
+    });
 
     studio.close();
     runtime.close();
@@ -289,8 +301,14 @@ describe("local server", () => {
         payload: { streamId: "stream-b", seq: 0, data: "B" },
       }),
     );
-    expect(await chunkA).toMatchObject({ type: "stream.chunk", payload: { streamId: globalA, data: "A" } });
-    expect(await chunkB).toMatchObject({ type: "stream.chunk", payload: { streamId: globalB, data: "B" } });
+    expect(await chunkA).toMatchObject({
+      type: "stream.chunk",
+      payload: { streamId: globalA, data: "A" },
+    });
+    expect(await chunkB).toMatchObject({
+      type: "stream.chunk",
+      payload: { streamId: globalB, data: "B" },
+    });
 
     studioA.close();
     studioB.close();
@@ -533,7 +551,9 @@ describe("ruído de rejeição", () => {
     await startServer({ log: (line) => lines.push(line), logWindowMs: 60 });
 
     for (let i = 0; i < 3; i += 1) {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}`, { origin: "http://evil.example" });
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+        origin: "http://evil.example",
+      });
       await new Promise<void>((res) => {
         ws.once("error", () => res());
         ws.once("close", () => res());
@@ -589,9 +609,7 @@ describe("estado de providers no bridge", () => {
   }
 
   function connectedProviders(received: AnyMessage[]): string[] {
-    const event = received.find(
-      (m) => m.kind === "event" && m.type === "session.connected",
-    );
+    const event = received.find((m) => m.kind === "event" && m.type === "session.connected");
     if (event?.kind !== "event" || event.type !== "session.connected") return [];
     return event.payload.providers.map((p) => p.providerId).sort();
   }

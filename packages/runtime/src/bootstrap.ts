@@ -19,7 +19,13 @@ import { emitAppDevtoolsChange } from "./app-devtools.ts";
 export interface RuntimeOptions {
   url: string;
   sessionToken: string;
-  client: { name: string; platform: string; deviceId?: string; label?: string };
+  client: {
+    name: string;
+    platform: string;
+    deviceId?: string;
+    label?: string;
+    features?: { storageReactQuerySync?: boolean };
+  };
   createWebSocket?: (url: string) => WebSocketLike;
 }
 

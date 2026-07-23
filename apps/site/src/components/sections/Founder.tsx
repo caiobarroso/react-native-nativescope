@@ -31,7 +31,7 @@ export function Founder() {
               <Github size={18} aria-hidden />
             </a>
             <a
-              href="#"
+              href="https://x.com/_caiobarroso"
               target="_blank"
               rel="noreferrer noopener"
               aria-label="Caio Barroso on X"

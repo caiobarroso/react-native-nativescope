@@ -15,6 +15,7 @@ const rnsi = require("./runtime-bundle.js");
 let runtime = null;
 let configInstalled = false;
 let indicatorInstalled = false;
+let loadedConfig = null;
 
 function detectPlatform() {
   try {
@@ -261,15 +262,16 @@ function installIndicator(value) {
 }
 
 function installConfigOnce() {
-  if (configInstalled) return;
+  if (configInstalled) return loadedConfig;
   configInstalled = true;
   try {
-    const config = loadInspectorConfig();
-    rnsi.installAppDevtoolsConfig?.(config);
-    installIndicator(config?.modules?.storage?.indicator);
+    loadedConfig = loadInspectorConfig();
+    rnsi.installAppDevtoolsConfig?.(loadedConfig);
+    installIndicator(loadedConfig?.modules?.storage?.indicator);
   } catch (error) {
     console.warn("[nativescope] failed to load nativescope.config:", error);
   }
+  return loadedConfig;
 }
 
 /**
@@ -319,6 +321,7 @@ function getRuntime() {
   }
   if (!runtime) {
     const platform = detectPlatform();
+    const config = installConfigOnce();
     runtime = rnsi.startRuntime({
       url: `ws://${resolveInspectorHost()}:${session.port}`,
       sessionToken: session.token,
@@ -327,9 +330,11 @@ function getRuntime() {
         platform,
         deviceId: getDeviceId(),
         label: deviceLabel(platform),
+        features: {
+          storageReactQuerySync: Boolean(config?.modules?.storage?.reactQuery),
+        },
       },
     });
-    installConfigOnce();
   }
   return runtime;
 }

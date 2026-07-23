@@ -41,14 +41,16 @@ export interface LocalServerOptions {
 function describePeer(req: IncomingMessage, hello: HelloMessage | null): string {
   const remote = (req.socket.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
   const origin = req.headers.origin;
-  const who = hello ? `${hello.role} ${hello.client.name} (${hello.client.platform})` : "unknown client";
+  const who = hello
+    ? `${hello.role} ${hello.client.name} (${hello.client.platform})`
+    : "unknown client";
   return origin ? `${who} from ${remote}, origin ${origin}` : `${who} from ${remote}`;
 }
 
 interface Session {
   socket: WebSocket;
   sessionId: string;
-  client: { name: string; platform: string };
+  client: HelloMessage["client"];
   /** Runtime: id estável do device (chave do mapa `runtimes`). Studio: o próprio
    * sessionId (placeholder — studios não são roteados por device). */
   deviceId: string;
@@ -102,7 +104,8 @@ export function startLocalServer(options: LocalServerOptions) {
   if (host !== "127.0.0.1") {
     for (const addrs of Object.values(networkInterfaces())) {
       for (const addr of addrs ?? []) {
-        if (addr.family === "IPv4" && !addr.internal) allowedOrigins.add(`http://${addr.address}:${port}`);
+        if (addr.family === "IPv4" && !addr.internal)
+          allowedOrigins.add(`http://${addr.address}:${port}`);
       }
     }
   }
@@ -306,7 +309,10 @@ export function startLocalServer(options: LocalServerOptions) {
         `handshake rejected (${code}): ${message} — ${peer}${hint}`,
       );
       ws.send(
-        serializeMessage({ kind: "hello-reject", error: protocolError(code, message) }),
+        serializeMessage({
+          kind: "hello-reject",
+          error: protocolError(code, message),
+        }),
       );
       ws.close();
     }
@@ -370,7 +376,13 @@ export function startLocalServer(options: LocalServerOptions) {
           timestamp: Date.now(),
           deviceId,
           type: "session.connected",
-          payload: { sessionId, client: hello.client, providers: [], deviceId, label },
+          payload: {
+            sessionId,
+            client: hello.client,
+            providers: [],
+            deviceId,
+            label,
+          },
         });
       } else {
         // Studio recém-chegado: replay de TODOS os runtimes vivos para popular o
@@ -427,24 +439,27 @@ export function startLocalServer(options: LocalServerOptions) {
           const route = streamRoutes.get(message.payload.streamId);
           const localStreamId = route?.localStreamId ?? message.payload.streamId;
           deleteStreamRoute(message.payload.streamId);
-          outbound = { ...message, payload: { ...message.payload, streamId: localStreamId } };
+          outbound = {
+            ...message,
+            payload: { ...message.payload, streamId: localStreamId },
+          };
         }
         const bridgeRequestId = `bridge-${nextBridgeRequestId++}`;
         commandRoutes.set(bridgeRequestId, {
           studio: session,
           studioRequestId: message.requestId,
           deviceId: target.deviceId,
-          timer: setTimeout(
-            () => deleteCommandRoute(bridgeRequestId),
-            COMMAND_ROUTE_TTL_MS,
-          ),
+          timer: setTimeout(() => deleteCommandRoute(bridgeRequestId), COMMAND_ROUTE_TTL_MS),
         });
         sendTo(target, { ...outbound, requestId: bridgeRequestId });
       } else if (role === "runtime" && message.kind === "command-result") {
         const route = commandRoutes.get(message.requestId);
         if (!route) return;
         deleteCommandRoute(message.requestId);
-        let outbound: typeof message = { ...message, requestId: route.studioRequestId };
+        let outbound: typeof message = {
+          ...message,
+          requestId: route.studioRequestId,
+        };
         if (
           message.ok &&
           message.result &&

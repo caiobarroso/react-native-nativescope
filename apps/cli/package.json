@@ -7,15 +7,19 @@
   "homepage": "https://nativescope.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/caiobarroso/react-native-storage-inspector.git",
+    "url": "git+https://github.com/caiobarroso/react-native-nativescope.git",
     "directory": "apps/cli"
   },
   "bugs": {
-    "url": "https://github.com/caiobarroso/react-native-storage-inspector/issues"
+    "url": "https://github.com/caiobarroso/react-native-nativescope/issues"
   },
   "keywords": [
+    "nativescope",
     "react-native",
     "devtools",
+    "developer-tools",
+    "expo",
+    "storage-inspector",
     "async-storage",
     "mmkv",
     "sqlite",
@@ -23,7 +27,7 @@
   ],
   "type": "module",
   "bin": {
-    "nativescope": "./dist/cli.mjs"
+    "nativescope": "dist/cli.mjs"
   },
   "exports": {
     "./app": {
@@ -45,6 +49,7 @@
     "build:ui": "npm --prefix ../desktop run build && node scripts/copy-ui.mjs",
     "build:cli": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/cli.mjs --banner:js=\"#!/usr/bin/env node\nimport { createRequire as __rnsiCreateRequire } from 'node:module'; const require = __rnsiCreateRequire(import.meta.url);\" && chmod +x dist/cli.mjs",
     "build:runtime-bundle": "esbuild ../../packages/runtime/src/index.ts --bundle --format=cjs --platform=neutral --main-fields=module,main --outfile=metro/shims/runtime-bundle.js --banner:js=\"/* generated - bundled @rnsi/runtime for NativeScope shims (__RNSI_SHIM__) */\"",
+    "prepublishOnly": "npm run typecheck && npm test",
     "prepack": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

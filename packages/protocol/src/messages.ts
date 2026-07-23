@@ -16,21 +16,30 @@ export type ChangeSource = z.infer<typeof changeSourceSchema>;
 const clientRoleSchema = z.enum(["runtime", "studio"]);
 export type ClientRole = z.infer<typeof clientRoleSchema>;
 
+const clientInfoSchema = z.object({
+  name: z.string(),
+  platform: z.string(),
+  /** Id estável por-device (o shim gera; o roteamento multi-device usa como
+   * chave). Opcional: shim antigo não manda e o servidor sintetiza um. */
+  deviceId: z.string().optional(),
+  /** Rótulo legível pro seletor (ex. "iOS", "Android"). */
+  label: z.string().optional(),
+  /** Sinais de configuração instalados no app. O Studio usa isso para explicar
+   * o que está ativo sem confundir conexão com atualização da interface. */
+  features: z
+    .object({
+      storageReactQuerySync: z.boolean().optional(),
+    })
+    .optional(),
+});
+
 export const helloMessageSchema = z.object({
   kind: z.literal("hello"),
   protocolVersion: z.number().int().positive(),
   role: clientRoleSchema,
   /** Token gerado pela CLI. Sem ele, a conexão é recusada no handshake. */
   sessionToken: z.string().min(1),
-  client: z.object({
-    name: z.string(),
-    platform: z.string(),
-    /** Id estável por-device (o shim gera; o roteamento multi-device usa como
-     * chave). Opcional: shim antigo não manda e o servidor sintetiza um. */
-    deviceId: z.string().optional(),
-    /** Rótulo legível pro seletor (ex. "iOS", "Android"). */
-    label: z.string().optional(),
-  }),
+  client: clientInfoSchema,
 });
 
 export const helloAckMessageSchema = z.object({
@@ -137,7 +146,11 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...commandBase,
     type: z.literal("key-value.set"),
-    payload: z.object({ ...kvTarget, key: z.string(), value: storageValueSchema }),
+    payload: z.object({
+      ...kvTarget,
+      key: z.string(),
+      value: storageValueSchema,
+    }),
   }),
   z.object({
     ...commandBase,
@@ -364,7 +377,7 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.connected"),
     payload: z.object({
       sessionId: z.string(),
-      client: z.object({ name: z.string(), platform: z.string() }),
+      client: clientInfoSchema,
       providers: z.array(providerDescriptorSchema),
       /** Id e rótulo do device — no payload (não em client) porque o Zod
        * descarta chaves desconhecidas; o Studio lê daqui. */
@@ -375,7 +388,10 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...eventBase,
     type: z.literal("session.disconnected"),
-    payload: z.object({ sessionId: z.string(), deviceId: z.string().optional() }),
+    payload: z.object({
+      sessionId: z.string(),
+      deviceId: z.string().optional(),
+    }),
   }),
 ]);
 
@@ -404,9 +420,9 @@ export type HelloRejectMessage = z.infer<typeof helloRejectMessageSchema>;
  * Parse seguro de mensagem vinda do fio. Toda mensagem externa passa por
  * aqui — nunca por JSON.parse solto.
  */
-export function parseMessage(raw: string):
-  | { ok: true; message: AnyMessage }
-  | { ok: false; error: string } {
+export function parseMessage(
+  raw: string,
+): { ok: true; message: AnyMessage } | { ok: false; error: string } {
   let json: unknown;
   try {
     json = JSON.parse(raw);

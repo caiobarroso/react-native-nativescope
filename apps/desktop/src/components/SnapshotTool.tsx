@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   Camera,
+  ChevronDown,
+  ChevronUp,
   Database,
   GitCompare,
   KeyRound,
@@ -21,11 +23,13 @@ import {
   snapshotLabel,
   snapshotStats,
   valuePreview,
+  valueText,
   type CaptureScope,
   type KeyValueDiff,
   type SnapshotDiff,
   type StorageSnapshot,
 } from "../lib/snapshots.ts";
+import { createJsonInlineDiff, type JsonDiffSegment } from "../lib/json-diff.ts";
 import { loadKeys } from "../lib/studio-client.ts";
 import { SnapshotStory } from "./SnapshotStory.tsx";
 import { SnapshotScopePicker } from "./SnapshotScopePicker.tsx";
@@ -238,7 +242,8 @@ export function SnapshotTool() {
                 <ol className="max-h-full overflow-y-auto p-2">
                   {snapshots.length === 0 && (
                     <li className="rounded-md border border-border bg-surface px-3 py-3 text-[12px] text-text-subtle">
-                      Capture a snapshot, interact with the app, then compare it with the current state.
+                      Capture a snapshot, interact with the app, then compare it with the current
+                      state.
                     </li>
                   )}
                   {snapshots.map((snapshot) => {
@@ -266,7 +271,11 @@ export function SnapshotTool() {
                               </span>
                             )}
                             {stats.errors > 0 && (
-                              <ShieldAlert size={12} strokeWidth={1.5} className="ml-auto text-deleted" />
+                              <ShieldAlert
+                                size={12}
+                                strokeWidth={1.5}
+                                className="ml-auto text-deleted"
+                              />
                             )}
                           </div>
                           <p className="text-[11px] text-text-subtle">
@@ -294,8 +303,8 @@ export function SnapshotTool() {
                         See exactly what an action writes to storage
                       </h3>
                       <p className="mt-1.5 max-w-xl text-[12px] leading-relaxed text-text-muted">
-                        Freeze a baseline, do <em>one</em> thing in your app — a login, a purchase, a
-                        sync — then compare. Every created, updated and removed key or row is laid
+                        Freeze a baseline, do <em>one</em> thing in your app — a login, a purchase,
+                        a sync — then compare. Every created, updated and removed key or row is laid
                         out side by side, and you can undo any of them.
                       </p>
                     </div>
@@ -325,14 +334,16 @@ export function SnapshotTool() {
                       <span className="font-semibold">Baseline ready</span>
                     </div>
                     <p className="text-[12px] text-text-muted">
-                      Captured {new Date(selected.timestamp).toLocaleString("en-US")}. Go act in your
-                      app, then hit <b className="text-text">Compare with now</b> to see the diff.
+                      Captured {new Date(selected.timestamp).toLocaleString("en-US")}. Go act in
+                      your app, then hit <b className="text-text">Compare with now</b> to see the
+                      diff.
                     </p>
                     <p className="mt-2 text-[11px] text-text-subtle">
                       {selected.scope
                         ? "Scoped capture — the comparison uses this same selection."
                         : "Full-storage capture."}{" "}
-                      SQLite captures up to {SQLITE_SNAPSHOT_ROW_LIMIT} rows per table to keep the UI responsive.
+                      SQLite captures up to {SQLITE_SNAPSHOT_ROW_LIMIT} rows per table to keep the
+                      UI responsive.
                     </p>
                   </div>
                 )}
@@ -369,36 +380,12 @@ export function SnapshotTool() {
                           {diff.keyDiffs.map((item) => {
                             const restoreId = `${item.providerId}-${item.instanceId}-${item.key}`;
                             return (
-                              <li
+                              <SnapshotKeyDiffRow
                                 key={restoreId}
-                                className="grid grid-cols-[1fr_auto] gap-3 border-t border-border px-3 py-2"
-                              >
-                                <div className="min-w-0">
-                                  <div className="mb-1 flex items-center gap-2">
-                                    <span className={`text-[11px] font-semibold ${CHANGE_CLASS[item.change]}`}>
-                                      {CHANGE_LABEL[item.change]}
-                                    </span>
-                                    <span className="font-mono text-[12px]">{item.key}</span>
-                                    <span className="ml-auto text-[10px] text-text-subtle">
-                                      {item.providerLabel} · {item.instanceLabel}
-                                    </span>
-                                  </div>
-                                  <p className="truncate font-mono text-[11px] text-text-subtle">
-                                    before: {valuePreview(item.before)}
-                                  </p>
-                                  <p className="truncate font-mono text-[11px] text-text-muted">
-                                    after: {valuePreview(item.after)}
-                                  </p>
-                                </div>
-                                <button
-                                  onClick={() => void restore(item)}
-                                  disabled={restoreKey === restoreId}
-                                  className="self-center rounded-md border border-border px-2 py-1 text-[11px] text-text-muted hover:bg-surface-hover disabled:opacity-50"
-                                  title="Restore snapshot value"
-                                >
-                                  <RotateCcw size={12} strokeWidth={1.5} />
-                                </button>
-                              </li>
+                                item={item}
+                                restoring={restoreKey === restoreId}
+                                onRestore={() => void restore(item)}
+                              />
                             );
                           })}
                         </ol>
@@ -407,7 +394,11 @@ export function SnapshotTool() {
 
                     {diff.tableDiffs.length > 0 && (
                       <section className="rounded-md border border-border">
-                        <SectionTitle icon="database" title="SQLite" count={diff.tableDiffs.length} />
+                        <SectionTitle
+                          icon="database"
+                          title="SQLite"
+                          count={diff.tableDiffs.length}
+                        />
                         <ol>
                           {diff.tableDiffs.map((table) => (
                             <li
@@ -433,11 +424,16 @@ export function SnapshotTool() {
                                   </span>
                                 )}
                               </p>
-                              {[...table.added.slice(0, 2), ...table.removed.slice(0, 2)].map((row) => (
-                                <p key={row.identity} className="mt-1 truncate font-mono text-[11px] text-text-subtle">
-                                  {cellPreview(row.cells)}
-                                </p>
-                              ))}
+                              {[...table.added.slice(0, 2), ...table.removed.slice(0, 2)].map(
+                                (row) => (
+                                  <p
+                                    key={row.identity}
+                                    className="mt-1 truncate font-mono text-[11px] text-text-subtle"
+                                  >
+                                    {cellPreview(row.cells)}
+                                  </p>
+                                ),
+                              )}
                             </li>
                           ))}
                         </ol>
@@ -451,6 +447,138 @@ export function SnapshotTool() {
         </div>
       )}
     </>
+  );
+}
+
+function SnapshotKeyDiffRow({
+  item,
+  restoring,
+  onRestore,
+}: {
+  item: KeyValueDiff;
+  restoring: boolean;
+  onRestore: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const before = valueText(item.before);
+  const after = valueText(item.after);
+  const canExpand = before.length > 96 || after.length > 96;
+  const jsonDiff = useMemo(
+    () => createJsonInlineDiff(item.before, item.after),
+    [item.before, item.after],
+  );
+
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t border-border px-3 py-2">
+      <div className="min-w-0">
+        <div className="mb-1 flex items-center gap-2">
+          <span className={`text-[11px] font-semibold ${CHANGE_CLASS[item.change]}`}>
+            {CHANGE_LABEL[item.change]}
+          </span>
+          <span className="min-w-0 truncate font-mono text-[12px]">{item.key}</span>
+          <span className="ml-auto shrink-0 text-[10px] text-text-subtle">
+            {item.providerLabel} · {item.instanceLabel}
+          </span>
+          {jsonDiff && (
+            <span className="shrink-0 rounded bg-accent-wash px-1.5 py-px text-[9px] text-accent">
+              {jsonDiff.changeCount} {jsonDiff.changeCount === 1 ? "change" : "changes"}
+            </span>
+          )}
+        </div>
+
+        {expanded ? (
+          <div className="space-y-1.5">
+            <SnapshotValue
+              label="before"
+              value={before}
+              segments={jsonDiff?.before}
+              tone="before"
+            />
+            <SnapshotValue label="after" value={after} segments={jsonDiff?.after} tone="after" />
+            {item.truncated && (
+              <p className="text-[10px] text-text-subtle">
+                This snapshot contains the largest preview safely captured from the device.
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            <p className="truncate font-mono text-[11px] text-text-subtle">
+              before: {valuePreview(item.before)}
+            </p>
+            <p className="truncate font-mono text-[11px] text-text-muted">
+              after: {valuePreview(item.after)}
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="flex self-center items-center gap-1.5">
+        {canExpand && (
+          <button
+            onClick={() => setExpanded((current) => !current)}
+            className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+            aria-expanded={expanded}
+          >
+            {expanded ? (
+              <ChevronUp size={12} strokeWidth={1.5} />
+            ) : (
+              <ChevronDown size={12} strokeWidth={1.5} />
+            )}
+            {expanded ? "Collapse" : "Expand"}
+          </button>
+        )}
+        <button
+          onClick={onRestore}
+          disabled={restoring}
+          className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-50"
+          title="Restore the value from this snapshot"
+        >
+          <RotateCcw size={12} strokeWidth={1.5} />
+          {restoring ? "Restoring..." : "Restore"}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function SnapshotValue({
+  label,
+  value,
+  segments,
+  tone,
+}: {
+  label: string;
+  value: string;
+  segments?: JsonDiffSegment[];
+  tone: "before" | "after";
+}) {
+  return (
+    <div className="grid grid-cols-[42px_minmax(0,1fr)] gap-2 font-mono text-[11px] leading-relaxed">
+      <span className="text-text-subtle">{label}:</span>
+      <pre
+        className={`whitespace-pre-wrap break-all font-mono ${tone === "before" ? "text-text-subtle" : "text-text-muted"}`}
+      >
+        {segments
+          ? segments.map((segment, index) =>
+              segment.changed ? (
+                <mark
+                  key={index}
+                  className={`rounded-sm px-px font-mono ${
+                    tone === "before"
+                      ? "bg-deleted-wash text-deleted"
+                      : "bg-created-wash text-created"
+                  }`}
+                >
+                  {segment.text}
+                </mark>
+              ) : (
+                segment.text
+              ),
+            )
+          : value}
+      </pre>
+    </div>
   );
 }
 

@@ -1,15 +1,14 @@
 import { useStudio } from "../lib/store.ts";
 import { switchDevice } from "../lib/studio-client.ts";
-import { Moon, Search, Sun, SunMoon } from "lucide-react";
-import { useTheme } from "../lib/theme.ts";
+import { Search } from "lucide-react";
 import { SnapshotTool } from "./SnapshotTool.tsx";
+import { StorageRealtimeStatus } from "./StorageRealtimeStatus.tsx";
 
 export function Header() {
   const phase = useStudio((s) => s.phase);
   const devices = useStudio((s) => s.devices);
   const selectedDeviceId = useStudio((s) => s.selectedDeviceId);
-  const { mode, cycle } = useTheme();
-  const ThemeIcon = mode === "light" ? Sun : mode === "dark" ? Moon : SunMoon;
+  const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId) ?? null;
 
   return (
     <header className="flex h-11 items-center gap-3 border-b border-border bg-surface px-4">
@@ -40,19 +39,13 @@ export function Header() {
               Ctrl K
             </kbd>
           </button>
+          {phase === "connected" && (
+            <StorageRealtimeStatus enabled={selectedDevice?.storageReactQuerySync ?? null} />
+          )}
           {phase === "connected" && <SnapshotTool />}
         </div>
 
         <div className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
-
-        <button
-          onClick={cycle}
-          title={`Theme: ${mode === "system" ? "system" : mode === "light" ? "light" : "dark"}`}
-          aria-label={`Change theme. Current theme: ${mode}`}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
-        >
-          <ThemeIcon size={14} strokeWidth={1.5} />
-        </button>
 
         <div className="flex min-w-0 items-center gap-2" aria-label="Device connection">
           {devices.length === 1 && (

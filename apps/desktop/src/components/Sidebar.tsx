@@ -4,13 +4,17 @@ import {
   Database,
   KeyRound,
   Mail,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Sun,
+  SunMoon,
   type LucideIcon,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useStudio } from "../lib/store.ts";
 import { useLayout } from "../lib/layout.ts";
+import { useTheme } from "../lib/theme.ts";
 import { loadKeys, loadTables } from "../lib/studio-client.ts";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 
@@ -29,12 +33,12 @@ function ModuleSection({
   const [expanded, setExpanded] = useState(true);
 
   return (
-    <section aria-label={`${label} module`}>
+    <section className="mt-1" aria-label={`${label} module`}>
       <button
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
-        className="flex h-9 w-full items-center gap-2 rounded-md px-1.5 text-left text-[12px] font-semibold text-text hover:bg-surface-hover"
+        className="flex h-10 w-full items-center gap-2 rounded-md border border-border bg-surface-raised px-2 text-left text-[12px] font-semibold text-text hover:bg-surface-hover"
       >
         {expanded ? (
           <ChevronDown size={13} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
@@ -45,7 +49,7 @@ function ModuleSection({
         <span className="min-w-0 flex-1 truncate">{label}</span>
       </button>
       {expanded && (
-        <div className="ml-3 border-l border-border pl-2">
+        <div className="ml-[18px] mt-1 border-l border-border-strong pl-3">
           {children}
         </div>
       )}
@@ -61,6 +65,8 @@ export function Sidebar() {
   const size = useLayout((s) => s.panels.sidebar.size);
   const collapsed = useLayout((s) => s.panels.sidebar.collapsed);
   const toggleCollapsed = useLayout((s) => s.toggleCollapsed);
+  const { mode, cycle } = useTheme();
+  const ThemeIcon = mode === "light" ? Sun : mode === "dark" ? Moon : SunMoon;
 
   if (collapsed) {
     return (
@@ -90,9 +96,9 @@ export function Sidebar() {
             <p className="px-2 py-3 text-[12px] text-text-subtle">No storage detected yet.</p>
           )}
           {providers.map((provider) => (
-            <div key={provider.providerId} className="mb-1">
+            <div key={provider.providerId} className="relative mb-1.5 before:absolute before:-left-3 before:top-[17px] before:h-px before:w-3 before:bg-border-strong">
               <div
-                className={`flex items-center gap-1.5 rounded px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted ${
+                className={`flex h-8 items-center gap-2 rounded px-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted ${
                   arrivedLate.includes(provider.providerId) ? "rnsi-flash" : ""
                 }`}
               >
@@ -121,7 +127,7 @@ export function Sidebar() {
                         void loadKeys(provider.providerId, instance.instanceId);
                       }
                     }}
-                    className={`block w-full rounded-md px-2 py-1.5 pl-7 text-left font-mono text-[12px] ${
+                    className={`block w-full rounded-md py-1.5 pl-8 pr-2 text-left font-mono text-[12px] ${
                       active
                         ? "bg-accent-wash text-accent"
                         : "text-text-muted hover:bg-surface-hover hover:text-text"
@@ -136,23 +142,35 @@ export function Sidebar() {
         </ModuleSection>
       </nav>
 
-      <footer className="flex items-center gap-1 border-t border-border p-2">
-        <div className="min-w-0 flex-1">
+      <footer className="border-t border-border p-2">
+        <div className="flex items-center gap-1">
           <a
             href={FEEDBACK_URL}
-            className="flex h-8 items-center gap-2 rounded-md px-2 text-[12px] text-text-muted hover:bg-surface-hover hover:text-text"
+            className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-[12px] text-text-muted hover:bg-surface-hover hover:text-text"
           >
             <Mail size={14} strokeWidth={1.5} />
             Send feedback
           </a>
         </div>
-        <button
-          onClick={() => toggleCollapsed("sidebar")}
-          title="Collapse panel"
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
-        >
-          <PanelLeftClose size={15} strokeWidth={1.5} />
-        </button>
+        <div className="mt-1 flex items-center gap-1">
+          <button
+            onClick={cycle}
+            title={`Theme: ${mode}`}
+            aria-label={`Change theme. Current theme: ${mode}`}
+            className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[12px] text-text-muted hover:bg-surface-hover hover:text-text"
+          >
+            <ThemeIcon size={14} strokeWidth={1.5} />
+            <span className="min-w-0 flex-1">Theme</span>
+            <span className="capitalize text-text-subtle">{mode}</span>
+          </button>
+          <button
+            onClick={() => toggleCollapsed("sidebar")}
+            title="Collapse panel"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
+          >
+            <PanelLeftClose size={15} strokeWidth={1.5} />
+          </button>
+        </div>
       </footer>
       <ResizeHandle panelId="sidebar" edge="right" />
     </aside>
