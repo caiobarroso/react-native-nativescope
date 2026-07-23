@@ -1,7 +1,7 @@
 {
   "name": "react-native-nativescope",
   "version": "0.1.0",
-  "description": "A local, plug-and-play debugging studio for React Native storage.",
+  "description": "A local, plug-and-play debugging environment for React Native apps.",
   "license": "MIT",
   "author": "Caio Barroso",
   "homepage": "https://nativescope.dev",
