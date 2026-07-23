@@ -82,6 +82,23 @@ interface InstallCommandProps {
   run?: string;
 }
 
+function renderShellCommand(command: string) {
+  return command.split(/(\s+)/).map((part, index) => {
+    if (!part.trim()) return part;
+
+    let token = "arg";
+    if (index === 0) token = "command";
+    else if (part.startsWith("-")) token = "flag";
+    else if (part.includes("react-native-nativescope") || part === "nativescope") token = "package";
+
+    return (
+      <span key={`${part}-${index}`} data-install-token={token}>
+        {part}
+      </span>
+    );
+  });
+}
+
 /**
  * Bloco de comando com alternador npm / yarn / pnpm / bun.
  *
@@ -106,7 +123,7 @@ export function InstallCommand({ install, run }: InstallCommandProps) {
   }
 
   return (
-    <div data-install-block>
+    <div data-install-block data-code-block>
       <div data-install-bar>
         <div data-install-tabs role="group" aria-label="Package manager">
           {PACKAGE_MANAGERS.map((name) => (
@@ -134,11 +151,14 @@ export function InstallCommand({ install, run }: InstallCommandProps) {
       </div>
 
       <div data-install-body>
-        {PACKAGE_MANAGERS.map((name) => (
-          <pre key={name} data-install-cmd={name}>
-            <code>{commandFor(name, spec)}</code>
-          </pre>
-        ))}
+        {PACKAGE_MANAGERS.map((name) => {
+          const command = commandFor(name, spec);
+          return (
+            <pre key={name} data-install-cmd={name}>
+              <code>{renderShellCommand(command)}</code>
+            </pre>
+          );
+        })}
       </div>
     </div>
   );

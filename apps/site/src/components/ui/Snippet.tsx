@@ -1,5 +1,5 @@
 import { snippet, languageOf } from "@/lib/snippets";
-import { CodeBlock } from "./CodeBlock";
+import { HighlightedCode } from "./HighlightedCode";
 
 /**
  * Bloco de código lido de um arquivo REAL do monorepo, em build time.
@@ -22,9 +22,7 @@ export function Snippet({
 
   return (
     <div data-snippet>
-      <CodeBlock>
-        <code className={`language-${languageOf(file)}`}>{code}</code>
-      </CodeBlock>
+      <HighlightedCode code={code} language={languageOf(file)} />
       <p data-snippet-source>
         From <code>{file}</code>
       </p>

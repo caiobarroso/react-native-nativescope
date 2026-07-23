@@ -2,7 +2,7 @@ import type { LandingContent } from "@content/landing";
 import Image from "next/image";
 import { CheckCircle2, Github } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { CodeBlock } from "@/components/ui/CodeBlock";
+import { HighlightedCode } from "@/components/ui/HighlightedCode";
 import { NpmLogo } from "@/components/ui/NpmLogo";
 
 /**
@@ -36,9 +36,7 @@ export function Hero({ content }: { content: LandingContent["hero"] }) {
         <div data-hero-install-row>
           <div data-hero-install>
             <span>$</span>
-            <CodeBlock>
-              <code>{content.install}</code>
-            </CodeBlock>
+            <HighlightedCode code={content.install} language="bash" />
           </div>
           <a
             data-hero-npm
@@ -52,16 +50,24 @@ export function Hero({ content }: { content: LandingContent["hero"] }) {
         </div>
 
         <ul data-hero-assurances>
-          <li><CheckCircle2 size={14} aria-hidden /> Zero app code</li>
-          <li><CheckCircle2 size={14} aria-hidden /> Dev-only by design</li>
-          <li><CheckCircle2 size={14} aria-hidden /> Fully local</li>
+          <li>
+            <CheckCircle2 size={14} aria-hidden /> Zero app code
+          </li>
+          <li>
+            <CheckCircle2 size={14} aria-hidden /> Dev-only by design
+          </li>
+          <li>
+            <CheckCircle2 size={14} aria-hidden /> Fully local
+          </li>
         </ul>
       </div>
 
       <div data-hero-product aria-label="NativeScope visual JSON editor">
         <div data-product-window>
           <div data-window-bar>
-            <span /><span /><span />
+            <span />
+            <span />
+            <span />
             <strong>NativeScope Studio</strong>
             <em>connected</em>
           </div>
@@ -77,7 +83,10 @@ export function Hero({ content }: { content: LandingContent["hero"] }) {
         </div>
         <div data-live-note>
           <span aria-hidden />
-          <div><strong>Live now</strong><small>AsyncStorage changed from the app</small></div>
+          <div>
+            <strong>Live now</strong>
+            <small>AsyncStorage changed from the app</small>
+          </div>
         </div>
       </div>
     </section>

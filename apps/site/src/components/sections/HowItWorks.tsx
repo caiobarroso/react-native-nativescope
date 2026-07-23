@@ -1,5 +1,5 @@
 import type { Step } from "@content/landing";
-import { CodeBlock } from "@/components/ui/CodeBlock";
+import { HighlightedCode } from "@/components/ui/HighlightedCode";
 import { InstallCommand } from "@/components/ui/InstallCommand";
 
 /**
@@ -26,9 +26,7 @@ export function HowItWorks({ steps }: { steps: Step[] }) {
                   {...(step.run ? { run: step.run } : {})}
                 />
               ) : step.code ? (
-                <CodeBlock>
-                  <code>{step.code}</code>
-                </CodeBlock>
+                <HighlightedCode code={step.code} language="typescript" />
               ) : null}
             </div>
           </li>

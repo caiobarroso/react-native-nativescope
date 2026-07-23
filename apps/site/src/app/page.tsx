@@ -8,6 +8,7 @@ import { ProductStory } from "@/components/sections/ProductStory";
 import { Founder } from "@/components/sections/Founder";
 import { Journal } from "@/components/sections/Journal";
 import { StorageDemo } from "@/components/home/StorageDemo";
+import { HandsOnVideo } from "@/components/home/HandsOnVideo";
 import { Reveal } from "@/components/ui/Reveal";
 
 export const metadata: Metadata = {
@@ -50,14 +51,31 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <>
-      <Reveal immediate><Hero content={landing.hero} /></Reveal>
+      <Reveal immediate>
+        <Hero content={landing.hero} />
+      </Reveal>
       <ProductStory />
-      <Reveal><StorageDemo /></Reveal>
-      <Reveal><FeatureGrid features={landing.features} /></Reveal>
-      <Reveal><HowItWorks steps={landing.howItWorks} /></Reveal>
-      <Reveal><Journal /></Reveal>
-      <Reveal><Faq items={landing.faq} /></Reveal>
-      <Reveal><Founder /></Reveal>
+      <Reveal>
+        <StorageDemo />
+      </Reveal>
+      {/* <Reveal>
+        <HandsOnVideo />
+      </Reveal> */}
+      <Reveal>
+        <FeatureGrid features={landing.features} />
+      </Reveal>
+      <Reveal>
+        <HowItWorks steps={landing.howItWorks} />
+      </Reveal>
+      <Reveal>
+        <Journal />
+      </Reveal>
+      <Reveal>
+        <Faq items={landing.faq} />
+      </Reveal>
+      <Reveal>
+        <Founder />
+      </Reveal>
     </>
   );
 }

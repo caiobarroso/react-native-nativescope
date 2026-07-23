@@ -102,7 +102,11 @@ export function StorageDemo() {
     <section data-storage-demo aria-labelledby="demo-heading">
       <header data-demo-head>
         <p data-section-kicker>A hands-on taste — the real product, in your browser</p>
-        <h2 id="demo-heading">Your storage is a nested mess.<br />Go ahead — edit it anyway.</h2>
+        <h2 id="demo-heading">
+          Your storage is a nested mess.
+          <br />
+          Go ahead — edit it anyway.
+        </h2>
         <p>
           Every inspector hands a value back as a raw tree and wishes you luck. We built a table you
           can actually work in. Change something on the left and watch the app react live — then tap
@@ -111,7 +115,12 @@ export function StorageDemo() {
       </header>
 
       <div data-demo-stage>
-        <JsonInspector value={data} sourceName="@user_session" onChange={handleInspectorChange} pulse={pulse} />
+        <JsonInspector
+          value={data}
+          sourceName="@user_session"
+          onChange={handleInspectorChange}
+          pulse={pulse}
+        />
         <AppEmulator data={data} onChange={handleEmulatorChange} pulse={pulse} />
       </div>
     </section>

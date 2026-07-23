@@ -7,19 +7,21 @@ import { copyToClipboard } from "@/lib/clipboard";
 /**
  * Bloco de código com botão de copiar.
  *
- * Recebe o <code> já montado pelo MDX, então lê o texto do próprio DOM em vez
- * de tentar remontar a partir de props — é o caminho que funciona com
- * qualquer conteúdo aninhado.
- *
- * Syntax highlighting é decisão de design e ainda NÃO existe: hoje sai como
- * texto simples. Ver DESIGN_BRIEF.md.
+ * Aceita conteúdo React vindo do MDX ou HTML já processado pelo Shiki. O texto
+ * é lido do próprio DOM para que o botão de copiar funcione nos dois caminhos.
  */
-export function CodeBlock({ children }: { children: React.ReactNode }) {
-  const preRef = useRef<HTMLPreElement>(null);
+export function CodeBlock({
+  children,
+  highlightedHtml,
+}: {
+  children?: React.ReactNode;
+  highlightedHtml?: string;
+}) {
+  const blockRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
 
   async function copy() {
-    const text = preRef.current?.textContent ?? "";
+    const text = blockRef.current?.querySelector("code")?.textContent ?? "";
     if (!text) return;
     if (await copyToClipboard(text)) {
       setCopied(true);
@@ -28,8 +30,12 @@ export function CodeBlock({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div data-code-block>
-      <pre ref={preRef}>{children}</pre>
+    <div ref={blockRef} data-code-block>
+      {highlightedHtml ? (
+        <div data-highlighted-code dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+      ) : (
+        <pre>{children}</pre>
+      )}
       <button
         type="button"
         onClick={copy}
