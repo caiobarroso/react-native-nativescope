@@ -914,6 +914,7 @@ summary {
 [data-story-copy] h2,
 [data-journal] h2,
 [data-founder] h2,
+[data-compare-experience] h2,
 [data-config-compare] h2,
 [data-when-to-choose] h2 {
   margin: 0;
@@ -3161,7 +3162,8 @@ summary {
   [data-features-head] > h2,
   [data-how] > h2,
   [data-faq] > h2,
-  [data-journal] h2 {
+  [data-journal] h2,
+  [data-compare-experience] h2 {
     font-size: 34px;
   }
   [data-features-head] {
