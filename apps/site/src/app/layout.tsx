@@ -19,23 +19,28 @@ const mono = JetBrains_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://nativescope.dev"),
   title: {
-    default: "NativeScope — inspect your React Native app's data, live",
+    default: "NativeScope — a local debugging environment for React Native",
     template: "%s · NativeScope",
   },
   description:
-    "A plug-and-play studio for inspecting and editing AsyncStorage, MMKV and SQLite while your React Native app runs. Zero config, fully local.",
+    "A plug-and-play, fully local debugging environment for React Native. Storage ships first, with AsyncStorage, MMKV and SQLite inspection in one Studio.",
+  applicationName: "NativeScope",
+  authors: [{ name: "Caio Barroso", url: "https://github.com/caiobarroso" }],
+  creator: "Caio Barroso",
+  publisher: "NativeScope",
   openGraph: {
     type: "website",
     siteName: "NativeScope",
-    title: "NativeScope — see your React Native app's data. Live.",
+    title: "NativeScope — a local debugging environment for React Native",
     description:
-      "Inspect and edit AsyncStorage, MMKV and SQLite in real time. Zero app code, fully local.",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "NativeScope Studio" }],
+      "One local Studio for React Native debugging modules. Storage ships first: inspect and edit AsyncStorage, MMKV and SQLite with no account or cloud.",
+    url: "/",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "NativeScope local React Native debugging Studio" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "NativeScope — see your React Native app's data. Live.",
-    description: "A zero-config, fully local storage studio for React Native.",
+    title: "NativeScope — a local debugging environment for React Native",
+    description: "One local Studio for React Native debugging modules. Storage ships first.",
     images: ["/og.png"],
   },
 };

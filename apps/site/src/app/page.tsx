@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { landing } from "@content/landing";
 import { Hero } from "@/components/sections/Hero";
 import { FeatureGrid } from "@/components/sections/FeatureGrid";
@@ -8,6 +9,23 @@ import { Founder } from "@/components/sections/Founder";
 import { Journal } from "@/components/sections/Journal";
 import { StorageDemo } from "@/components/home/StorageDemo";
 import { Reveal } from "@/components/ui/Reveal";
+
+export const metadata: Metadata = {
+  title: "NativeScope — live React Native storage debugging",
+  description:
+    "NativeScope is a local React Native debugging environment. The first module lets you inspect, edit, diff and restore AsyncStorage, MMKV and SQLite while your app runs.",
+  openGraph: {
+    title: "NativeScope — live React Native storage debugging",
+    description:
+      "A local React Native debugging environment. Storage ships first: AsyncStorage, MMKV and SQLite in one Studio.",
+    url: "/",
+  },
+  twitter: {
+    title: "NativeScope — live React Native storage debugging",
+    description:
+      "A local React Native debugging environment. Storage ships first: AsyncStorage, MMKV and SQLite in one Studio.",
+  },
+};
 
 /**
  * A landing é só composição. Todo texto vem de content/landing.ts — nada de
