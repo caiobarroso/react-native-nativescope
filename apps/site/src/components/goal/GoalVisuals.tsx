@@ -1,3 +1,27 @@
+import { highlightCode } from "@/lib/highlight";
+const oneFileConfigCode = `import { defineNativeScopeConfig } from
+  "react-native-nativescope/app"
+
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      indicator: true,
+      reactQuery: true,
+    },
+
+    // Product direction: one config block per module
+    // network: {
+    //   enabled: true,
+    // },
+    // performance: {
+    //   enabled: true,
+    // },
+    // navigation: {
+    //   enabled: true,
+    // },
+  },
+})`;
+
 function ModuleNode({
   x,
   y,
@@ -103,7 +127,9 @@ export function ModuleOrganism() {
   );
 }
 
-export function OneFileContract() {
+export async function OneFileContract() {
+  const highlightedConfig = await highlightCode(oneFileConfigCode, "typescript");
+
   return (
     <figure data-goal-config-figure>
       <div data-goal-config-window>
@@ -112,28 +138,11 @@ export function OneFileContract() {
           <small>one optional file</small>
         </header>
         <div data-goal-config-body>
-          <pre><code>{`import { defineNativeScopeConfig } from
-  "react-native-nativescope/app"
-
-export default defineNativeScopeConfig({
-  modules: {
-    storage: {
-      indicator: true,
-      reactQuery: true,
-    },
-
-    // Product direction: one config block per module
-    // network: {
-    //   enabled: true,
-    // },
-    // performance: {
-    //   enabled: true,
-    // },
-    // navigation: {
-    //   enabled: true,
-    // },
-  },
-})`}</code></pre>
+          <div
+            data-goal-config-code
+            data-highlighted-code
+            dangerouslySetInnerHTML={{ __html: highlightedConfig }}
+          />
           <div data-goal-module-stack>
             <p><strong>Storage</strong><span>discovered automatically</span></p>
             <p><strong>+ Network</strong><span>one future config block</span></p>

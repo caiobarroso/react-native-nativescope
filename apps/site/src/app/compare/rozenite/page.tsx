@@ -183,6 +183,11 @@ export default function CompareRozenitePage() {
       <section data-compare-table aria-labelledby="comparison-heading">
         <div data-compare-head>
           <span id="comparison-heading">Comparison point</span>
+          <div data-compare-mobile-brands aria-hidden="true">
+            <NativeScopeLogo compact />
+            <span>vs</span>
+            <RozeniteLogo compact />
+          </div>
           <strong aria-label="NativeScope">
             <NativeScopeLogo compact />
           </strong>
