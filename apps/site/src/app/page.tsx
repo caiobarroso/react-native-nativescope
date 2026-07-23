@@ -15,15 +15,27 @@ export const metadata: Metadata = {
   description:
     "NativeScope is a local React Native debugging environment. The first module lets you inspect, edit, diff and restore AsyncStorage, MMKV and SQLite while your app runs.",
   openGraph: {
+    type: "website",
+    siteName: "NativeScope",
     title: "NativeScope — live React Native storage debugging",
     description:
       "A local React Native debugging environment. Storage ships first: AsyncStorage, MMKV and SQLite in one Studio.",
     url: "/",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: "NativeScope local React Native debugging Studio",
+      },
+    ],
   },
   twitter: {
+    card: "summary_large_image",
     title: "NativeScope — live React Native storage debugging",
     description:
       "A local React Native debugging environment. Storage ships first: AsyncStorage, MMKV and SQLite in one Studio.",
+    images: ["/og.png"],
   },
 };
 

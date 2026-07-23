@@ -18,7 +18,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://nativescope.dev"),
+  metadataBase: new URL("https://www.nativescope.dev"),
   title: {
     default: "NativeScope — a local debugging environment for React Native",
     template: "%s · NativeScope",
@@ -29,6 +29,9 @@ export const metadata: Metadata = {
   authors: [{ name: "Caio Barroso", url: "https://github.com/caiobarroso" }],
   creator: "Caio Barroso",
   publisher: "NativeScope",
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
     type: "website",
     siteName: "NativeScope",
