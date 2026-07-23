@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/caiobarroso/react-native-nativescope/main/assets/nativescope-banner.png" alt="NativeScope" width="100%" />
+  <img src="https://github.com/caiobarroso/react-native-nativescope/raw/main/assets/nativescope-banner.png" alt="NativeScope" width="100%" />
 </p>
 
 # NativeScope
