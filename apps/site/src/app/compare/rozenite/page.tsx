@@ -1,14 +1,28 @@
-import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { Code2, ExternalLink, Info, Layers, MousePointer2, Search, Undo2 } from "lucide-react";
 import { BrandLogo } from "@/components/site/BrandLogo";
 import { highlightCode } from "@/lib/highlight";
+import { pageMetadata, techArticleSchema, breadcrumbSchema } from "@/lib/seo";
+import { JsonLd } from "@/components/seo/JsonLd";
 
-export const metadata: Metadata = {
+const PAGE = {
   title: "NativeScope vs Rozenite storage plugins",
-  description: "A factual comparison of setup, scope, and day-to-day storage debugging experience.",
+  description:
+    "A factual comparison of setup, scope, and day-to-day storage debugging experience.",
+  path: "/compare/rozenite",
+  published: "2026-07-21",
+  modified: "2026-07-23",
 };
+
+export const metadata = pageMetadata({
+  title: PAGE.title,
+  description: PAGE.description,
+  path: PAGE.path,
+  type: "article",
+  publishedTime: PAGE.published,
+  modifiedTime: PAGE.modified,
+});
 
 const rows = [
   {
@@ -131,6 +145,21 @@ async function CodePanel({
 export default function CompareRozenitePage() {
   return (
     <div data-compare-page>
+      <JsonLd
+        data={techArticleSchema({
+          title: PAGE.title,
+          description: PAGE.description,
+          path: PAGE.path,
+          published: PAGE.published,
+          modified: PAGE.modified,
+        })}
+      />
+      <JsonLd
+        data={breadcrumbSchema([
+          { name: "Home", path: "/" },
+          { name: "Compare", path: "/compare/rozenite" },
+        ])}
+      />
       <header data-page-lead>
         <p>Technical comparison</p>
         <div data-compare-brands aria-label="NativeScope versus Rozenite">

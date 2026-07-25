@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
 import { landing } from "@content/landing";
+import { pageMetadata, softwareApplicationSchema, faqPageSchema } from "@/lib/seo";
+import { JsonLd } from "@/components/seo/JsonLd";
 import { Hero } from "@/components/sections/Hero";
 import { FeatureGrid } from "@/components/sections/FeatureGrid";
 import { HowItWorks } from "@/components/sections/HowItWorks";
@@ -11,34 +12,15 @@ import { StorageDemo } from "@/components/home/StorageDemo";
 import { HandsOnVideo } from "@/components/home/HandsOnVideo";
 import { Reveal } from "@/components/ui/Reveal";
 
-export const metadata: Metadata = {
+export const metadata = pageMetadata({
   title: "NativeScope — live React Native storage debugging",
   description:
     "NativeScope is a local React Native debugging environment. The first module lets you inspect, edit, diff and restore AsyncStorage, MMKV and SQLite while your app runs.",
-  openGraph: {
-    type: "website",
-    siteName: "NativeScope",
-    title: "NativeScope — live React Native storage debugging",
-    description:
-      "A local React Native debugging environment. Storage ships first: AsyncStorage, MMKV and SQLite in one Studio.",
-    url: "/",
-    images: [
-      {
-        url: "/og.png",
-        width: 1200,
-        height: 630,
-        alt: "NativeScope local React Native debugging Studio",
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "NativeScope — live React Native storage debugging",
-    description:
-      "A local React Native debugging environment. Storage ships first: AsyncStorage, MMKV and SQLite in one Studio.",
-    images: ["/og.png"],
-  },
-};
+  path: "/",
+  ogTitle: "NativeScope — live React Native storage debugging",
+  ogDescription:
+    "A local React Native debugging environment. Storage ships first: AsyncStorage, MMKV and SQLite in one Studio.",
+});
 
 /**
  * A landing é só composição. Todo texto vem de content/landing.ts — nada de
@@ -51,6 +33,8 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <>
+      <JsonLd data={softwareApplicationSchema()} />
+      <JsonLd data={faqPageSchema(landing.faq)} />
       <Reveal immediate>
         <Hero content={landing.hero} />
       </Reveal>

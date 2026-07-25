@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import { ArticleShell } from "@/components/articles/ArticleShell";
 import {
   AutoDiscoveryDiagram,
@@ -7,11 +6,26 @@ import {
   ResolverCompositionDiagram,
   ResolverInterceptDiagram,
 } from "@/components/articles/ZeroConfigDiagrams";
+import { pageMetadata, techArticleSchema, breadcrumbSchema } from "@/lib/seo";
+import { JsonLd } from "@/components/seo/JsonLd";
 
-export const metadata: Metadata = {
+const ARTICLE = {
   title: "Zero config, for real",
-  description: "How NativeScope instruments the modules an app already uses without changing app code.",
+  description:
+    "How NativeScope instruments the modules an app already uses without changing app code.",
+  path: "/journal/zero-config",
+  published: "2026-07-21",
+  modified: "2026-07-21",
 };
+
+export const metadata = pageMetadata({
+  title: ARTICLE.title,
+  description: ARTICLE.description,
+  path: ARTICLE.path,
+  type: "article",
+  publishedTime: ARTICLE.published,
+  modifiedTime: ARTICLE.modified,
+});
 
 export default function ZeroConfigArticlePage() {
   return (
@@ -21,6 +35,22 @@ export default function ZeroConfigArticlePage() {
       description="A resolver, transparent development shims and a release guard — the architecture behind one command."
       readTime="8 min read"
     >
+      <JsonLd
+        data={techArticleSchema({
+          title: ARTICLE.title,
+          description: ARTICLE.description,
+          path: ARTICLE.path,
+          published: ARTICLE.published,
+          modified: ARTICLE.modified,
+        })}
+      />
+      <JsonLd
+        data={breadcrumbSchema([
+          { name: "Home", path: "/" },
+          { name: "Journal", path: "/journal" },
+          { name: ARTICLE.title, path: ARTICLE.path },
+        ])}
+      />
       <section>
         <p data-article-kicker>The standard</p>
         <h2>Setup is part of the product</h2>

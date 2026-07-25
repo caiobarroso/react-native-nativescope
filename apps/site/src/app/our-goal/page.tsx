@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowUpRight,
@@ -11,11 +10,14 @@ import {
 } from "lucide-react";
 import { ModuleOrganism, OneFileContract } from "@/components/goal/GoalVisuals";
 import { Button } from "@/components/ui/Button";
+import { pageMetadata, breadcrumbSchema } from "@/lib/seo";
+import { JsonLd } from "@/components/seo/JsonLd";
 
-export const metadata: Metadata = {
+export const metadata = pageMetadata({
   title: "Our goal",
   description: "The product principles and long-term direction behind NativeScope.",
-};
+  path: "/our-goal",
+});
 
 const evidence = [
   {
@@ -50,6 +52,12 @@ const principles = [
 export default function OurGoalPage() {
   return (
     <div data-goal-page>
+      <JsonLd
+        data={breadcrumbSchema([
+          { name: "Home", path: "/" },
+          { name: "Our goal", path: "/our-goal" },
+        ])}
+      />
       <header data-goal-hero>
         <p data-section-kicker>Our goal</p>
         <h1>One debugging environment.<br />None of the usual friction.</h1>

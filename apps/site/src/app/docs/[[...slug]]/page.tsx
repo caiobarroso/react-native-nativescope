@@ -5,6 +5,8 @@ import { MDXRemote } from "next-mdx-remote/rsc";
 import { getAllSlugs, getDoc, getFirstSlug, getNeighbours } from "@/lib/content";
 import { useMDXComponents as getMDXComponents } from "@/mdx-components";
 import { OnThisPage } from "@/components/site/OnThisPage";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { pageMetadata, breadcrumbSchema } from "@/lib/seo";
 import rehypePrettyCode from "rehype-pretty-code";
 import rehypeSlug from "rehype-slug";
 import remarkGfm from "remark-gfm";
@@ -39,12 +41,18 @@ function extractHeadings(source: string) {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const doc = getDoc(resolveSlug((await params).slug));
+  const segments = (await params).slug;
+  const slug = resolveSlug(segments);
+  const doc = getDoc(slug);
   if (!doc) return {};
-  return {
+  // `/docs` renderiza a introdução — canonicaliza para a URL com slug para não
+  // competir como conteúdo duplicado de `/docs/introduction`.
+  const path = `/docs/${slug}`;
+  return pageMetadata({
     title: doc.frontmatter.title,
     description: doc.frontmatter.description,
-  };
+    path,
+  });
 }
 
 export default async function DocPage({ params }: PageProps) {
@@ -56,6 +64,13 @@ export default async function DocPage({ params }: PageProps) {
 
   return (
     <div data-doc-page>
+      <JsonLd
+        data={breadcrumbSchema([
+          { name: "Home", path: "/" },
+          { name: "Docs", path: "/docs" },
+          { name: doc.frontmatter.title, path: `/docs/${doc.slug}` },
+        ])}
+      />
       <div data-doc-main>
         <header data-doc-header>
           <p data-doc-product>NativeScope / Storage Engine</p>

@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import { ArticleShell } from "@/components/articles/ArticleShell";
 import {
   BytePathDiagram,
@@ -7,11 +6,25 @@ import {
   TwinGridsDiagram,
   WindowVsCopyDiagram,
 } from "@/components/articles/ScaleDiagrams";
+import { pageMetadata, techArticleSchema, breadcrumbSchema } from "@/lib/seo";
+import { JsonLd } from "@/components/seo/JsonLd";
 
-export const metadata: Metadata = {
+const ARTICLE = {
   title: "A window, not a copy",
   description: "How NativeScope reads gigabytes without freezing your app or the Studio.",
+  path: "/journal/a-window-not-a-copy",
+  published: "2026-07-21",
+  modified: "2026-07-21",
 };
+
+export const metadata = pageMetadata({
+  title: ARTICLE.title,
+  description: ARTICLE.description,
+  path: ARTICLE.path,
+  type: "article",
+  publishedTime: ARTICLE.published,
+  modifiedTime: ARTICLE.modified,
+});
 
 const budgets = [
   ["Single WebSocket message", "≤ 256 KB", "Measured in UTF-8 bytes and covered by budget tests."],
@@ -30,6 +43,22 @@ export default function ScaleArticlePage() {
       description="How the inspector reads gigabytes of on-device storage without freezing your app — or our dashboard."
       readTime="12 min read"
     >
+      <JsonLd
+        data={techArticleSchema({
+          title: ARTICLE.title,
+          description: ARTICLE.description,
+          path: ARTICLE.path,
+          published: ARTICLE.published,
+          modified: ARTICLE.modified,
+        })}
+      />
+      <JsonLd
+        data={breadcrumbSchema([
+          { name: "Home", path: "/" },
+          { name: "Journal", path: "/journal" },
+          { name: ARTICLE.title, path: ARTICLE.path },
+        ])}
+      />
       <section>
         <p data-article-kicker>The problem</p>
         <h2>The trap every inspector falls into</h2>

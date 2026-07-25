@@ -1,8 +1,10 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/react";
 import { Instrument_Sans, JetBrains_Mono } from "next/font/google";
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { SiteFooter } from "@/components/site/SiteFooter";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { siteGraphSchema } from "@/lib/seo";
 import "./globals.css";
 
 const sans = Instrument_Sans({
@@ -29,12 +31,13 @@ export const metadata: Metadata = {
   authors: [{ name: "Caio Barroso", url: "https://github.com/caiobarroso" }],
   creator: "Caio Barroso",
   publisher: "NativeScope",
-  alternates: {
-    canonical: "/",
-  },
+  // Sem `alternates.canonical` aqui de propósito: no Next ele seria herdado por
+  // TODAS as rotas filhas, apontando o canonical de cada página para a home.
+  // Cada página declara o próprio canonical via pageMetadata (lib/seo.ts).
   openGraph: {
     type: "website",
     siteName: "NativeScope",
+    locale: "en_US",
     title: "NativeScope — a local debugging environment for React Native",
     description:
       "One local Studio for React Native debugging modules. Storage ships first: inspect and edit AsyncStorage, MMKV and SQLite with no account or cloud.",
@@ -47,6 +50,13 @@ export const metadata: Metadata = {
     description: "One local Studio for React Native debugging modules. Storage ships first.",
     images: ["/og.png"],
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#faf9f5" },
+    { media: "(prefers-color-scheme: dark)", color: "#1f1e1d" },
+  ],
 };
 
 /**
@@ -81,6 +91,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
+        <JsonLd data={siteGraphSchema()} />
         <script dangerouslySetInnerHTML={{ __html: preferencesScript }} />
         {/* Sem JS as revelações não animam: garante que o conteúdo apareça mesmo assim. */}
         <noscript>
