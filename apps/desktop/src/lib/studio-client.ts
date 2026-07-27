@@ -13,6 +13,7 @@ import {
   keyValueSearchResultSchema,
   databaseSearchResultSchema,
   exportResultSchema,
+  networkReplayResultSchema,
   type AnyMessage,
   type CellValue,
   type CommandMessage,
@@ -538,6 +539,28 @@ export async function sendModuleCommand(
     type: "module.command",
     payload: { module, command, ...(data !== undefined ? { data } : {}) },
   });
+}
+
+/** Rede: reexecuta uma request no device. Devolve o id da nova request (ela
+ * também é capturada e chega por module.event), ou null se falhou. */
+export async function replayRequest(
+  id: string,
+  mode: "original" | "current-session",
+  overrides?: {
+    method?: string;
+    url?: string;
+    query?: string | null;
+    headers?: Record<string, string>;
+    body?: string | null;
+  },
+): Promise<string | null> {
+  const result = await sendModuleCommand("network", "replay", {
+    id,
+    mode,
+    ...(overrides ? { overrides } : {}),
+  });
+  const parsed = networkReplayResultSchema.safeParse(result);
+  return parsed.success ? parsed.data.id : null;
 }
 
 export async function refreshProviders(): Promise<void> {

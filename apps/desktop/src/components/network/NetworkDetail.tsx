@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { ArrowDownUp, Check, ChevronDown, Copy } from "lucide-react";
+import { ArrowDownUp, Check, ChevronDown, Copy, RefreshCw } from "lucide-react";
 import type { NetworkBody, NetworkRequest } from "@rnsi/protocol";
 import { useNetwork } from "../../lib/network-store.ts";
 import { JsonWorkspace } from "../ValueEditor.tsx";
 import { EXPORT_FORMATS, exportRequest, type ExportFormat } from "../../lib/network-export.ts";
+import { NetworkReplayModal } from "./NetworkReplayModal.tsx";
 import {
   formatBytes,
   formatDuration,
@@ -18,6 +19,7 @@ export function NetworkDetail() {
   const selectedId = useNetwork((s) => s.selectedId);
   const request = useNetwork((s) => (s.selectedId ? s.byId[s.selectedId] : null));
   const [tab, setTab] = useState<Tab>("response");
+  const [replayOpen, setReplayOpen] = useState(false);
 
   if (!selectedId || !request) {
     return (
@@ -40,7 +42,14 @@ export function NetworkDetail() {
         <TabButton active={tab === "response"} onClick={() => setTab("response")}>
           Response
         </TabButton>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1.5">
+          <button
+            onClick={() => setReplayOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 py-1 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+          >
+            <RefreshCw size={12} strokeWidth={1.5} />
+            Replay
+          </button>
           <ExportMenu request={request} />
         </div>
       </div>
@@ -66,6 +75,10 @@ export function NetworkDetail() {
           </>
         )}
       </div>
+
+      {replayOpen && (
+        <NetworkReplayModal request={request} onClose={() => setReplayOpen(false)} />
+      )}
     </div>
   );
 }
@@ -82,6 +95,15 @@ function RequestSummary({ request }: { request: NetworkRequest }) {
         </span>
         {request.statusText ? (
           <span className="text-[12px] text-text-muted">{request.statusText}</span>
+        ) : null}
+        {request.replayOf ? (
+          <span
+            className="inline-flex items-center gap-1 rounded bg-accent-wash px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent"
+            title={`Replay of ${request.replayOf}`}
+          >
+            <RefreshCw size={9} strokeWidth={2} />
+            Replay
+          </span>
         ) : null}
         <span className="ml-auto flex items-center gap-3 font-mono text-[11px] text-text-subtle">
           <span title="Duration">{formatDuration(request.duration)}</span>

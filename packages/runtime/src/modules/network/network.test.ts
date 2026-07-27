@@ -248,3 +248,113 @@ describe("network module — patch de XMLHttpRequest", () => {
     expect((globalThis as unknown as { XMLHttpRequest: unknown }).XMLHttpRequest).toBe(XHR);
   });
 });
+
+describe("network module — replay", () => {
+  const original = (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest;
+  afterEach(() => {
+    (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = original;
+  });
+
+  function setupTracked(config?: unknown): { fake: FakeRuntime; instances: FakeXHR[] } {
+    const instances: FakeXHR[] = [];
+    class XHR extends FakeXHR {
+      constructor() {
+        super();
+        instances.push(this);
+      }
+    }
+    (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = XHR;
+    const fake = fakeRuntime();
+    installNetworkModule(fake.runtime, config);
+    return { fake, instances };
+  }
+
+  function newCtor(): new () => FakeXHR {
+    return (globalThis as unknown as { XMLHttpRequest: new () => FakeXHR }).XMLHttpRequest;
+  }
+
+  function lastRecord(fake: FakeRuntime): NetworkRequest {
+    return fake.events[fake.events.length - 1]!.data as NetworkRequest;
+  }
+
+  it("replay original reexecuta com headers/url capturados e marca replayOf", () => {
+    const { fake, instances } = setupTracked();
+    const Ctor = newCtor();
+    const xhr = new Ctor();
+    xhr.open("POST", "https://api.app.com/login");
+    xhr.setRequestHeader("Authorization", "Bearer original");
+    xhr.send('{"email":"a@b.c"}');
+    xhr.respond(200, '{"token":"t"}', "content-type: application/json");
+    const originalId = lastRecord(fake).id;
+
+    const before = instances.length;
+    const result = fake.invoke("replay", { id: originalId, mode: "original" }) as { id: string | null };
+    expect(result.id).not.toBeNull();
+    // O replay criou um novo XHR; dispara a conclusão dele.
+    const replayXhr = instances[before]!;
+    replayXhr.respond(200, '{"token":"t2"}', "content-type: application/json");
+
+    const replayed = lastRecord(fake);
+    expect(replayed.id).toBe(result.id);
+    expect(replayed.replayOf).toBe(originalId);
+    expect(replayed.method).toBe("POST");
+    expect(replayed.url).toBe("https://api.app.com/login");
+    expect(replayed.requestHeaders.Authorization).toBe("Bearer original");
+  });
+
+  it("replay current-session usa a Authorization mais recente do mesmo origin", () => {
+    const { fake, instances } = setupTracked();
+    const Ctor = newCtor();
+
+    const login = new Ctor();
+    login.open("POST", "https://api.app.com/login");
+    login.setRequestHeader("Authorization", "Bearer old");
+    login.send("{}");
+    login.respond(200, "{}", "");
+    const loginId = lastRecord(fake).id;
+
+    // Request posterior ao mesmo origin com token novo → vira a sessão fresca.
+    const me = new Ctor();
+    me.open("GET", "https://api.app.com/me");
+    me.setRequestHeader("Authorization", "Bearer fresh");
+    me.send();
+    me.respond(200, "{}", "");
+
+    const before = instances.length;
+    fake.invoke("replay", { id: loginId, mode: "current-session" });
+    instances[before]!.respond(200, "{}", "");
+
+    expect(lastRecord(fake).requestHeaders.Authorization).toBe("Bearer fresh");
+  });
+
+  it("replay aplica overrides de body e query", () => {
+    const { fake, instances } = setupTracked();
+    const Ctor = newCtor();
+    const xhr = new Ctor();
+    xhr.open("GET", "https://api.app.com/products?page=1");
+    xhr.send();
+    xhr.respond(200, "[]", "");
+    const id = lastRecord(fake).id;
+
+    const before = instances.length;
+    fake.invoke("replay", {
+      id,
+      mode: "original",
+      overrides: { query: "page=2", body: '{"x":1}' },
+    });
+    instances[before]!.respond(200, "[]", "");
+
+    const replayed = lastRecord(fake);
+    expect(replayed.url).toBe("https://api.app.com/products?page=2");
+    expect(replayed.query).toBe("page=2");
+    expect(replayed.requestBody?.text).toBe('{"x":1}');
+  });
+
+  it("replay de id inexistente → { id: null }, sem nova request", () => {
+    const { fake } = setupTracked();
+    const before = fake.events.length;
+    const result = fake.invoke("replay", { id: "ghost", mode: "original" }) as { id: string | null };
+    expect(result.id).toBeNull();
+    expect(fake.events.length).toBe(before);
+  });
+});

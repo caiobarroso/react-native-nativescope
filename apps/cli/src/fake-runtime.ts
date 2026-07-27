@@ -253,6 +253,7 @@ export function startFakeRuntime(options: {
   ];
   const netStatusText: Record<number, string> = { 200: "OK", 404: "Not Found", 500: "Internal Server Error" };
   let netId = 1;
+  const emittedById = new Map<string, Record<string, unknown>>();
   const emitRequest = (spec: NetSpec): void => {
     const q = spec.pathq.indexOf("?");
     const path = q === -1 ? spec.pathq : spec.pathq.slice(0, q);
@@ -260,7 +261,7 @@ export function startFakeRuntime(options: {
     const now = Date.now();
     const resText = spec.response ?? "";
     const reqText = spec.request ?? null;
-    runtime.sendModuleEvent("network", "request", {
+    const record: Record<string, unknown> = {
       id: `fake-net-${netId++}`,
       method: spec.method,
       url: netOrigin + spec.pathq,
@@ -296,8 +297,62 @@ export function startFakeRuntime(options: {
             kind: resText.trimStart().startsWith("{") || resText.trimStart().startsWith("[") ? "json" : "text",
           }
         : null,
-    });
+    };
+    emittedById.set(record.id as string, record);
+    runtime.sendModuleEvent("network", "request", record);
   };
+
+  // Replay simulado: reexecuta a partir do capturado + overrides, emitindo uma
+  // nova request (replayOf) — espelha o módulo real no device (que é testado à
+  // parte). get-body devolve indisponível (o fake não guarda corpo íntegro).
+  runtime.onModuleCommand("network", (command, data) => {
+    const input = (data && typeof data === "object" ? data : {}) as {
+      id?: string;
+      overrides?: { query?: string | null; headers?: Record<string, string>; body?: string | null };
+    };
+    if (command === "replay") {
+      const orig = input.id ? emittedById.get(input.id) : undefined;
+      if (!orig) return { id: null };
+      const overrides = input.overrides ?? {};
+      const query = overrides.query !== undefined ? overrides.query : (orig.query as string | null);
+      const url = netOrigin + (orig.path as string) + (query ? `?${query.replace(/^\?/, "")}` : "");
+      const headers = {
+        ...(orig.requestHeaders as Record<string, string>),
+        ...(overrides.headers ?? {}),
+      };
+      const bodyText =
+        overrides.body !== undefined
+          ? overrides.body
+          : ((orig.requestBody as { text?: string } | null)?.text ?? null);
+      const now = Date.now();
+      const newId = `fake-net-${netId++}`;
+      const record: Record<string, unknown> = {
+        ...orig,
+        id: newId,
+        replayOf: input.id,
+        url,
+        query: query ?? null,
+        requestHeaders: headers,
+        startedAt: now - 120,
+        endedAt: now,
+        duration: 120,
+        requestBody: bodyText
+          ? {
+              text: bodyText,
+              size: Buffer.byteLength(bodyText),
+              truncated: false,
+              contentType: "application/json",
+              kind: "json",
+            }
+          : null,
+      };
+      emittedById.set(newId, record);
+      runtime.sendModuleEvent("network", "request", record);
+      return { id: newId };
+    }
+    if (command === "get-body") return { available: false, body: null };
+    return null;
+  });
 
   let sessionCount = 7;
   let launchCount = 41;
