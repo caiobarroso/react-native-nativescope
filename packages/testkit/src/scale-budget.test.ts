@@ -26,13 +26,17 @@ import { createNodeSqlite } from "./fakes/sqlite.ts";
  * valor multibyte não pode furar o teto de 256 KB por baixo do radar.
  */
 
-function command(partial: Pick<CommandMessage, "type" | "payload">): CommandMessage {
+// handleCommand só trata comandos de storage (module.command é roteado no
+// bootstrap, não aqui). O helper reflete isso no tipo — igual runtime.test.ts.
+type StorageCommand = Exclude<CommandMessage, { type: "module.command" }>;
+
+function command(partial: Pick<StorageCommand, "type" | "payload">): StorageCommand {
   return {
     kind: "command",
     protocolVersion: PROTOCOL_VERSION,
     requestId: "req-budget",
     ...partial,
-  } as CommandMessage;
+  } as StorageCommand;
 }
 
 describe("orçamentos de escala", () => {
@@ -195,7 +199,7 @@ describe("orçamentos de escala", () => {
     const registry = createRegistry();
     registry.register(createAsyncStorageAdapter(storage));
 
-    const commands: CommandMessage[] = [
+    const commands: StorageCommand[] = [
       command({
         type: "key-value.list",
         payload: { providerId: "async-storage", instanceId: "default", limit: 100 },
