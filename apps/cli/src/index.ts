@@ -1,8 +1,10 @@
 import { networkInterfaces } from "node:os";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { execFile, type ChildProcess } from "node:child_process";
 import { DEFAULT_PORT } from "@rnsi/protocol";
-import { detectProject } from "./detect.ts";
+import { detectProject, type DetectedProject } from "./detect.ts";
+import { runInit } from "./init.ts";
+import { MODULES, resolveEnabledModules } from "./modules-cli.ts";
 import { startLocalServer } from "./server.ts";
 import { startFakeRuntime } from "./fake-runtime.ts";
 import { ensureMetroConfig, spawnMetro } from "./metro-config.ts";
@@ -63,6 +65,47 @@ function watchAndroid(port: number): () => void {
   });
 }
 
+/**
+ * Estado de módulos no terminal. Foco: deixar EXTREMAMENTE claro o que o
+ * usuário deve fazer — sem quebrar quem já tem a lib e nunca criou config.
+ */
+function printModuleStatus(projectDir: string, project: DetectedProject): void {
+  const result = resolveEnabledModules(projectDir);
+  console.log("");
+
+  if (result.configPath) {
+    console.log(`Config: ${basename(result.configPath)}`);
+    if (result.unreadable) {
+      // .ts: a CLI não avalia; o gating real acontece em runtime.
+      console.log("Modules: resolved at runtime (TypeScript config).");
+      return;
+    }
+    const on = MODULES.filter((m) => result.enabled[m.key]);
+    if (on.length > 0) {
+      console.log("Modules enabled:");
+      for (const m of on) console.log(`  ✓ ${m.label}`);
+    } else {
+      console.log("No modules enabled in your config.");
+      console.log("  Turn some on: edit the config or run `npx nativescope init`.");
+    }
+    return;
+  }
+
+  // Sem config: comportamento de hoje preservado (storage on) + o que fazer.
+  if (project.providers.length > 0) {
+    console.log("⚠ No nativescope.config found — running with defaults (Storage on).");
+    console.log("  NativeScope is becoming modular and opt-in. To choose exactly");
+    console.log("  which modules you want (and silence this notice):");
+    console.log("");
+    console.log("      npx nativescope init");
+    console.log("");
+    console.log("  Nothing changes today. Explicit config will be required in a future major.");
+  } else {
+    console.log("No storage dependency detected and no nativescope.config found.");
+    console.log("  Get started:  npx nativescope init");
+  }
+}
+
 async function main(): Promise<void> {
   const port = Number(option("port") ?? DEFAULT_PORT);
   const projectDir = resolve(option("project") ?? process.cwd());
@@ -91,6 +134,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args[0] === "init") {
+    await runInit(projectDir, { force: flag("force"), yes: flag("yes") });
+    return;
+  }
+
   const project = detectProject(projectDir);
   const uiDir = findUiDir();
 
@@ -104,6 +152,8 @@ async function main(): Promise<void> {
   } else {
     console.log("No supported storage dependency found in package.json (MMKV, AsyncStorage, expo-sqlite).");
   }
+
+  printModuleStatus(projectDir, project);
 
   const service = await startLocalServer({
     port,

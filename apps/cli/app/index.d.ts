@@ -88,8 +88,26 @@ export interface NativeScopeStorageModuleConfig {
   reactQuery?: ReactQueryBridgeOptions;
 }
 
+/**
+ * Módulo de Network (fetch / XHR / WebSocket). Instalado separadamente — este é
+ * o slot de config, inerte até o módulo existir. Ver apps/cli/metro/MODULES.md.
+ * As opções reais são definidas pelo módulo; hoje `network: true` liga o slot.
+ */
+export interface NativeScopeNetworkModuleConfig {
+  [option: string]: unknown;
+}
+
 export interface NativeScopeModulesConfig {
-  storage?: NativeScopeStorageModuleConfig;
+  /**
+   * Módulo de Storage (AsyncStorage, MMKV, expo-sqlite). `true` liga com os
+   * padrões; um objeto liga com opções (indicator, reactQuery).
+   */
+  storage?: boolean | NativeScopeStorageModuleConfig;
+  /**
+   * Módulo de Network (fetch/XHR/WebSocket) — opt-in, instalado separadamente.
+   * `true` liga o slot; as opções vêm com o módulo.
+   */
+  network?: boolean | NativeScopeNetworkModuleConfig;
 }
 
 export interface NativeScopeConfig {

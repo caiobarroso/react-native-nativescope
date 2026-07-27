@@ -133,7 +133,9 @@ function serializeForStream(value: StorageValue): string {
  */
 export async function handleCommand(
   registry: AdapterRegistry,
-  command: CommandMessage,
+  // module.command é roteado no bootstrap ANTES daqui (onModuleCommand), então
+  // este handler só vê comandos de storage — todos com providerId no payload.
+  command: Exclude<CommandMessage, { type: "module.command" }>,
   context?: CommandContext,
 ): Promise<CommandResultMessage> {
   const fail = (

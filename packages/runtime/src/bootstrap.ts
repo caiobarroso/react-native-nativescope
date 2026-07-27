@@ -3,8 +3,10 @@ import {
   WIRE_MESSAGE_BUDGET,
   exceedsWireBudget,
   parseMessage,
+  protocolError,
   serializeMessage,
   type AnyMessage,
+  type CommandResultMessage,
   type EventMessage,
 } from "@rnsi/protocol";
 import { createRegistry, type AdapterRegistry } from "./registry.ts";
@@ -29,8 +31,28 @@ export interface RuntimeOptions {
   createWebSocket?: (url: string) => WebSocketLike;
 }
 
+/**
+ * Handler de comando de um módulo (ex.: network). Recebe o comando interno e o
+ * payload; retorna o resultado (vira command-result ok) ou lança (vira ok:false).
+ */
+export type ModuleCommandHandler = (
+  command: string,
+  data: unknown,
+) => unknown | Promise<unknown>;
+
 export interface Runtime {
   registry: AdapterRegistry;
+  /**
+   * Emite um evento de um módulo (ex.: network) sobre a MESMA conexão do
+   * storage. Vai como `module.event` — o bridge relaya ao Studio sem código
+   * novo. É o caminho L3 para módulos além de storage.
+   */
+  sendModuleEvent(module: string, event: string, data?: unknown): void;
+  /**
+   * Registra o handler de `module.command` de um módulo. Retorna uma função de
+   * remoção. Comandos Studio→runtime chegam por aqui, roteados por `module`.
+   */
+  onModuleCommand(module: string, handler: ModuleCommandHandler): () => void;
   close(): void;
 }
 
@@ -70,6 +92,54 @@ export function startRuntime(options: RuntimeOptions): Runtime {
 
   // Valores grandes saem em chunks — ver streams.ts.
   const streams = createStreamHub(sendEvent);
+
+  // Envelope L3: canal genérico para módulos além de storage (ex.: network)
+  // multiplexarem sobre a MESMA conexão, sem tocar no schema de storage.
+  const moduleCommandHandlers = new Map<string, ModuleCommandHandler>();
+
+  function sendModuleEvent(module: string, event: string, data?: unknown): void {
+    sendEvent({
+      kind: "event",
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp: Date.now(),
+      type: "module.event",
+      payload: { module, event, ...(data !== undefined ? { data } : {}) },
+    });
+  }
+
+  function onModuleCommand(module: string, handler: ModuleCommandHandler): () => void {
+    moduleCommandHandlers.set(module, handler);
+    return () => {
+      if (moduleCommandHandlers.get(module) === handler) moduleCommandHandlers.delete(module);
+    };
+  }
+
+  async function handleModuleCommand(message: {
+    requestId: string;
+    payload: { module: string; command: string; data?: unknown };
+  }): Promise<CommandResultMessage> {
+    const { module, command, data } = message.payload;
+    const handler = moduleCommandHandlers.get(module);
+    if (!handler) {
+      return {
+        kind: "command-result",
+        requestId: message.requestId,
+        ok: false,
+        error: protocolError("unsupported-capability", `nenhum handler para o módulo "${module}"`),
+      };
+    }
+    try {
+      const result = await handler(command, data);
+      return { kind: "command-result", requestId: message.requestId, ok: true, result: result ?? null };
+    } catch (error) {
+      return {
+        kind: "command-result",
+        requestId: message.requestId,
+        ok: false,
+        error: protocolError("internal", error instanceof Error ? error.message : String(error)),
+      };
+    }
+  }
 
   // Rajadas de escrita são fundidas antes de virar tráfego (ADR-0001):
   // a primeira mudança sai realtime; as seguintes na janela viram UM evento
@@ -255,6 +325,10 @@ export function startRuntime(options: RuntimeOptions): Runtime {
         return;
       }
       if (message.kind === "command") {
+        if (message.type === "module.command") {
+          send(await handleModuleCommand(message));
+          return;
+        }
         send(await handleCommand(registry, message, { streams }));
       }
     },
@@ -273,6 +347,8 @@ export function startRuntime(options: RuntimeOptions): Runtime {
 
   return {
     registry,
+    sendModuleEvent,
+    onModuleCommand,
     close() {
       for (const unsubscribe of subscriptions) unsubscribe();
       transport.close();

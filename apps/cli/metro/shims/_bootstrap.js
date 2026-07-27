@@ -11,11 +11,14 @@
 const session = require("__rnsi_session__");
 const configModule = require("__rnsi_config__");
 const rnsi = require("./runtime-bundle.js");
+const { MODULES, computeEnabledModules } = require("../modules.cjs");
 
 let runtime = null;
 let configInstalled = false;
 let indicatorInstalled = false;
+let configLoaded = false;
 let loadedConfig = null;
+let enabledModules = null;
 
 function detectPlatform() {
   try {
@@ -261,17 +264,86 @@ function installIndicator(value) {
   }
 }
 
+/**
+ * Carga leve do config (sem efeitos colaterais): resolve o objeto e computa os
+ * módulos habilitados. Separada da instalação do indicator de propósito — o
+ * gating (isModuleEnabled/bootModules) precisa do config bem cedo (no boot,
+ * antes do app), mas NÃO pode instalar o indicator àquela altura. O caminho de
+ * storage continua chamando installConfigOnce (completo) via getRuntime, com o
+ * mesmo timing de sempre.
+ */
+function ensureConfigLoaded() {
+  if (configLoaded) return loadedConfig;
+  configLoaded = true;
+  try {
+    loadedConfig = loadInspectorConfig();
+  } catch (error) {
+    console.warn("[nativescope] failed to load nativescope.config:", error);
+    loadedConfig = null;
+  }
+  enabledModules = computeEnabledModules(loadedConfig).enabled;
+  return loadedConfig;
+}
+
+/**
+ * Um módulo está ligado? Config presente é a fonte da verdade (opt-in); sem
+ * config, o default legado liga só storage (retrocompat). Ver modules.cjs.
+ */
+function isModuleEnabled(key) {
+  ensureConfigLoaded();
+  return Boolean(enabledModules && enabledModules[key]);
+}
+
 function installConfigOnce() {
   if (configInstalled) return loadedConfig;
   configInstalled = true;
+  ensureConfigLoaded();
   try {
-    loadedConfig = loadInspectorConfig();
     rnsi.installAppDevtoolsConfig?.(loadedConfig);
     installIndicator(loadedConfig?.modules?.storage?.indicator);
   } catch (error) {
-    console.warn("[nativescope] failed to load nativescope.config:", error);
+    console.warn("[nativescope] failed to install nativescope config:", error);
   }
   return loadedConfig;
+}
+
+/**
+ * Installers dos módulos com earlyBoot (que precisam subir antes do app). O
+ * storage NÃO entra aqui — ele se auto-instala nos próprios shims quando a lib
+ * é importada.
+ *
+ * ┌─ CONTRATO DE ENCAIXE (network) ─────────────────────────────────────────┐
+ * │ Adicione:                                                               │
+ * │   network(runtime, config) { patchFetchAndXHR(runtime, config); }       │
+ * │ e o `runtime` já expõe sendModuleEvent/onModuleCommand (ver runtime).   │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ */
+const MODULE_INSTALLERS = {};
+
+/**
+ * Sobe o runtime e instala os módulos com earlyBoot que estiverem ligados no
+ * config. Chamado por shims/_boot.js, que roda antes do app (via InitializeCore).
+ * No-op para projetos storage-only: nenhum módulo earlyBoot ligado.
+ */
+function bootModules() {
+  ensureConfigLoaded();
+  try {
+    for (const module of MODULES) {
+      if (!module.earlyBoot) continue;
+      if (!isModuleEnabled(module.key)) continue;
+      const installer = MODULE_INSTALLERS[module.key];
+      if (typeof installer !== "function") continue;
+      const rt = getRuntime();
+      if (!rt) return; // sem sessão da CLI (no-session): tudo vira no-op
+      try {
+        installer(rt, loadedConfig);
+      } catch (error) {
+        console.warn(`[nativescope] module "${module.key}" failed to install:`, error);
+      }
+    }
+  } catch (error) {
+    console.warn("[nativescope] bootModules failed:", error);
+  }
 }
 
 /**
@@ -339,4 +411,4 @@ function getRuntime() {
   return runtime;
 }
 
-module.exports = { getRuntime, rnsi };
+module.exports = { getRuntime, rnsi, isModuleEnabled, bootModules };
