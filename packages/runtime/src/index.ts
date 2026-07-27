@@ -59,3 +59,4 @@ export {
   type ExpoSqliteAdapter,
   type SQLiteDatabaseLike,
 } from "./adapters/expo-sqlite.ts";
+export { installNetworkModule } from "./modules/network/index.ts";

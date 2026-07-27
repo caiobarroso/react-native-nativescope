@@ -1,0 +1,186 @@
+import { useState } from "react";
+import { ArrowDownUp } from "lucide-react";
+import type { NetworkBody, NetworkRequest } from "@rnsi/protocol";
+import { useNetwork } from "../../lib/network-store.ts";
+import { JsonWorkspace } from "../ValueEditor.tsx";
+import {
+  formatBytes,
+  formatDuration,
+  methodColorClass,
+  statusColorClass,
+  statusLabel,
+} from "./format.ts";
+
+type Tab = "request" | "response";
+
+export function NetworkDetail() {
+  const selectedId = useNetwork((s) => s.selectedId);
+  const request = useNetwork((s) => (s.selectedId ? s.byId[s.selectedId] : null));
+  const [tab, setTab] = useState<Tab>("response");
+
+  if (!selectedId || !request) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center p-8 text-center">
+        <p className="max-w-[280px] text-[13px] text-text-subtle">
+          Select a request to inspect its headers, body, and timing.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-border">
+      <RequestSummary request={request} />
+
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-surface-sunken px-2">
+        <TabButton active={tab === "request"} onClick={() => setTab("request")}>
+          Request
+        </TabButton>
+        <TabButton active={tab === "response"} onClick={() => setTab("response")}>
+          Response
+        </TabButton>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+        {tab === "request" ? (
+          <>
+            <HeaderTable title="Request headers" headers={request.requestHeaders} />
+            <BodySection
+              title="Request body"
+              body={request.requestBody}
+              sourceName={`${request.path} request`}
+            />
+          </>
+        ) : (
+          <>
+            <HeaderTable title="Response headers" headers={request.responseHeaders} />
+            <BodySection
+              title="Response body"
+              body={request.responseBody}
+              sourceName={request.path}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RequestSummary({ request }: { request: NetworkRequest }) {
+  return (
+    <div className="shrink-0 border-b border-border bg-surface px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className={`font-mono text-[11px] font-bold uppercase ${methodColorClass(request.method)}`}>
+          {request.method}
+        </span>
+        <span className={`font-mono text-[13px] font-semibold ${statusColorClass(request)}`}>
+          {statusLabel(request)}
+        </span>
+        {request.statusText ? (
+          <span className="text-[12px] text-text-muted">{request.statusText}</span>
+        ) : null}
+        <span className="ml-auto flex items-center gap-3 font-mono text-[11px] text-text-subtle">
+          <span title="Duration">{formatDuration(request.duration)}</span>
+          <span title="Response size">{formatBytes(request.responseSize)}</span>
+        </span>
+      </div>
+      <p className="mt-1 break-all font-mono text-[11px] text-text-muted" title={request.url}>
+        {request.url}
+      </p>
+      {request.error ? (
+        <p className="mt-1 font-mono text-[11px] text-deleted">{request.error}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded px-2.5 py-1 text-[12px] font-medium ${
+        active ? "bg-surface-raised text-text shadow-sm" : "text-text-muted hover:text-text"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function HeaderTable({ title, headers }: { title: string; headers: Record<string, string> }) {
+  const entries = Object.entries(headers);
+  return (
+    <section>
+      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+        {title} {entries.length > 0 ? `· ${entries.length}` : ""}
+      </h3>
+      {entries.length === 0 ? (
+        <p className="text-[12px] text-text-subtle">None.</p>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-border">
+          {entries.map(([name, value], index) => (
+            <div
+              key={name}
+              className={`flex gap-2 px-2 py-1 text-[11px] ${
+                index > 0 ? "border-t border-border/60" : ""
+              }`}
+            >
+              <span className="w-40 shrink-0 truncate font-mono font-semibold text-text-muted" title={name}>
+                {name}
+              </span>
+              <span className="min-w-0 flex-1 break-all font-mono text-text">{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BodySection({
+  title,
+  body,
+  sourceName,
+}: {
+  title: string;
+  body: NetworkBody | null;
+  sourceName: string;
+}) {
+  const hasText = body !== null && body.text.length > 0;
+  return (
+    <section className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-1 flex items-center gap-2">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">{title}</h3>
+        {body && body.size > 0 ? (
+          <span className="text-[10px] text-text-subtle">{formatBytes(body.size)}</span>
+        ) : null}
+      </div>
+
+      {!body || (body.size === 0 && !hasText) ? (
+        <p className="text-[12px] text-text-subtle">No body.</p>
+      ) : body.kind === "binary" || body.kind === "form" ? (
+        <p className="text-[12px] text-text-subtle">
+          {body.kind === "binary" ? "Binary content" : "Form data"} · {formatBytes(body.size)}
+        </p>
+      ) : (
+        <div className="flex min-h-[220px] flex-1 flex-col">
+          {body.truncated ? (
+            <p className="mb-1 flex items-center gap-1 text-[10px] text-text-subtle">
+              <ArrowDownUp size={11} strokeWidth={1.5} />
+              Preview truncated to {formatBytes(body.text.length)} — full body on demand (soon).
+            </p>
+          ) : null}
+          <JsonWorkspace draft={body.text} onDraftChange={() => {}} sourceName={sourceName} />
+        </div>
+      )}
+    </section>
+  );
+}

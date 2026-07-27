@@ -47,6 +47,9 @@ export interface Selection {
   instanceId: string;
 }
 
+/** Módulo ativo na área principal. Preferência de UI, independente do device. */
+export type ActiveModule = "storage" | "network";
+
 export interface Device {
   deviceId: string;
   name: string;
@@ -88,6 +91,8 @@ export interface KeyHistoryEntry {
 
 interface StudioState {
   phase: Phase;
+  /** Módulo ativo na área principal (storage por padrão). */
+  activeModule: ActiveModule;
   /** Preenchido junto com phase "rejected"; null no resto do tempo. */
   rejection: Rejection | null;
   /** Devices (runtimes) conectados agora — o seletor lê daqui. */
@@ -137,6 +142,7 @@ interface StudioState {
   keyHistory: Record<string, KeyHistoryEntry[]>;
 
   setPhase(phase: Phase): void;
+  setActiveModule(module: ActiveModule): void;
   /** Abre uma janela de sincronização: o que chegar dentro dela é lote inicial. */
   beginProviderSync(): void;
   /** Entra no estado terminal de recusa. Nenhuma fase posterior o sobrescreve. */
@@ -231,6 +237,7 @@ let nextActivityFocusToken = 1;
 
 export const useStudio = create<StudioState>((set) => ({
   phase: "connecting",
+  activeModule: "storage",
   rejection: null,
   devices: [],
   selectedDeviceId: null,
@@ -256,6 +263,8 @@ export const useStudio = create<StudioState>((set) => ({
   // a fase por baixo. Sem esta guarda, o ciclo de reconexão devolvia a tela
   // para "connecting" a cada tentativa — era o que fazia a UI piscar.
   setPhase: (phase) => set((state) => (state.phase === "rejected" ? {} : { phase })),
+
+  setActiveModule: (activeModule) => set({ activeModule }),
 
   setRejected: (rejection) => set({ phase: "rejected", rejection }),
 

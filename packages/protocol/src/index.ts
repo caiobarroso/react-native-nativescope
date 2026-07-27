@@ -75,3 +75,20 @@ export {
   type HelloAckMessage,
   type HelloRejectMessage,
 } from "./messages.ts";
+export {
+  NETWORK_MODULE,
+  NETWORK_EVENT,
+  NETWORK_COMMAND,
+  networkBodySchema,
+  networkRequestSchema,
+  networkGetBodyCommandSchema,
+  networkGetBodyResultSchema,
+  networkReplayCommandSchema,
+  networkReplayResultSchema,
+  type NetworkBody,
+  type NetworkRequest,
+  type NetworkGetBodyCommand,
+  type NetworkGetBodyResult,
+  type NetworkReplayCommand,
+  type NetworkReplayResult,
+} from "./network.ts";

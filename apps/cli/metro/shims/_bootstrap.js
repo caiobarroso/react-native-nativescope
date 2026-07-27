@@ -312,13 +312,14 @@ function installConfigOnce() {
  * storage NÃO entra aqui — ele se auto-instala nos próprios shims quando a lib
  * é importada.
  *
- * ┌─ CONTRATO DE ENCAIXE (network) ─────────────────────────────────────────┐
- * │ Adicione:                                                               │
- * │   network(runtime, config) { patchFetchAndXHR(runtime, config); }       │
- * │ e o `runtime` já expõe sendModuleEvent/onModuleCommand (ver runtime).   │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * O runtime já expõe sendModuleEvent/onModuleCommand (envelope L3) — o módulo
+ * multiplexa sobre a MESMA conexão do storage, sem tocar no schema de storage.
  */
-const MODULE_INSTALLERS = {};
+const MODULE_INSTALLERS = {
+  network(runtime, config) {
+    rnsi.installNetworkModule(runtime, config && config.modules && config.modules.network);
+  },
+};
 
 /**
  * Sobe o runtime e instala os módulos com earlyBoot que estiverem ligados no

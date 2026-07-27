@@ -24,6 +24,7 @@ import {
 } from "@rnsi/protocol";
 import { createTransport, fnv1a32, type Transport } from "@rnsi/runtime";
 import { useStudio, keysId, type Device, type Selection } from "./store.ts";
+import { useNetwork } from "./network-store.ts";
 
 /**
  * Cliente do Studio. Único ponto da UI que toca o WebSocket — nenhum
@@ -389,6 +390,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       store.setPhase("connected");
       if (supersedesPrevious) {
         useStudio.getState().selectDevice(device.deviceId);
+        useNetwork.getState().reset(); // contexto JS novo do app: captura recomeça
       }
 
       // Continuidade de reload primeiro; senão, se este é o foco, busca providers.
@@ -483,6 +485,16 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       scheduleTableRefresh(event.payload.providerId, event.payload.instanceId);
       return;
     }
+
+    case "module.event": {
+      if (event.deviceId !== store.selectedDeviceId) return; // evento de outro device
+      // Envelope L3: cada módulo além de storage roteia por aqui. O storage
+      // segue nos seus próprios cases acima — este é o canal genérico.
+      if (event.payload.module === "network" && event.payload.event === "request") {
+        useNetwork.getState().addRequest(event.payload.data);
+      }
+      return;
+    }
   }
 }
 
@@ -513,6 +525,21 @@ function sendCommand(partial: Pick<CommandMessage, "type" | "payload">): Promise
 
 // ---------------------------------------------------------------- API da UI
 
+/**
+ * Envelope L3: envia um comando a um módulo (ex.: network) no runtime. Roteado
+ * pelo bridge como qualquer command, resolvido pelo onModuleCommand do módulo.
+ */
+export async function sendModuleCommand(
+  module: string,
+  command: string,
+  data?: unknown,
+): Promise<unknown> {
+  return sendCommand({
+    type: "module.command",
+    payload: { module, command, ...(data !== undefined ? { data } : {}) },
+  });
+}
+
 export async function refreshProviders(): Promise<void> {
   const result = await sendCommand({ type: "provider.list", payload: {} });
   const parsed = providerListResultSchema.safeParse(result);
@@ -532,6 +559,8 @@ export function switchDevice(deviceId: string): void {
   failInFlight("device switched");
   store.beginProviderSync();
   store.selectDevice(deviceId);
+  // Network é escopado ao device: a captura do device anterior não vale aqui.
+  useNetwork.getState().reset();
   void refreshProviders();
 }
 

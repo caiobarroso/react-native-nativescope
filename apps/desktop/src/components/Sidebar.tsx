@@ -2,6 +2,7 @@ import {
   ChevronDown,
   ChevronRight,
   Database,
+  Globe,
   KeyRound,
   Mail,
   Moon,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useStudio } from "../lib/store.ts";
+import { useNetwork } from "../lib/network-store.ts";
 import { useLayout } from "../lib/layout.ts";
 import { useTheme } from "../lib/theme.ts";
 import { loadKeys, loadTables } from "../lib/studio-client.ts";
@@ -62,6 +64,9 @@ export function Sidebar() {
   const arrivedLate = useStudio((s) => s.arrivedLate);
   const selection = useStudio((s) => s.selection);
   const select = useStudio((s) => s.select);
+  const activeModule = useStudio((s) => s.activeModule);
+  const setActiveModule = useStudio((s) => s.setActiveModule);
+  const requestCount = useNetwork((s) => s.requests.length);
   const size = useLayout((s) => s.panels.sidebar.size);
   const collapsed = useLayout((s) => s.panels.sidebar.collapsed);
   const toggleCollapsed = useLayout((s) => s.toggleCollapsed);
@@ -111,12 +116,14 @@ export function Sidebar() {
               </div>
               {provider.instances.map((instance) => {
                 const active =
+                  activeModule === "storage" &&
                   selection?.providerId === provider.providerId &&
                   selection?.instanceId === instance.instanceId;
                 return (
                   <button
                     key={instance.instanceId}
                     onClick={() => {
+                      setActiveModule("storage");
                       select({
                         providerId: provider.providerId,
                         instanceId: instance.instanceId,
@@ -139,6 +146,24 @@ export function Sidebar() {
               })}
             </div>
           ))}
+        </ModuleSection>
+
+        <ModuleSection label="Network" icon={Globe}>
+          <button
+            onClick={() => setActiveModule("network")}
+            className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-5 pr-2 text-left font-mono text-[12px] ${
+              activeModule === "network"
+                ? "bg-accent-wash text-accent"
+                : "text-text-muted hover:bg-surface-hover hover:text-text"
+            }`}
+          >
+            <span className="min-w-0 flex-1">Requests</span>
+            {requestCount > 0 && (
+              <span className="shrink-0 rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] tabular-nums text-text-subtle">
+                {requestCount > 999 ? "999+" : requestCount}
+              </span>
+            )}
+          </button>
         </ModuleSection>
       </nav>
 

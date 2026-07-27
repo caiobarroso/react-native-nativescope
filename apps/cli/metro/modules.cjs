@@ -28,17 +28,16 @@ const MODULES = [
     // Trecho inserido pelo `nativescope init` dentro de `modules: { ... }`.
     configTemplate: "storage: true,",
   },
-  // ┌─ CONTRATO DE ENCAIXE (módulo de network, implementado depois) ──────────┐
-  // │ Adicione aqui:                                                          │
-  // │   {                                                                     │
-  // │     key: "network",                                                     │
-  // │     label: "Network inspector",                                         │
-  // │     description: "fetch / XHR / WebSocket",                             │
-  // │     earlyBoot: true,   // precisa subir antes do app p/ instrumentar    │
-  // │     available: true,                                                    │
-  // │     configTemplate: "network: true,",                                   │
-  // │   }                                                                     │
-  // └─────────────────────────────────────────────────────────────────────────┘
+  {
+    key: "network",
+    label: "Network inspector",
+    description: "fetch / XHR requests",
+    // Precisa subir ANTES do app para instrumentar o XMLHttpRequest global
+    // (o fetch do RN roda sobre XHR). Ver _bootstrap.js → MODULE_INSTALLERS.
+    earlyBoot: true,
+    available: true,
+    configTemplate: "network: true,",
+  },
 ];
 
 const MODULE_KEYS = MODULES.map((m) => m.key);

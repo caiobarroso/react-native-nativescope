@@ -89,12 +89,39 @@ export interface NativeScopeStorageModuleConfig {
 }
 
 /**
- * Módulo de Network (fetch / XHR / WebSocket). Instalado separadamente — este é
- * o slot de config, inerte até o módulo existir. Ver apps/cli/metro/MODULES.md.
- * As opções reais são definidas pelo módulo; hoje `network: true` liga o slot.
+ * Módulo de Network (fetch / XHR). Instrumenta o `XMLHttpRequest` global em
+ * desenvolvimento e transmite cada request ao Studio. `network: true` liga com
+ * os padrões; um objeto abaixo ajusta o comportamento.
  */
 export interface NativeScopeNetworkModuleConfig {
-  [option: string]: unknown;
+  /**
+   * Capturar corpos de request/response (preview no Studio; corpo íntegro sob
+   * demanda). Default: true.
+   */
+  captureBody?: boolean;
+  /**
+   * Máximo de bytes do preview de corpo enviado por request. Corpos maiores são
+   * cortados (o íntegro vem sob demanda). Default: 32768.
+   */
+  maxBodyPreview?: number;
+  /**
+   * Acima deste tamanho (bytes) o corpo íntegro não é retido no device — só o
+   * preview. Limita memória. Default: 2 MB.
+   */
+  maxBodyStore?: number;
+  /**
+   * Quantas requests recentes manter em memória no device (buffer em anel).
+   * Default: 1000.
+   */
+  maxRequests?: number;
+  /**
+   * URLs a ignorar (match por substring), além do ruído de devtools já filtrado.
+   */
+  ignoreUrls?: string[];
+  /**
+   * Nomes de header a mascarar antes de enviar ao Studio (ex.: ["authorization"]).
+   */
+  redactHeaders?: string[];
 }
 
 export interface NativeScopeModulesConfig {
