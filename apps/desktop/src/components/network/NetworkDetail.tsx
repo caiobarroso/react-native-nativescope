@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { ArrowDownUp } from "lucide-react";
+import { ArrowDownUp, Check, ChevronDown, Copy } from "lucide-react";
 import type { NetworkBody, NetworkRequest } from "@rnsi/protocol";
 import { useNetwork } from "../../lib/network-store.ts";
 import { JsonWorkspace } from "../ValueEditor.tsx";
+import { EXPORT_FORMATS, exportRequest, type ExportFormat } from "../../lib/network-export.ts";
 import {
   formatBytes,
   formatDuration,
@@ -39,6 +40,9 @@ export function NetworkDetail() {
         <TabButton active={tab === "response"} onClick={() => setTab("response")}>
           Response
         </TabButton>
+        <div className="ml-auto">
+          <ExportMenu request={request} />
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
@@ -112,6 +116,60 @@ function TabButton({
     >
       {children}
     </button>
+  );
+}
+
+function ExportMenu({ request }: { request: NetworkRequest }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copy = async (format: ExportFormat, label: string) => {
+    setOpen(false);
+    try {
+      await navigator.clipboard.writeText(exportRequest(request, format));
+      setCopied(label);
+      window.setTimeout(() => setCopied(null), 1400);
+    } catch {
+      /* clipboard indisponível: silencioso */
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 py-1 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+      >
+        {copied ? (
+          <>
+            <Check size={12} strokeWidth={2} className="text-created" />
+            Copied {copied}
+          </>
+        ) : (
+          <>
+            <Copy size={12} strokeWidth={1.5} />
+            Copy as
+            <ChevronDown size={12} strokeWidth={1.5} />
+          </>
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 w-36 overflow-hidden rounded-md border border-border bg-surface-raised py-1 shadow-lg">
+            {EXPORT_FORMATS.map((format) => (
+              <button
+                key={format.id}
+                onClick={() => copy(format.id, format.label)}
+                className="block w-full px-2.5 py-1.5 text-left text-[12px] text-text-muted hover:bg-surface-hover hover:text-text"
+              >
+                {format.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
