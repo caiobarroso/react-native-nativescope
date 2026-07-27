@@ -165,6 +165,140 @@ export function startFakeRuntime(options: {
   runtime.registry.register(mmkv);
   runtime.registry.register(sqlite);
 
+  // Network simulado (envelope L3) — popula a aba Network do Studio sem device.
+  type NetSpec = {
+    method: string;
+    pathq: string;
+    status: number;
+    duration: number;
+    request?: string;
+    response?: string;
+  };
+  const netOrigin = "https://api.app.com";
+  const netSpecs: NetSpec[] = [
+    {
+      method: "GET",
+      pathq: "/products?page=1",
+      status: 200,
+      duration: 142,
+      response: JSON.stringify(
+        { page: 1, items: [{ id: 1, name: "Arroz 5kg", price: 24.9 }, { id: 2, name: "Feijão 1kg", price: 8.5 }] },
+        null,
+        2,
+      ),
+    },
+    {
+      method: "GET",
+      pathq: "/products?page=2",
+      status: 200,
+      duration: 128,
+      response: JSON.stringify({ page: 2, items: [{ id: 3, name: "Café 500g", price: 18 }] }, null, 2),
+    },
+    {
+      method: "GET",
+      pathq: "/products?page=3",
+      status: 200,
+      duration: 173,
+      response: JSON.stringify({ page: 3, items: [] }, null, 2),
+    },
+    {
+      method: "POST",
+      pathq: "/login",
+      status: 200,
+      duration: 306,
+      request: JSON.stringify({ email: "caio@example.com", password: "•••••••" }, null, 2),
+      response: JSON.stringify(
+        { token: "eyJhbGciOiJIUzI1NiJ9.fake", user: { id: 7, name: "Caio", premium: false } },
+        null,
+        2,
+      ),
+    },
+    {
+      method: "GET",
+      pathq: "/profile",
+      status: 200,
+      duration: 88,
+      response: JSON.stringify(
+        { id: 7, name: "Caio", email: "caio@example.com", roles: ["admin"], settings: { theme: "dark", notifications: true } },
+        null,
+        2,
+      ),
+    },
+    {
+      method: "GET",
+      pathq: "/feed",
+      status: 200,
+      duration: 214,
+      response: JSON.stringify(
+        { items: Array.from({ length: 12 }, (_, i) => ({ id: i + 1, title: `Post ${i + 1}`, likes: (i * 7) % 50 })) },
+        null,
+        2,
+      ),
+    },
+    {
+      method: "GET",
+      pathq: "/orders/9182",
+      status: 404,
+      duration: 61,
+      response: JSON.stringify({ error: "not_found", message: "Order 9182 does not exist" }, null, 2),
+    },
+    {
+      method: "POST",
+      pathq: "/checkout",
+      status: 500,
+      duration: 523,
+      request: JSON.stringify({ cart: [1, 2, 3], coupon: "SAVE10" }),
+      response: JSON.stringify({ error: "internal", message: "Payment provider timeout" }, null, 2),
+    },
+  ];
+  const netStatusText: Record<number, string> = { 200: "OK", 404: "Not Found", 500: "Internal Server Error" };
+  let netId = 1;
+  const emitRequest = (spec: NetSpec): void => {
+    const q = spec.pathq.indexOf("?");
+    const path = q === -1 ? spec.pathq : spec.pathq.slice(0, q);
+    const query = q === -1 ? null : spec.pathq.slice(q + 1);
+    const now = Date.now();
+    const resText = spec.response ?? "";
+    const reqText = spec.request ?? null;
+    runtime.sendModuleEvent("network", "request", {
+      id: `fake-net-${netId++}`,
+      method: spec.method,
+      url: netOrigin + spec.pathq,
+      origin: netOrigin,
+      path,
+      query,
+      status: spec.status,
+      statusText: netStatusText[spec.status] ?? "",
+      ok: spec.status >= 200 && spec.status < 300,
+      error: null,
+      startedAt: now - spec.duration,
+      endedAt: now,
+      duration: spec.duration,
+      requestSize: reqText ? Buffer.byteLength(reqText) : 0,
+      responseSize: Buffer.byteLength(resText),
+      requestHeaders:
+        spec.method === "POST"
+          ? { "Content-Type": "application/json", Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.fake" }
+          : { Accept: "application/json", Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.fake" },
+      responseHeaders: {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": String(Buffer.byteLength(resText)),
+      },
+      requestBody: reqText
+        ? { text: reqText, size: Buffer.byteLength(reqText), truncated: false, contentType: "application/json", kind: "json" }
+        : null,
+      responseBody: resText
+        ? {
+            text: resText,
+            size: Buffer.byteLength(resText),
+            truncated: false,
+            contentType: "application/json",
+            kind: resText.trimStart().startsWith("{") || resText.trimStart().startsWith("[") ? "json" : "text",
+          }
+        : null,
+    });
+  };
+
   let sessionCount = 7;
   let launchCount = 41;
   let queue: string[] = [];
@@ -218,6 +352,14 @@ export function startFakeRuntime(options: {
       // simula o hook nativo do expo-sqlite disparando
       sqlite.notifyNativeChange("proline.db", "visits", Number(insert.lastInsertRowid));
     }, 9000),
+
+    // Network: burst inicial (após o handshake) + tráfego contínuo.
+    setTimeout(() => {
+      for (const spec of netSpecs) emitRequest(spec);
+    }, 900),
+    setInterval(() => {
+      emitRequest(netSpecs[Math.floor(Math.random() * netSpecs.length)]!);
+    }, 4000),
   ];
 
   return {
