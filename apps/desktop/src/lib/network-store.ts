@@ -40,6 +40,8 @@ interface NetworkState {
   requests: NetworkRequest[];
   byId: Record<string, NetworkRequest>;
   selectedId: string | null;
+  /** Segunda request para o diff (comparada com a selecionada). */
+  compareId: string | null;
   filters: NetworkFilters;
   /** Chaves de grupo expandidas (agrupamento). */
   expandedGroups: string[];
@@ -47,6 +49,7 @@ interface NetworkState {
   /** Recebe o `data` cru do module.event; valida e faz upsert por id. */
   addRequest(raw: unknown): void;
   select(id: string | null): void;
+  setCompare(id: string | null): void;
   reset(): void;
 
   toggleMethod(method: string): void;
@@ -66,6 +69,7 @@ export const useNetwork = create<NetworkState>((set) => ({
   requests: [],
   byId: {},
   selectedId: null,
+  compareId: null,
   filters: INITIAL_FILTERS,
   expandedGroups: [],
 
@@ -93,9 +97,13 @@ export const useNetwork = create<NetworkState>((set) => ({
       return { requests, byId: { ...state.byId, [record.id]: record } };
     }),
 
-  select: (selectedId) => set({ selectedId }),
+  // Selecionar uma nova request primária encerra qualquer diff em curso.
+  select: (selectedId) => set({ selectedId, compareId: null }),
 
-  reset: () => set({ requests: [], byId: {}, selectedId: null, expandedGroups: [] }),
+  setCompare: (compareId) => set({ compareId }),
+
+  reset: () =>
+    set({ requests: [], byId: {}, selectedId: null, compareId: null, expandedGroups: [] }),
 
   toggleMethod: (method) =>
     set((state) => ({ filters: { ...state.filters, methods: toggle(state.filters.methods, method) } })),

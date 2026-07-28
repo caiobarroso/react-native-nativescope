@@ -1,10 +1,12 @@
-import { useState } from "react";
-import { ArrowDownUp, Check, ChevronDown, Copy, RefreshCw } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowDownUp, Check, ChevronDown, Copy, GitCompare, RefreshCw } from "lucide-react";
 import type { NetworkBody, NetworkRequest } from "@rnsi/protocol";
 import { useNetwork } from "../../lib/network-store.ts";
+import { groupKey } from "../../lib/network-select.ts";
 import { JsonWorkspace } from "../ValueEditor.tsx";
 import { EXPORT_FORMATS, exportRequest, type ExportFormat } from "../../lib/network-export.ts";
 import { NetworkReplayModal } from "./NetworkReplayModal.tsx";
+import { NetworkDiff } from "./NetworkDiff.tsx";
 import {
   formatBytes,
   formatDuration,
@@ -18,8 +20,16 @@ type Tab = "request" | "response";
 export function NetworkDetail() {
   const selectedId = useNetwork((s) => s.selectedId);
   const request = useNetwork((s) => (s.selectedId ? s.byId[s.selectedId] : null));
+  const compareId = useNetwork((s) => s.compareId);
+  const byId = useNetwork((s) => s.byId);
+  const setCompare = useNetwork((s) => s.setCompare);
   const [tab, setTab] = useState<Tab>("response");
   const [replayOpen, setReplayOpen] = useState(false);
+
+  const compareRequest = compareId ? (byId[compareId] ?? null) : null;
+  if (request && compareRequest) {
+    return <NetworkDiff a={request} b={compareRequest} onClose={() => setCompare(null)} />;
+  }
 
   if (!selectedId || !request) {
     return (
@@ -43,6 +53,7 @@ export function NetworkDetail() {
           Response
         </TabButton>
         <div className="ml-auto flex items-center gap-1.5">
+          <CompareMenu request={request} />
           <button
             onClick={() => setReplayOpen(true)}
             className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 py-1 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
@@ -138,6 +149,67 @@ function TabButton({
     >
       {children}
     </button>
+  );
+}
+
+function CompareMenu({ request }: { request: NetworkRequest }) {
+  const requests = useNetwork((s) => s.requests);
+  const setCompare = useNetwork((s) => s.setCompare);
+  const [open, setOpen] = useState(false);
+
+  const candidates = useMemo(
+    () => requests.filter((r) => r.id !== request.id && groupKey(r) === groupKey(request)).slice(0, 40),
+    [requests, request],
+  );
+
+  const buttonClass =
+    "inline-flex items-center gap-1 rounded-md border border-border bg-surface-raised px-2 py-1 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-40 disabled:hover:bg-surface-raised";
+
+  if (candidates.length === 0) {
+    return (
+      <button disabled title="No other executions of this endpoint to compare" className={buttonClass}>
+        <GitCompare size={12} strokeWidth={1.5} />
+        Compare
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)} className={buttonClass}>
+        <GitCompare size={12} strokeWidth={1.5} />
+        Compare
+        <ChevronDown size={12} strokeWidth={1.5} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 max-h-72 w-56 overflow-y-auto rounded-md border border-border bg-surface-raised py-1 shadow-lg">
+            <p className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+              Compare with
+            </p>
+            {candidates.map((candidate) => (
+              <button
+                key={candidate.id}
+                onClick={() => {
+                  setCompare(candidate.id);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] hover:bg-surface-hover"
+              >
+                <span className={`font-mono font-semibold ${statusColorClass(candidate)}`}>
+                  {statusLabel(candidate)}
+                </span>
+                <span className="font-mono text-text-muted">{formatDuration(candidate.duration)}</span>
+                <span className="ml-auto font-mono text-text-subtle">
+                  {new Date(candidate.startedAt).toLocaleTimeString()}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

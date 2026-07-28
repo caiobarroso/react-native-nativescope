@@ -30,22 +30,28 @@ export function createJsonInlineDiff(
   after: StorageValue | null,
 ): JsonInlineDiff | null {
   if (before?.type !== "json" || after?.type !== "json") return null;
-
   try {
-    const beforeValue = JSON.parse(before.value) as JsonValue;
-    const afterValue = JSON.parse(after.value) as JsonValue;
-    const paths: DiffPaths = { before: new Set(), after: new Set(), count: 0 };
-    collectDiffPaths(beforeValue, afterValue, [], paths);
-
-    if (paths.count === 0) return null;
-    return {
-      before: renderJson(beforeValue, [], paths.before),
-      after: renderJson(afterValue, [], paths.after),
-      changeCount: paths.count,
-    };
+    return createValueInlineDiff(JSON.parse(before.value), JSON.parse(after.value));
   } catch {
     return null;
   }
+}
+
+/**
+ * Mesmo diff inline, mas sobre valores JSON já parseados — usado pelo módulo de
+ * Network (comparar dois response bodies) sem passar por StorageValue.
+ */
+export function createValueInlineDiff(before: unknown, after: unknown): JsonInlineDiff | null {
+  const beforeValue = before as JsonValue;
+  const afterValue = after as JsonValue;
+  const paths: DiffPaths = { before: new Set(), after: new Set(), count: 0 };
+  collectDiffPaths(beforeValue, afterValue, [], paths);
+  if (paths.count === 0) return null;
+  return {
+    before: renderJson(beforeValue, [], paths.before),
+    after: renderJson(afterValue, [], paths.after),
+    changeCount: paths.count,
+  };
 }
 
 function collectDiffPaths(
