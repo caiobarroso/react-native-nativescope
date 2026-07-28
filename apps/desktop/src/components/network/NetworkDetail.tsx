@@ -3,6 +3,7 @@ import { ArrowDownUp, Check, ChevronDown, Copy, GitCompare, RefreshCw } from "lu
 import type { NetworkBody, NetworkRequest } from "@rnsi/protocol";
 import { useNetwork } from "../../lib/network-store.ts";
 import { groupKey } from "../../lib/network-select.ts";
+import { getNetworkBody } from "../../lib/studio-client.ts";
 import { JsonWorkspace } from "../ValueEditor.tsx";
 import { EXPORT_FORMATS, exportRequest, type ExportFormat } from "../../lib/network-export.ts";
 import { NetworkReplayModal } from "./NetworkReplayModal.tsx";
@@ -72,8 +73,11 @@ export function NetworkDetail() {
           <>
             <HeaderTable title="Request headers" headers={request.requestHeaders} />
             <BodySection
+              key={`${request.id}-request`}
               title="Request body"
               body={request.requestBody}
+              requestId={request.id}
+              side="request"
               sourceName={`${request.path} request`}
             />
           </>
@@ -81,8 +85,11 @@ export function NetworkDetail() {
           <>
             <HeaderTable title="Response headers" headers={request.responseHeaders} />
             <BodySection
+              key={`${request.id}-response`}
               title="Response body"
               body={request.responseBody}
+              requestId={request.id}
+              side="response"
               sourceName={request.path}
             />
           </>
@@ -302,37 +309,70 @@ function HeaderTable({ title, headers }: { title: string; headers: Record<string
 function BodySection({
   title,
   body,
+  requestId,
+  side,
   sourceName,
 }: {
   title: string;
   body: NetworkBody | null;
+  requestId: string;
+  side: "request" | "response";
   sourceName: string;
 }) {
-  const hasText = body !== null && body.text.length > 0;
+  const [full, setFull] = useState<NetworkBody | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const effective = full ?? body;
+  const hasText = effective !== null && effective.text.length > 0;
+
+  const loadFull = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await getNetworkBody(requestId, side);
+      if (result) setFull(result);
+      else setError("Full body is no longer available on the device.");
+    } catch {
+      setError("Failed to load full body.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <div className="mb-1 flex items-center gap-2">
         <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">{title}</h3>
-        {body && body.size > 0 ? (
-          <span className="text-[10px] text-text-subtle">{formatBytes(body.size)}</span>
+        {effective && effective.size > 0 ? (
+          <span className="text-[10px] text-text-subtle">{formatBytes(effective.size)}</span>
         ) : null}
       </div>
 
-      {!body || (body.size === 0 && !hasText) ? (
+      {!effective || (effective.size === 0 && !hasText) ? (
         <p className="text-[12px] text-text-subtle">No body.</p>
-      ) : body.kind === "binary" || body.kind === "form" ? (
+      ) : effective.kind === "binary" || effective.kind === "form" ? (
         <p className="text-[12px] text-text-subtle">
-          {body.kind === "binary" ? "Binary content" : "Form data"} · {formatBytes(body.size)}
+          {effective.kind === "binary" ? "Binary content" : "Form data"} · {formatBytes(effective.size)}
         </p>
       ) : (
         <div className="flex min-h-[220px] flex-1 flex-col">
-          {body.truncated ? (
-            <p className="mb-1 flex items-center gap-1 text-[10px] text-text-subtle">
-              <ArrowDownUp size={11} strokeWidth={1.5} />
-              Preview truncated to {formatBytes(body.text.length)} — full body on demand (soon).
-            </p>
+          {effective.truncated ? (
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <p className="flex items-center gap-1 text-[10px] text-text-subtle">
+                <ArrowDownUp size={11} strokeWidth={1.5} />
+                Preview truncated to {formatBytes(effective.text.length)}.
+              </p>
+              <button
+                onClick={loadFull}
+                disabled={loading}
+                className="rounded border border-border bg-surface-raised px-1.5 py-0.5 text-[10px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-50"
+              >
+                {loading ? "Loading…" : "Load full body"}
+              </button>
+            </div>
           ) : null}
-          <JsonWorkspace draft={body.text} onDraftChange={() => {}} sourceName={sourceName} />
+          {error ? <p className="mb-1 text-[10px] text-deleted">{error}</p> : null}
+          <JsonWorkspace draft={effective.text} onDraftChange={() => {}} sourceName={sourceName} />
         </div>
       )}
     </section>

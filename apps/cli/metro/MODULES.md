@@ -1,10 +1,14 @@
 # NativeScope — sistema de módulos (contrato de encaixe)
 
-NativeScope é modular e **opt-in**. Storage é um módulo; outros (ex.: **network**)
-plugam no mesmo terreno sem tocar no storage, no transporte nem no resolver.
+NativeScope é modular e **opt-in**. Storage e **network** são módulos; ambos
+plugam no mesmo terreno sem tocar um no outro, no transporte nem no resolver.
 
-Este doc é o contrato para adicionar um módulo novo — pensado para o módulo de
-**network**, mas vale para qualquer um.
+Este doc é o contrato para adicionar um módulo novo. O módulo de **network** é a
+**implementação de referência** — cada passo abaixo aponta para o código real:
+
+- Runtime: [`packages/runtime/src/modules/network`](../../../packages/runtime/src/modules/network) (patch de XHR, buffer, replay).
+- Desktop: [`apps/desktop/src/components/network`](../../desktop/src/components/network) (lista, detalhe, diff, storage-impact).
+- Payload: [`packages/protocol/src/network.ts`](../../../packages/protocol/src/network.ts).
 
 ## Como o terreno funciona
 

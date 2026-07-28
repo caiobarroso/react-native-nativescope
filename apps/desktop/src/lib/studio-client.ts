@@ -14,7 +14,9 @@ import {
   databaseSearchResultSchema,
   exportResultSchema,
   networkReplayResultSchema,
+  networkGetBodyResultSchema,
   type AnyMessage,
+  type NetworkBody,
   type CellValue,
   type CommandMessage,
   type ExecuteResult,
@@ -539,6 +541,18 @@ export async function sendModuleCommand(
     type: "module.command",
     payload: { module, command, ...(data !== undefined ? { data } : {}) },
   });
+}
+
+/** Rede: busca o corpo ÍNTEGRO de uma request capturada (quando o preview veio
+ * truncado). null quando o device já evictou a request do buffer. */
+export async function getNetworkBody(
+  id: string,
+  side: "request" | "response",
+): Promise<NetworkBody | null> {
+  const result = await sendModuleCommand("network", "get-body", { id, side });
+  const parsed = networkGetBodyResultSchema.safeParse(result);
+  if (!parsed.success || !parsed.data.available) return null;
+  return parsed.data.body;
 }
 
 /** Rede: reexecuta uma request no device. Devolve o id da nova request (ela
