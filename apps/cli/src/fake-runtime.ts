@@ -253,6 +253,7 @@ export function startFakeRuntime(options: {
   ];
   const netStatusText: Record<number, string> = { 200: "OK", 404: "Not Found", 500: "Internal Server Error" };
   let netId = 1;
+  let netCursor = 0;
   const emittedById = new Map<string, Record<string, unknown>>();
   const emitRequest = (spec: NetSpec): void => {
     const q = spec.pathq.indexOf("?");
@@ -408,13 +409,15 @@ export function startFakeRuntime(options: {
       sqlite.notifyNativeChange("proline.db", "visits", Number(insert.lastInsertRowid));
     }, 9000),
 
-    // Network: burst inicial (após o handshake) + tráfego contínuo.
+    // Network: burst inicial (após o handshake) + tráfego contínuo determinístico
+    // (round-robin) — cada reload do Studio reenche rápido e previsível.
     setTimeout(() => {
       for (const spec of netSpecs) emitRequest(spec);
     }, 900),
     setInterval(() => {
-      emitRequest(netSpecs[Math.floor(Math.random() * netSpecs.length)]!);
-    }, 4000),
+      emitRequest(netSpecs[netCursor % netSpecs.length]!);
+      netCursor += 1;
+    }, 2000),
   ];
 
   return {
