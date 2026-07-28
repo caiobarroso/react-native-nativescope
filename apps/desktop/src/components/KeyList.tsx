@@ -22,7 +22,7 @@ import {
   searchKeys,
   setValue,
 } from "../lib/studio-client.ts";
-import { generateTypeScript } from "./ValueEditor.tsx";
+import { generateTypeScript } from "../lib/typescript-gen.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 

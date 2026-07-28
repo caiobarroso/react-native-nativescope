@@ -1,5 +1,5 @@
 import type { NetworkRequest } from "@rnsi/protocol";
-import { generateTypeScript } from "../components/ValueEditor.tsx";
+import { generateTypeScript } from "./typescript-gen.ts";
 
 /**
  * Exporta uma request capturada para formatos que o dev cola direto no código,
