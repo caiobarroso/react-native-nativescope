@@ -358,3 +358,131 @@ describe("network module — replay", () => {
     expect(fake.events.length).toBe(before);
   });
 });
+
+// -------------------------------------------------------------- wrap de fetch
+// O Expo (SDK 52+) troca o global.fetch por uma implementação NATIVA que NÃO
+// passa por XMLHttpRequest — então o módulo também envolve o fetch. Estes testes
+// blindam esse caminho e a de-duplicação (insideFetch) do caso whatwg.
+
+interface FakeResponse {
+  status: number;
+  statusText: string;
+  ok: boolean;
+  headers: { forEach(cb: (value: string, key: string) => void): void };
+  clone(): { text(): Promise<string> };
+  text(): Promise<string>;
+}
+
+function fakeResponse(status: number, body: string, headers: Record<string, string>): FakeResponse {
+  const entries = Object.entries(headers);
+  return {
+    status,
+    statusText: status === 200 ? "OK" : "",
+    ok: status >= 200 && status < 300,
+    headers: {
+      forEach(cb) {
+        for (const [key, value] of entries) cb(value, key);
+      },
+    },
+    clone: () => ({ text: () => Promise.resolve(body) }),
+    text: () => Promise.resolve(body),
+  };
+}
+
+/** Drena microtasks — a captura de fetch é async (Promise.then + clone().text()). */
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+};
+
+describe("network module — wrap de fetch (Expo nativo / whatwg)", () => {
+  const originalXHR = (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest;
+  const originalFetch = (globalThis as { fetch?: unknown }).fetch;
+  let cleanup: (() => void) | null = null;
+
+  afterEach(() => {
+    // Restaura o fetch e cancela o timer de re-wrap (evita vazar entre testes).
+    cleanup?.();
+    cleanup = null;
+    (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = originalXHR;
+    (globalThis as { fetch?: unknown }).fetch = originalFetch;
+  });
+
+  function setup(fetchImpl: (input: unknown, init?: unknown) => unknown): FakeRuntime {
+    class XHR extends FakeXHR {}
+    (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = XHR;
+    (globalThis as { fetch?: unknown }).fetch = fetchImpl;
+    const fake = fakeRuntime();
+    cleanup = installNetworkModule(fake.runtime);
+    return fake;
+  }
+
+  function currentFetch(): (input: unknown, init?: unknown) => Promise<FakeResponse> {
+    return (globalThis as unknown as { fetch: (i: unknown, x?: unknown) => Promise<FakeResponse> })
+      .fetch;
+  }
+
+  it("envolve o global.fetch e captura request + response", async () => {
+    const fake = setup(() =>
+      Promise.resolve(fakeResponse(200, '{"ok":true}', { "content-type": "application/json" })),
+    );
+    const res = await currentFetch()("https://api.app.com/users?page=1", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok" },
+      body: '{"q":1}',
+    });
+    // O corpo do app continua legível — lemos um clone, não o original.
+    expect(await res.text()).toBe('{"ok":true}');
+    await flush();
+
+    expect(fake.events).toHaveLength(1);
+    const record = fake.events[0]!.data as NetworkRequest;
+    expect(record.method).toBe("POST");
+    expect(record.origin).toBe("https://api.app.com");
+    expect(record.path).toBe("/users");
+    expect(record.query).toBe("page=1");
+    expect(record.status).toBe(200);
+    expect(record.ok).toBe(true);
+    expect(record.requestHeaders.Authorization).toBe("Bearer tok");
+    expect(record.requestBody?.text).toBe('{"q":1}');
+    expect(record.responseBody?.text).toBe('{"ok":true}');
+    expect(record.responseBody?.kind).toBe("json");
+  });
+
+  it("rejeição do fetch vira ok:false + error", async () => {
+    const fake = setup(() => Promise.reject(new Error("Network request failed")));
+    await currentFetch()("https://api.app.com/down").catch(() => {});
+    await flush();
+
+    expect(fake.events).toHaveLength(1);
+    const record = fake.events[0]!.data as NetworkRequest;
+    expect(record.status).toBeNull();
+    expect(record.ok).toBe(false);
+    expect(record.error).toBe("Network request failed");
+  });
+
+  it("não conta em dobro quando o fetch usa um XHR interno (whatwg)", async () => {
+    // Simula o whatwg-fetch: ao rodar, cria e dispara um XHR SINCRONAMENTE — que
+    // o patch de XHR também veria se o guard insideFetch não o suprimisse.
+    const fake = setup((input) => {
+      const Ctor = (globalThis as unknown as { XMLHttpRequest: new () => FakeXHR }).XMLHttpRequest;
+      const xhr = new Ctor();
+      xhr.open("GET", String(input));
+      xhr.send();
+      xhr.respond(200, "{}", "content-type: application/json");
+      return Promise.resolve(fakeResponse(200, "{}", { "content-type": "application/json" }));
+    });
+    await currentFetch()("https://api.app.com/thing");
+    await flush();
+
+    // Exatamente 1 — o XHR interno foi suprimido (insideFetch).
+    expect(fake.events).toHaveLength(1);
+    expect((fake.events[0]!.data as NetworkRequest).url).toBe("https://api.app.com/thing");
+  });
+
+  it("respeita ignoreUrls também no caminho de fetch", async () => {
+    const fake = setup(() => Promise.resolve(fakeResponse(200, "{}", {})));
+    await currentFetch()("http://localhost:8081/symbolicate");
+    await flush();
+    expect(fake.events).toHaveLength(0);
+  });
+});
