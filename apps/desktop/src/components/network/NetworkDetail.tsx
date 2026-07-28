@@ -7,6 +7,7 @@ import { JsonWorkspace } from "../ValueEditor.tsx";
 import { EXPORT_FORMATS, exportRequest, type ExportFormat } from "../../lib/network-export.ts";
 import { NetworkReplayModal } from "./NetworkReplayModal.tsx";
 import { NetworkDiff } from "./NetworkDiff.tsx";
+import { StorageImpactPanel } from "./StorageImpactPanel.tsx";
 import {
   formatBytes,
   formatDuration,
@@ -44,6 +45,7 @@ export function NetworkDetail() {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-border">
       <RequestSummary request={request} />
+      <StorageImpactPanel request={request} />
 
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-surface-sunken px-2">
         <TabButton active={tab === "request"} onClick={() => setTab("request")}>

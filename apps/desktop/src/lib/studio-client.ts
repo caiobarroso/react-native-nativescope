@@ -563,6 +563,35 @@ export async function replayRequest(
   return parsed.success ? parsed.data.id : null;
 }
 
+/**
+ * "Abrir no Storage" (integração Network↔Storage): troca para o módulo de
+ * storage e navega até a chave/tabela impactada, reusando o foco de atividade
+ * (mesmo realce do feed do storage).
+ */
+export function openInStorage(item: {
+  providerId: string;
+  instanceId: string;
+  providerLabel: string;
+  target: { kind: "key-value"; key: string } | { kind: "database"; table: string; rowId: number | null };
+}): void {
+  const store = useStudio.getState();
+  store.setActiveModule("storage");
+  store.focusActivity({
+    id: -1,
+    timestamp: Date.now(),
+    providerId: item.providerId,
+    providerLabel: item.providerLabel,
+    instanceId: item.instanceId,
+    key: item.target.kind === "key-value" ? item.target.key : item.target.table,
+    change: "updated",
+    source: "app",
+    preview: null,
+    target: item.target,
+  });
+  if (item.target.kind === "database") void loadTables(item.providerId, item.instanceId);
+  else void loadKeys(item.providerId, item.instanceId);
+}
+
 export async function refreshProviders(): Promise<void> {
   const result = await sendCommand({ type: "provider.list", payload: {} });
   const parsed = providerListResultSchema.safeParse(result);

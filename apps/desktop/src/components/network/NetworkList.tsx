@@ -1,7 +1,8 @@
 import { useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDown, ChevronRight, Radio } from "lucide-react";
+import { ChevronDown, ChevronRight, Database, Radio } from "lucide-react";
 import { useNetwork } from "../../lib/network-store.ts";
+import { useStorageAttribution } from "../../lib/use-storage-impact.ts";
 import { buildDisplayRows, type DisplayRow } from "../../lib/network-select.ts";
 import {
   endpointLabel,
@@ -21,6 +22,7 @@ export function NetworkList() {
   const selectedId = useNetwork((s) => s.selectedId);
   const select = useNetwork((s) => s.select);
   const toggleGroup = useNetwork((s) => s.toggleGroup);
+  const attribution = useStorageAttribution();
   const parentRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(
@@ -76,6 +78,7 @@ export function NetworkList() {
                     <RequestRow
                       row={row}
                       active={row.request.id === selectedId}
+                      impact={attribution.counts.get(row.request.id) ?? 0}
                       onSelect={() => select(row.request.id)}
                     />
                   )}
@@ -120,10 +123,12 @@ function GroupRow({
 function RequestRow({
   row,
   active,
+  impact,
   onSelect,
 }: {
   row: Extract<DisplayRow, { kind: "request" }>;
   active: boolean;
+  impact: number;
   onSelect: () => void;
 }) {
   const request = row.request;
@@ -140,6 +145,15 @@ function RequestRow({
       <span className="min-w-0 flex-1 truncate font-mono text-text" title={endpointLabel(request)}>
         {endpointLabel(request)}
       </span>
+      {impact > 0 && (
+        <span
+          className="inline-flex shrink-0 items-center gap-0.5 rounded bg-accent-wash px-1 py-0.5 font-mono text-[9px] font-semibold text-accent"
+          title={`Changed ${impact} storage ${impact === 1 ? "entry" : "entries"} right after this response`}
+        >
+          <Database size={9} strokeWidth={2} />
+          {impact}
+        </span>
+      )}
       <span className={`w-10 shrink-0 text-right font-mono text-[11px] font-semibold ${statusColorClass(request)}`}>
         {statusLabel(request)}
       </span>
