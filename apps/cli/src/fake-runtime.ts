@@ -301,6 +301,33 @@ export function startFakeRuntime(options: {
     };
     emittedById.set(record.id as string, record);
     runtime.sendModuleEvent("network", "request", record);
+
+    // Efeito de storage correlacionado — o "app" escreve logo após certas
+    // respostas, para demonstrar o storage-impact (correlação temporal).
+    if (spec.pathq.startsWith("/login") || spec.pathq.startsWith("/profile")) {
+      const kind = spec.pathq.startsWith("/login") ? "login" : "profile";
+      setTimeout(() => {
+        try {
+          if (kind === "login") {
+            adapter.writeFromApp("default", "auth.token", {
+              type: "string",
+              value: `eyJhbGciOiJIUzI1NiJ9.${Math.random().toString(36).slice(2)}`,
+            });
+            mmkv.writeFromApp("default", "auth.user", {
+              type: "json",
+              value: JSON.stringify({ id: 7, name: "Caio", premium: false }),
+            });
+          } else {
+            adapter.writeFromApp("default", "user.profile", {
+              type: "json",
+              value: JSON.stringify({ name: "Caio", premium: false, seenAt: Date.now() }),
+            });
+          }
+        } catch {
+          /* instrumentação do fake nunca propaga */
+        }
+      }, 40);
+    }
   };
 
   // Replay simulado: reexecuta a partir do capturado + overrides, emitindo uma
