@@ -19,6 +19,7 @@ import {
   getGraphQLRequestInfo,
   getGraphQLResponseInfo,
 } from "../../lib/network-graphql.ts";
+import { useArrowNav, type ArrowNavItem } from "../../lib/use-arrow-nav.ts";
 import {
   endpointLabel,
   formatClock,
@@ -52,6 +53,8 @@ export function NetworkList() {
   const sessionEarlierIds = useNetwork((s) => s.sessionEarlierIds);
   const showEarlier = useNetwork((s) => s.showEarlier);
   const select = useNetwork((s) => s.select);
+  const insightsOpen = useNetwork((s) => s.insightsOpen);
+  const compareId = useNetwork((s) => s.compareId);
   const toggleGroup = useNetwork((s) => s.toggleGroup);
   const setShowEarlier = useNetwork((s) => s.setShowEarlier);
   const clearEarlier = useNetwork((s) => s.clearEarlier);
@@ -106,6 +109,22 @@ export function NetworkList() {
     estimateSize: (index) =>
       rows[index]?.kind === "session" ? SESSION_ROW_HEIGHT : ROW_HEIGHT,
     overscan: 14,
+  });
+
+  // ↑/↓ navegam entre as requests exibidas (pula cabeçalhos de grupo/sessão).
+  const navItems = useMemo<ArrowNavItem[]>(
+    () =>
+      rows.flatMap((row, index) =>
+        row.kind === "request" ? [{ id: row.request.id, index }] : [],
+      ),
+    [rows],
+  );
+  useArrowNav({
+    enabled: !insightsOpen && compareId === null,
+    items: navItems,
+    selectedId,
+    onSelect: select,
+    scrollToIndex: (index) => virtualizer.scrollToIndex(index),
   });
 
   return (
@@ -253,7 +272,7 @@ function GroupRow({
   return (
     <button
       onClick={onToggle}
-      className={`flex h-full w-full items-center gap-2 border-b border-b-border/60 border-l-2 border-l-transparent bg-surface-sunken px-3 text-left text-[12px] hover:bg-surface-hover ${
+      className={`rnsi-list-row flex h-full w-full items-center gap-2 border-b border-b-border/60 border-l-2 border-l-transparent bg-surface-sunken px-3 text-left text-[12px] hover:bg-surface-hover ${
         arrived ? "rnsi-network-row-arrival" : ""
       }`}
     >
@@ -312,7 +331,7 @@ function RequestRow({
   return (
     <button
       onClick={onSelect}
-      className={`flex h-full w-full items-center gap-2 border-b border-b-border/60 border-l-2 pr-3 text-left text-[12px] ${
+      className={`rnsi-list-row flex h-full w-full items-center gap-2 border-b border-b-border/60 border-l-2 pr-3 text-left text-[12px] ${
         row.indent ? "pl-8" : "pl-3"
       } ${active ? "border-l-accent bg-accent-wash" : "border-l-transparent hover:bg-surface-hover"} ${
         arrived ? "rnsi-network-row-arrival" : ""

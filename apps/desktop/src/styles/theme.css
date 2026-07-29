@@ -150,6 +150,15 @@ body {
   box-shadow: none !important;
 }
 
+/* Linhas de listagem (chaves, requests): a SELEÇÃO (barra/wash coral) já é o
+   indicador. O anel de foco sobreposto confunde — o foco do DOM fica na linha
+   clicada enquanto a seleção pode ter ido pra outra (navegação por seta). */
+.rnsi-list-row:focus,
+.rnsi-list-row:focus-visible {
+  outline: none !important;
+  outline-offset: 0;
+}
+
 .rnsi-switch {
   position: relative;
   display: inline-flex;
