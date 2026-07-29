@@ -11,41 +11,76 @@
 export interface DocGroup {
   title: string;
   product?: string;
+  module: "storage" | "network";
   items: { slug: string; title: string }[];
 }
 
-export const docsNav: DocGroup[] = [
+export const storageDocsNav: DocGroup[] = [
   {
-    product: "Storage Engine",
+    module: "storage",
+    product: "Storage",
     title: "Getting started",
     items: [
-      { slug: "introduction", title: "Introduction" },
-      { slug: "quickstart", title: "Quickstart" },
-      { slug: "devices", title: "Devices & connection" },
-      { slug: "storage-providers", title: "Storage providers" },
+      { slug: "storage/introduction", title: "Introduction" },
+      { slug: "storage/quickstart", title: "Quickstart" },
+      { slug: "storage/devices", title: "Devices & connection" },
+      { slug: "storage/storage-providers", title: "Storage providers" },
     ],
   },
   {
-    product: "Storage Engine",
+    module: "storage",
+    product: "Storage",
     title: "Guides",
     items: [
-      { slug: "configuration", title: "Configuration" },
-      { slug: "react-query", title: "React Query bridge" },
-      { slug: "large-datasets", title: "Large datasets" },
+      { slug: "storage/configuration", title: "Configuration" },
+      { slug: "storage/react-query", title: "React Query bridge" },
+      { slug: "storage/large-datasets", title: "Large datasets" },
     ],
   },
   {
-    product: "Storage Engine",
+    module: "storage",
+    product: "Storage",
     title: "Reference",
     items: [
-      { slug: "cli", title: "CLI" },
-      { slug: "api", title: "App API" },
-      { slug: "privacy", title: "Privacy & security" },
+      { slug: "storage/cli", title: "CLI" },
+      { slug: "storage/api", title: "App API" },
+      { slug: "storage/privacy", title: "Privacy & security" },
     ],
   },
 ];
 
+export const networkDocsNav: DocGroup[] = [
+  {
+    module: "network",
+    product: "Network",
+    title: "Getting started",
+    items: [
+      { slug: "network/introduction", title: "Introduction" },
+      { slug: "network/quickstart", title: "Quickstart" },
+      { slug: "network/requests", title: "Inspecting requests" },
+    ],
+  },
+  {
+    module: "network",
+    product: "Network",
+    title: "Workflows",
+    items: [
+      { slug: "network/replay", title: "Replay & compare" },
+      { slug: "network/storage-impact", title: "Storage impact" },
+    ],
+  },
+  {
+    module: "network",
+    product: "Network",
+    title: "Reference",
+    items: [
+      { slug: "network/configuration", title: "Configuration" },
+      { slug: "network/safety", title: "Safety & limits" },
+    ],
+  },
+];
+
+export const docsNav: DocGroup[] = [...storageDocsNav, ...networkDocsNav];
+
 /** Ordem linear achatada — alimenta os links de anterior/próximo. */
-export const docsOrder: string[] = docsNav.flatMap((group) =>
-  group.items.map((item) => item.slug),
-);
+export const docsOrder: string[] = docsNav.flatMap((group) => group.items.map((item) => item.slug));

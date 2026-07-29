@@ -1,0 +1,68 @@
+---
+title: Network quickstart
+description: Enable Network in one config line and verify that requests reach the Studio.
+---
+
+## Install and run
+
+NativeScope uses one package for every module.
+
+<InstallCommand install="react-native-nativescope" />
+
+Create `nativescope.config.ts` in the app root:
+
+```ts
+import { defineNativeScopeConfig } from "react-native-nativescope/app";
+
+export default defineNativeScopeConfig({
+  modules: {
+    network: true,
+  },
+});
+```
+
+Then start the project through NativeScope:
+
+<InstallCommand run="nativescope" />
+
+Open the app normally. **Network → Requests** appears in the Studio as soon as the module connects.
+
+## Use Network and Storage together
+
+Modules live in the same object. There is still one dependency, one command and one Studio.
+
+```ts
+export default defineNativeScopeConfig({
+  modules: {
+    storage: {
+      indicator: true,
+      reactQuery: true,
+    },
+    network: true,
+  },
+});
+```
+
+Storage discovery itself remains automatic. The `storage` block above enables Storage and tunes its
+app-side behavior; `network: true` enables Network capture.
+
+## Verify capture
+
+Trigger any screen that calls `fetch` or `XMLHttpRequest`. The newest request appears first with:
+
+- method and endpoint;
+- status;
+- elapsed time;
+- captured size;
+- a replay tag when the request came from the replay editor.
+
+Select it to inspect the complete exchange.
+
+## If nothing appears
+
+1. Confirm the app was restarted after adding `network: true`.
+2. Confirm Metro is running through `nativescope`.
+3. Check that the request uses global `fetch` or `XMLHttpRequest`.
+4. Check `ignoreUrls` if you configured custom exclusions.
+
+The Network module does not currently capture WebSocket frames.

@@ -12,7 +12,7 @@ const articles = [
   {
     href: "/journal/zero-config",
     label: "Architecture",
-    title: "Zero config, for real",
+    title: "Plug-and-play, by construction",
     description: "The resolver, transparent shims and release guard behind the one-command setup.",
     meta: "8 min read",
   },

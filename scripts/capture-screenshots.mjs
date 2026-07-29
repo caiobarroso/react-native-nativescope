@@ -61,7 +61,9 @@ let chromium;
 try {
   ({ chromium } = await import("playwright-core"));
 } catch {
-  console.error("✗ playwright-core is missing. Run `pnpm install` at the repo root.");
+  console.error(
+    "✗ playwright-core is missing. Run `pnpm install` at the repo root.",
+  );
   process.exit(2);
 }
 
@@ -73,8 +75,19 @@ mkdirSync(OUT, { recursive: true });
 async function startSession(extraArgs) {
   const child = spawn(
     process.execPath,
-    [CLI, "--project", "apps/playground", "--fake", ...extraArgs,
-     "--no-open", "--no-metro", "--port", String(PORT), "--token", TOKEN],
+    [
+      CLI,
+      "--project",
+      "apps/playground",
+      "--fake",
+      ...extraArgs,
+      "--no-open",
+      "--no-metro",
+      "--port",
+      String(PORT),
+      "--token",
+      TOKEN,
+    ],
     { cwd: ROOT, stdio: "ignore" },
   );
   const deadline = Date.now() + 60_000;
@@ -100,7 +113,10 @@ const SITE = "http://127.0.0.1:4783";
 
 /** Sobe a landing (o emulador desenhado mora nela) e espera compilar. */
 async function startSite() {
-  const child = spawn("pnpm", ["--filter", "@rnsi/site", "dev"], { cwd: ROOT, stdio: "ignore" });
+  const child = spawn("pnpm", ["--filter", "@rnsi/site", "dev"], {
+    cwd: ROOT,
+    stdio: "ignore",
+  });
   const deadline = Date.now() + 180_000; // next dev frio compila devagar
   while (Date.now() < deadline) {
     try {
@@ -115,7 +131,10 @@ async function startSite() {
 
 // ------------------------------------------------------------------ browser
 
-const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+const browser = await chromium.launch({
+  executablePath: chromePath,
+  headless: true,
+});
 const page = await browser.newPage({
   viewport: { width: 1280, height: 720 },
   deviceScaleFactor: 2, // os arquivos saem 2560x1440; o site declara 1280x720
@@ -131,7 +150,9 @@ const shot = async (name) => {
 /** Volta a uma UI limpa sem perder o estado do storage. */
 async function freshStudio() {
   await page.goto(STUDIO, { waitUntil: "networkidle" });
-  await page.getByText("connected", { exact: true }).waitFor({ timeout: 30_000 });
+  await page
+    .getByText("connected", { exact: true })
+    .waitFor({ timeout: 30_000 });
   await page.waitForTimeout(2500); // deixa a activity feed encher
 }
 
@@ -168,6 +189,8 @@ const needsPlain = [
   "sql-console-light",
   "sql-console-dark",
   "snapshot-diff-light",
+  "network-inspector-light",
+  "network-replay-light",
 ].some(want);
 
 if (needsPlain) {
@@ -185,6 +208,45 @@ if (needsPlain) {
       await page.getByText("user.profile", { exact: true }).first().click();
       await page.waitForTimeout(1500);
       await shot("json-visual-light");
+    }
+
+    if (want("network-inspector-light") || want("network-replay-light")) {
+      await freshStudio();
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const requestsButton = page.getByRole("button", { name: /Requests/ });
+      if (await requestsButton.count()) await requestsButton.first().click();
+      else await page.getByText("Requests", { exact: true }).first().click();
+      await page
+        .getByPlaceholder(/Search url, headers, body/i)
+        .waitFor({ timeout: 30_000 });
+      await page.waitForTimeout(7000);
+      const profileRows = page
+        .locator("button")
+        .filter({ hasText: "/profile" });
+      if ((await profileRows.count()) === 1) {
+        await profileRows.first().click();
+        await page.waitForTimeout(250);
+      }
+      await profileRows.last().click();
+      await page.waitForTimeout(1800);
+
+      if (want("network-inspector-light"))
+        await shot("network-inspector-light");
+
+      if (want("network-replay-light")) {
+        await page
+          .getByRole("button", { name: /Replay/i })
+          .first()
+          .click();
+        await page
+          .getByRole("heading", { name: "Replay request" })
+          .waitFor({ timeout: 15_000 });
+        await page.getByRole("button", { name: /Headers/ }).click();
+        await page.waitForTimeout(900);
+        await shot("network-replay-light");
+      }
+
+      await page.setViewportSize({ width: 1280, height: 720 });
     }
 
     if (want("sql-console-light") || want("sql-console-dark")) {
@@ -231,7 +293,10 @@ if (needsPlain) {
       await page.getByRole("button", { name: "New key" }).click();
       await page.waitForTimeout(500);
       await page.getByPlaceholder("e.g. feature.newHome").fill("user.plan");
-      await page.locator('input[type="text"]:not([placeholder])').first().fill("pro");
+      await page
+        .locator('input[type="text"]:not([placeholder])')
+        .first()
+        .fill("pro");
       await page.getByRole("button", { name: "Create", exact: true }).click();
       await page.waitForTimeout(1200);
 
@@ -297,7 +362,10 @@ if (want("phone-app")) {
     });
     await phonePage.waitForTimeout(400);
 
-    await phone.screenshot({ path: resolve(OUT, "phone-app.png"), omitBackground: true });
+    await phone.screenshot({
+      path: resolve(OUT, "phone-app.png"),
+      omitBackground: true,
+    });
     console.log("✓ phone-app.png");
   } finally {
     await phonePage.close();

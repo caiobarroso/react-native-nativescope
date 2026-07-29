@@ -20,7 +20,7 @@ both, or run Metro yourself.
 
 NativeScope starts Metro for you with the resolver already attached, brings up the service, sets up
 the Android tunnel, and opens the studio. One command, nothing to wire. This is the intended path
-and what the [Quickstart](/docs/quickstart) uses.
+and what the [Quickstart](/docs/storage/quickstart) uses.
 
 ### Bring your own Metro
 
@@ -68,7 +68,7 @@ AsyncStorage, MMKV and SQLite — so the only axis that matters is how the app r
 
 | Environment | iOS | Android |
 | --- | --- | --- |
-| Simulator / Emulator | ✅ zero-config | ✅ zero-config |
+| Simulator / Emulator | ✅ automatic | ✅ automatic |
 | Physical device | ✅ same Wi-Fi + `--lan` | ✅ USB cable (auto), or same Wi-Fi + `--lan` |
 
 MMKV and SQLite are native modules, so on a physical device you're running a development build (not
@@ -106,7 +106,7 @@ your app *already* used to load its bundle from Metro, so it finds your Mac auto
 
 ### Physical Android — USB or Wi-Fi
 
-Over **USB** it's zero-config — the `adb reverse` tunnel handles everything, no flag needed. If you'd
+Over **USB** it's automatic — the `adb reverse` tunnel handles everything, no flag needed. If you'd
 rather go wireless, `--lan` works exactly as it does for the iPhone: same Wi-Fi, LAN dev server, no
 cable.
 
@@ -133,5 +133,5 @@ runtime, and even then the origin check plus the session token still guard every
 
 ## Next
 
-- [CLI reference](/docs/cli) — every flag, including `--lan`, `--no-metro` and `--port`.
-- [Storage providers](/docs/storage-providers) — what's supported, per provider.
+- [CLI reference](/docs/storage/cli) — every flag, including `--lan`, `--no-metro` and `--port`.
+- [Storage providers](/docs/storage/storage-providers) — what's supported, per provider.

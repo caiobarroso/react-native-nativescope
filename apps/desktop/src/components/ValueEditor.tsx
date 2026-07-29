@@ -49,6 +49,7 @@ import {
   type JsonFilterMode,
 } from "./JsonFilterBuilder.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
+import { AutoTextarea } from "./AutoTextarea.tsx";
 
 const HISTORY_LABEL = {
   created: "created",
@@ -385,10 +386,12 @@ function JsonPrimitiveEditor({
   value,
   onChange,
   variant = "field",
+  readOnly = false,
 }: {
   value: unknown;
   onChange: (value: unknown) => void;
   variant?: "field" | "cell";
+  readOnly?: boolean;
 }) {
   const [draft, setDraft] = useState(value === null ? "" : String(value ?? ""));
   const isCell = variant === "cell";
@@ -399,6 +402,25 @@ function JsonPrimitiveEditor({
   useEffect(() => {
     setDraft(value === null ? "" : String(value ?? ""));
   }, [value]);
+
+  if (readOnly) {
+    const displayValue = value === null ? "null" : String(value);
+    const displayClass =
+      value === null
+        ? "text-deleted"
+        : typeof value === "boolean"
+          ? value
+            ? "text-created"
+            : "text-text-subtle"
+          : "text-text";
+    return (
+      <span
+        className={`block min-w-0 max-w-full whitespace-normal break-all px-3 py-2 font-mono text-[12px] ${displayClass}`}
+      >
+        {displayValue}
+      </span>
+    );
+  }
 
   function commit(): void {
     const next = parsePrimitiveDraft(draft, value);
@@ -512,14 +534,17 @@ function JsonDataGrid<Row>({
   rows,
   getRowKey,
   emptyLabel,
+  readOnly = false,
 }: {
   columns: Array<JsonGridColumn<Row>>;
   rows: Row[];
   getRowKey: (row: Row) => string;
   emptyLabel: string;
+  readOnly?: boolean;
 }) {
-  const templateColumns = columns.map((column) => column.width).join(" ");
-  const minimumGridWidth = columns.reduce((total, column) => {
+  const visibleColumns = readOnly ? columns.filter((column) => column.id !== "__select") : columns;
+  const templateColumns = visibleColumns.map((column) => column.width).join(" ");
+  const minimumGridWidth = visibleColumns.reduce((total, column) => {
     const pixelWidth = column.width.match(/([\d.]+)px/)?.[1];
     return total + (pixelWidth ? Number(pixelWidth) : 180);
   }, 0);
@@ -547,7 +572,7 @@ function JsonDataGrid<Row>({
           className="sticky top-0 z-10 grid h-9 shrink-0 border-b border-border bg-surface font-mono text-[12px]"
           style={{ gridTemplateColumns: templateColumns }}
         >
-          {columns.map((column) => (
+          {visibleColumns.map((column) => (
             <div
               key={column.id}
               className={`min-w-0 border-r border-border ${column.className ?? ""}`}
@@ -569,13 +594,15 @@ function JsonDataGrid<Row>({
               return (
                 <div
                   key={getRowKey(row)}
+                  ref={virtualizer.measureElement}
+                  data-index={virtualItem.index}
                   className="grid min-h-8 border-b border-border font-mono text-[12px] hover:bg-surface-hover"
                   style={{ gridTemplateColumns: templateColumns }}
                 >
-                  {columns.map((column) => (
+                  {visibleColumns.map((column) => (
                     <div
                       key={column.id}
-                      className={`min-w-0 border-r border-border ${column.className ?? ""}`}
+                      className={`min-w-0 ${readOnly ? "overflow-hidden" : ""} border-r border-border ${column.className ?? ""}`}
                     >
                       {column.cell(row)}
                     </div>
@@ -942,10 +969,12 @@ function JsonVisualExplorer({
   value,
   sourceName,
   onChange,
+  readOnly = false,
 }: {
   value: unknown;
   sourceName?: string;
   onChange: (value: unknown, action?: JsonChangeAction) => void;
+  readOnly?: boolean;
 }) {
   const [path, setPath] = useState<JsonPath>([]);
   const [query, setQuery] = useState("");
@@ -1218,6 +1247,7 @@ function JsonVisualExplorer({
                 value={row.value}
                 onChange={(next) => updatePath([...path, row.index], next)}
                 variant="cell"
+              readOnly={readOnly}
               />
             );
           },
@@ -1305,13 +1335,14 @@ function JsonVisualExplorer({
               value={cellValue}
               onChange={(next) => updatePath(cellPath, next)}
               variant="cell"
+            readOnly={readOnly}
             />
           );
         },
       })),
     ];
     return cols;
-  }, [allVisibleArraySelected, current, path, selectedItems, value]);
+  }, [allVisibleArraySelected, current, path, readOnly, selectedItems, value]);
 
   const objectGridRows = useMemo<JsonObjectFieldRow[]>(
     () => objectEntries.map(([key, fieldValue]) => ({ key, value: fieldValue })),
@@ -1378,12 +1409,13 @@ function JsonVisualExplorer({
               value={row.value}
               onChange={(next) => updatePath(childPath, next)}
               variant="cell"
+            readOnly={readOnly}
             />
           );
         },
       },
     ];
-  }, [allObjectFieldsSelected, objectEntries, path, selectedItems, value]);
+  }, [allObjectFieldsSelected, objectEntries, path, readOnly, selectedItems, value]);
 
   function createArrayItem(targetPath: JsonPath, item: unknown): void {
     const target = getAtPath(value, targetPath);
@@ -1404,7 +1436,11 @@ function JsonVisualExplorer({
       <div className="flex h-full flex-col gap-3">
         <JsonVisualHeader sourceName={sourceName} path={path} onNavigate={navigate} />
         <div className="max-w-xl rounded-md border border-border bg-surface-raised p-4">
-          <JsonPrimitiveEditor value={current} onChange={(next) => updatePath(path, next)} />
+                    <JsonPrimitiveEditor
+            value={current}
+            onChange={(next) => updatePath(path, next)}
+            readOnly={readOnly}
+          />
         </div>
       </div>
     );
@@ -1446,7 +1482,7 @@ function JsonVisualExplorer({
                 {arrayRows.length} {arrayRows.length === 1 ? "result" : "results"}
               </span>
             )}
-            {selectedItems.size > 0 && (
+            {!readOnly && selectedItems.size > 0 && (
               <>
                 <span className="ml-2 inline-flex h-7 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
                   {selectedItems.size} selected
@@ -1475,7 +1511,8 @@ function JsonVisualExplorer({
                 </button>
               </>
             )}
-            <button
+            {!readOnly && (
+              <button
               onClick={() => {
                 setFilterDrawerOpen(false);
                 setAddModal({ kind: "array", path, array: current });
@@ -1484,7 +1521,8 @@ function JsonVisualExplorer({
             >
               <Plus size={12} strokeWidth={1.5} />
               Add
-            </button>
+              </button>
+            )}
           </div>
           <JsonFilterChipBar
             conditions={filterConditions}
@@ -1496,6 +1534,7 @@ function JsonVisualExplorer({
           <JsonDataGrid
             columns={arrayGridColumns}
             rows={arrayRows}
+            readOnly={readOnly}
             getRowKey={(row) => String(row.index)}
             emptyLabel={
               query.trim() || activeFilterCount > 0
@@ -1553,7 +1592,7 @@ function JsonVisualExplorer({
                 ? `${objectEntries.length} of ${objectKeys.length}`
                 : objectKeys.length} fields
             </span>
-            {selectedItems.size > 0 && (
+            {!readOnly && selectedItems.size > 0 && (
               <>
                 <span className="ml-2 inline-flex h-7 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
                   {selectedItems.size} selected
@@ -1582,7 +1621,8 @@ function JsonVisualExplorer({
                 </button>
               </>
             )}
-            <button
+            {!readOnly && (
+              <button
               onClick={() => {
                 setFilterDrawerOpen(false);
                 setAddModal({ kind: "field", path, keys: objectKeys });
@@ -1591,7 +1631,8 @@ function JsonVisualExplorer({
             >
               <Plus size={12} strokeWidth={1.5} />
               Add field
-            </button>
+              </button>
+            )}
           </div>
           <JsonFilterChipBar
             conditions={filterConditions}
@@ -1603,6 +1644,7 @@ function JsonVisualExplorer({
           <JsonDataGrid
             columns={objectGridColumns}
             rows={objectGridRows}
+            readOnly={readOnly}
             getRowKey={(row) => row.key}
             emptyLabel={
               query.trim() || activeFilterCount > 0
@@ -1735,11 +1777,13 @@ export function JsonWorkspace({
   onDraftChange,
   sourceName,
   minHeight = "min-h-0",
+  readOnly = false,
 }: {
   draft: string;
   onDraftChange: (value: string, action?: JsonChangeAction) => void;
   sourceName?: string;
   minHeight?: string;
+  readOnly?: boolean;
 }) {
   const [mode, setMode] = useState<"visual" | "tree" | "raw" | "ts">("visual");
   const [collapsed, setCollapsed] = useState<boolean | number>(2);
@@ -1879,6 +1923,7 @@ export function JsonWorkspace({
           <JsonVisualExplorer
             value={parsed.value}
             sourceName={sourceName}
+            readOnly={readOnly}
             onChange={(next, action) => onDraftChange(stringifyJson(next), action)}
           />
         ) : mode === "ts" && parsed.error === null ? (
@@ -1970,6 +2015,7 @@ export function JsonWorkspace({
         ) : (
           <textarea
             value={draft}
+            readOnly={readOnly}
             onChange={(e) => onDraftChange(e.target.value)}
             spellCheck={false}
             className="h-full min-h-72 w-full resize-none rounded-md border border-border bg-surface p-3 font-mono text-[12px] leading-relaxed text-text outline-none focus:border-accent"
@@ -1980,6 +2026,7 @@ export function JsonWorkspace({
             <p className="text-[12px] text-deleted">{parsed.error}</p>
             <textarea
               value={draft}
+              readOnly={readOnly}
               onChange={(e) => onDraftChange(e.target.value)}
               spellCheck={false}
               className="min-h-0 flex-1 resize-none rounded-md border border-border bg-surface p-3 font-mono text-[12px] leading-relaxed text-text outline-none focus:border-accent"
@@ -2624,14 +2671,15 @@ export function ValueEditor() {
             className="w-64 rounded-md border border-border bg-surface-raised px-3 py-1.5 font-mono text-[12px]"
           />
         ) : draftType === "string" ? (
-          <input
-            type="text"
+          // String simples: textarea que cresce e QUEBRA — mostra o valor
+          // inteiro (JWT, token) em vez de cortar na horizontal como um input.
+          <AutoTextarea
             value={draft}
-            onChange={(e) => {
+            ariaLabel={`Value of ${selectedKey}`}
+            onChange={(next) => {
               pendingActionRef.current = "edited";
-              setDraft(e.target.value);
+              setDraft(next);
             }}
-            className="w-full rounded-md border border-border bg-surface-raised px-3 py-1.5 font-mono text-[12px]"
           />
         ) : (
           <JsonWorkspace

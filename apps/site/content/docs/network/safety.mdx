@@ -1,0 +1,39 @@
+---
+title: Safety & limits
+description: Understand local transport, bounded capture, redaction, release behavior and replay side effects.
+---
+
+## Local transport
+
+Captured data travels from the connected development app to the local NativeScope service and
+Studio. NativeScope has no account system, telemetry pipeline or cloud data plane.
+
+Physical devices still require a network or adb route to your development machine. “Local” describes
+where the service and data live, not a promise that every packet uses loopback on every device.
+
+## Bounded memory
+
+Request history is a finite ring buffer. Bodies have separate preview and retention limits. Large
+payloads are not duplicated into every surface, and the Studio loads complete retained data only
+when you ask for it.
+
+## Credentials
+
+Use `redactHeaders` for app-specific secrets. Captured credentials remain sensitive even when they
+never leave your machine, especially during screen sharing or when saving screenshots.
+
+## Replay
+
+Replay sends a real request. It can create records, charge a test payment, delete data or trigger
+notifications depending on the endpoint. NativeScope exposes the method, path, credential source
+and modified sections before sending so the decision remains yours.
+
+## Release builds
+
+The Metro resolver bypasses NativeScope instrumentation when development mode is off. The project CI
+also exports a real release bundle and checks that the shim marker is absent.
+
+## Failure behavior
+
+Capture is diagnostic, never part of the app’s request contract. Instrumentation callbacks are
+guarded so an inspector failure does not become an application network failure.

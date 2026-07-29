@@ -1,0 +1,71 @@
+---
+title: Inspecting requests
+description: Search, group and inspect request, response and header data without losing the full payload.
+---
+
+## The request list
+
+The left pane is virtualized and newest-first. It stays responsive as the bounded session history
+grows. Use the toolbar to combine:
+
+- free-text search across URL, headers and body;
+- method filters: GET, POST, PUT, PATCH and DELETE;
+- status classes: 2xx, 3xx, 4xx and 5xx;
+- duration ranges;
+- grouping by endpoint.
+
+Grouping is useful for polling, retries and repeated mutations. Expand an endpoint to inspect each
+execution independently.
+
+## Focus a new capture
+
+Select **New capture** before exercising a new code path. NativeScope keeps the existing history,
+hides it below a local marker and shows only the requests that arrive from that point forward.
+Nothing is deleted: use **Show earlier** on the marker whenever you need the previous context.
+
+The same marker can permanently clear only the earlier requests. The toolbar also lets you pause
+capture, resume it later or clear the complete Network history. These controls affect only the
+Studio; they never pause, cancel or change requests in your app.
+
+## Request sounds
+
+Request sounds are off by default and stored as a local Studio preference. They can notify you
+about:
+
+- every new request;
+- network errors and 4xx/5xx responses only;
+- selected endpoints, using a path or a rule such as `POST /auth/*`.
+
+Endpoint rules can be selected from captured traffic or typed manually. Adjust the compact volume
+control to match your environment, then use **Test** to confirm the current browser allows audio.
+
+## Request detail
+
+The detail pane keeps four concerns separate:
+
+1. **Request** — URL, query, request headers and request body.
+2. **Response** — status, timing, size and the response body.
+3. **Response headers** — a dedicated key-value table for large header sets.
+4. **Storage impact** — storage changes correlated with this response, grouped by provider and
+   instance.
+
+JSON bodies use the NativeScope visual viewer in read-only mode. You can move through collections,
+search fields, filter structured values, switch to Tree or Raw, and copy data without exposing
+editing controls that cannot affect a captured response.
+
+## Large bodies
+
+The list receives a bounded preview first. By default that preview is 32 KB. The runtime can retain
+the complete body up to 2 MB and sends it only when the selected view asks for it.
+
+This distinction keeps request capture proportional to what you inspect instead of the total volume
+of the session.
+
+## Storage impact
+
+When storage changes immediately after a response, the request summary shows a live **Storage
+impact** count. Open it to inspect the affected entries in a dedicated surface without reducing the
+space available to request and response bodies. Select an entry to open that exact provider,
+instance and key in Storage.
+
+Read [Storage impact](/docs/network/storage-impact) for the timing model and its limits.

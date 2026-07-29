@@ -10,7 +10,7 @@ import { pageMetadata, techArticleSchema, breadcrumbSchema } from "@/lib/seo";
 import { JsonLd } from "@/components/seo/JsonLd";
 
 const ARTICLE = {
-  title: "Zero config, for real",
+  title: "Plug-and-play, by construction",
   description:
     "How NativeScope instruments the modules an app already uses without changing app code.",
   path: "/journal/zero-config",
@@ -31,7 +31,7 @@ export default function ZeroConfigArticlePage() {
   return (
     <ArticleShell
       eyebrow="Architecture / engineering note"
-      title="Zero config, for real"
+      title="Plug-and-play, by construction"
       description="A resolver, transparent development shims and a release guard — the architecture behind one command."
       readTime="8 min read"
     >
@@ -112,12 +112,13 @@ export default function ZeroConfigArticlePage() {
       </section>
 
       <section>
-        <p data-article-kicker>The escape hatch</p>
-        <h2>Configuration stays optional</h2>
+        <p data-article-kicker>The declaration</p>
+        <h2>Declare modules, discover instances</h2>
         <p>
-          A root <code>nativescope.config.ts</code> exists for behavior the tool cannot infer safely,
-          such as invalidating a client-side cache layer after a dashboard edit. Storage discovery
-          itself never depends on that file.
+          A root <code>nativescope.config.ts</code> is where you enable each module and set behavior
+          the tool cannot infer safely, such as invalidating a client-side cache layer after a Studio
+          edit. You declare the modules; the storage instances behind them still discover themselves,
+          so the file never becomes an inventory of your app&apos;s stores.
         </p>
         <OptionalConfigDiagram />
       </section>

@@ -17,11 +17,11 @@ interface PageProps {
 
 /** /docs cai na primeira página; as demais vêm de _meta.ts. */
 export function generateStaticParams() {
-  return [{ slug: [] }, ...getAllSlugs().map((slug) => ({ slug: [slug] }))];
+  return [{ slug: [] }, ...getAllSlugs().map((slug) => ({ slug: slug.split("/") }))];
 }
 
 function resolveSlug(segments: string[] | undefined): string {
-  return segments?.[0] ?? getFirstSlug();
+  return segments?.join("/") || getFirstSlug();
 }
 
 function slugifyHeading(value: string) {
@@ -46,7 +46,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const doc = getDoc(slug);
   if (!doc) return {};
   // `/docs` renderiza a introdução — canonicaliza para a URL com slug para não
-  // competir como conteúdo duplicado de `/docs/introduction`.
+  // competir como conteúdo duplicado de `/docs/storage/introduction`.
   const path = `/docs/${slug}`;
   return pageMetadata({
     title: doc.frontmatter.title,
@@ -61,6 +61,7 @@ export default async function DocPage({ params }: PageProps) {
 
   const { previous, next } = getNeighbours(doc.slug);
   const headings = extractHeadings(doc.body);
+  const moduleName = doc.slug.startsWith("network/") ? "Network" : "Storage";
 
   return (
     <div data-doc-page>
@@ -73,7 +74,7 @@ export default async function DocPage({ params }: PageProps) {
       />
       <div data-doc-main>
         <header data-doc-header>
-          <p data-doc-product>NativeScope / Storage Engine</p>
+          <p data-doc-product>NativeScope / {moduleName}</p>
           <h1>{doc.frontmatter.title}</h1>
           <p data-doc-description>{doc.frontmatter.description}</p>
         </header>
@@ -94,10 +95,13 @@ export default async function DocPage({ params }: PageProps) {
                 remarkPlugins: [remarkGfm],
                 rehypePlugins: [
                   rehypeSlug,
-                  [rehypePrettyCode, {
-                    theme: { light: "github-light", dark: "github-dark" },
-                    keepBackground: false,
-                  }],
+                  [
+                    rehypePrettyCode,
+                    {
+                      theme: { light: "github-light", dark: "github-dark" },
+                      keepBackground: false,
+                    },
+                  ],
                 ],
               },
             }}

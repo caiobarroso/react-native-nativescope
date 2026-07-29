@@ -7,12 +7,15 @@ import { absoluteUrl } from "@/lib/seo";
  * cada página declara em `alternates.canonical`. Sem redirects na lista.
  *
  * `/docs` é omitido de propósito: ele renderiza o mesmo conteúdo de
- * `/docs/introduction` e canonicaliza para lá, então só a URL com slug entra.
+ * `/docs/storage/introduction` e canonicaliza para lá, então só a URL com slug entra.
  */
 const marketingRoutes = [
   "/",
+  "/modules/storage",
+  "/modules/network",
   "/our-goal",
   "/compare/rozenite",
+  "/compare/reactotron",
   "/journal",
   "/journal/a-window-not-a-copy",
   "/journal/zero-config",

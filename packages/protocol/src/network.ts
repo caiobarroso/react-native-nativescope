@@ -119,6 +119,7 @@ export const networkReplayCommandSchema = z.object({
       url: z.string().optional(),
       query: z.string().nullable().optional(),
       headers: z.record(z.string(), z.string()).optional(),
+      removedHeaders: z.array(z.string().min(1)).optional(),
       body: z.string().nullable().optional(),
     })
     .optional(),

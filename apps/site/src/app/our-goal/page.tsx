@@ -1,13 +1,5 @@
 import Link from "next/link";
-import {
-  ArrowUpRight,
-  Check,
-  CloudOff,
-  Code2,
-  Layers3,
-  LockKeyhole,
-  Sparkles,
-} from "lucide-react";
+import { ArrowUpRight, Check, CloudOff, Code2, Layers3, LockKeyhole, Sparkles } from "lucide-react";
 import { ModuleOrganism, OneFileContract } from "@/components/goal/GoalVisuals";
 import { Button } from "@/components/ui/Button";
 import { pageMetadata, breadcrumbSchema } from "@/lib/seo";
@@ -29,7 +21,7 @@ const evidence = [
   {
     href: "/journal/zero-config",
     label: "Architecture",
-    title: "Zero config, for real",
+    title: "Plug-and-play, by construction",
     body: "How Metro interception and release guards make plug-and-play an engineering property instead of a slogan.",
   },
   {
@@ -60,16 +52,32 @@ export default function OurGoalPage() {
       />
       <header data-goal-hero>
         <p data-section-kicker>Our goal</p>
-        <h1>One debugging environment.<br />None of the usual friction.</h1>
+        <h1>
+          One debugging environment.
+          <br />
+          None of the usual friction.
+        </h1>
         <span>
           NativeScope is becoming an all-in-one React Native debugging environment: fully local,
           account-free and simple enough to adopt in the middle of a difficult debugging session.
         </span>
         <div data-goal-signals aria-label="NativeScope product commitments">
-          <p><strong>0</strong><span>logins</span></p>
-          <p><strong>0</strong><span>cloud dependencies</span></p>
-          <p><strong>1</strong><span>optional config file</span></p>
-          <p><strong>N</strong><span>modules, only when needed</span></p>
+          <p>
+            <strong>0</strong>
+            <span>logins</span>
+          </p>
+          <p>
+            <strong>0</strong>
+            <span>cloud dependencies</span>
+          </p>
+          <p>
+            <strong>1</strong>
+            <span>config file, modules declared</span>
+          </p>
+          <p>
+            <strong>N</strong>
+            <span>modules, only when needed</span>
+          </p>
         </div>
       </header>
 
@@ -95,12 +103,12 @@ export default function OurGoalPage() {
 
       <section data-goal-proof>
         <header>
-          <p data-section-kicker>The first proof</p>
-          <h2>Storage is module one, not the finish line.</h2>
+          <p data-section-kicker>The proof is growing</p>
+          <h2>Storage began the proof. Network extends it.</h2>
           <p>
             We started with storage because its problems are concrete: hidden app state, fragmented
             providers, stale UI after edits and inspectors that collapse under real datasets. The
-            finished module is our evidence that calm UX can sit on serious engineering.
+            Network module now applies the same contract to capture, replay and request context.
           </p>
         </header>
         <div data-goal-evidence>
@@ -123,10 +131,10 @@ export default function OurGoalPage() {
           <p data-section-kicker>The environment</p>
           <h2>One Studio for the questions that interrupt your work.</h2>
           <p>
-            Storage is live today. Future modules will follow real community needs: network traffic,
+            Storage and Network are live today. Future modules will follow real community needs:
             structured logs, performance, state, navigation, files and device events. Familiar
-            Reactotron-style capabilities can live beside deeper purpose-built tools without turning
-            installation into a platform migration.
+            capabilities can live beside deeper purpose-built tools without turning installation
+            into a platform migration.
           </p>
         </header>
         <ModuleOrganism />
@@ -142,14 +150,23 @@ export default function OurGoalPage() {
             understand our internals or maintain a second inventory just to inspect it.
           </p>
           <p>
-            Automatic discovery remains the default wherever it is safe. When explicit behavior is
-            necessary, it belongs in the single root config file. Adding a module should mean adding
-            a line, not adopting a new architecture.
+            You enable each module with a line in the single root config file, while storage
+            instances are still discovered automatically. Adding a capability should mean adding a
+            line, not adopting a new architecture.
           </p>
           <ul>
-            <li><Check size={15} aria-hidden />One guided integration surface</li>
-            <li><Check size={15} aria-hidden />Advanced control without an advanced entry price</li>
-            <li><Check size={15} aria-hidden />Modules disappear cleanly when removed</li>
+            <li>
+              <Check size={15} aria-hidden />
+              One guided integration surface
+            </li>
+            <li>
+              <Check size={15} aria-hidden />
+              Advanced control without an advanced entry price
+            </li>
+            <li>
+              <Check size={15} aria-hidden />
+              Modules disappear cleanly when removed
+            </li>
           </ul>
         </div>
         <OneFileContract />
@@ -178,15 +195,19 @@ export default function OurGoalPage() {
       <section data-goal-closer>
         <div>
           <p data-section-kicker>Built in the open</p>
-          <h2>The first module is already the proof.</h2>
+          <h2>Two modules already share the contract.</h2>
           <p>
-            Inspect how it works, challenge the decisions and use the evidence to decide whether it
-            belongs in your workflow.
+            Inspect how they work, challenge the decisions and use the evidence to decide whether
+            NativeScope belongs in your workflow.
           </p>
         </div>
         <div>
-          <Button href="/docs/quickstart" size="lg">Get started</Button>
-          <Button href="/journal" variant="secondary" size="lg">Read the engineering</Button>
+          <Button href="/docs/storage/quickstart" size="lg">
+            Get started
+          </Button>
+          <Button href="/journal" variant="secondary" size="lg">
+            Read the engineering
+          </Button>
         </div>
       </section>
     </div>

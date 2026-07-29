@@ -44,7 +44,7 @@ const rows = [
   {
     label: "Configuration philosophy",
     native:
-      "Default path is install, run, open the app. Config is reserved for behavior NativeScope cannot infer.",
+      "One root config declares the modules to enable; storage instances still discover themselves, with no adapter or registry to maintain.",
     rozenite: "Explicit registration makes the supported surface visible in your app code.",
   },
   {
@@ -292,11 +292,11 @@ export default function CompareRozenitePage() {
           <article>
             <NativeScopeLogo />
             <CodePanel label="Command" value={nativeScopeSetup.install} tone="command" />
-            <CodePanel label="Optional app behavior" value={nativeScopeSetup.config} />
+            <CodePanel label="Root config" value={nativeScopeSetup.config} />
             <small>
-              NativeScope discovers storage without a provider, hook, adapter or instance registry.
-              The root config is only for behavior such as React Query invalidation or the in-app
-              indicator.
+              NativeScope discovers storage instances without a provider, hook, adapter or instance
+              registry. You enable modules in the root config, which is also where app-side behavior
+              lives, such as React Query invalidation or the in-app indicator.
             </small>
           </article>
           <article>
@@ -356,7 +356,7 @@ export default function CompareRozenitePage() {
         >
           SQLite plugin <ExternalLink size={13} aria-hidden />
         </a>
-        <Link href="/docs/quickstart">Read the NativeScope quickstart</Link>
+        <Link href="/docs/storage/quickstart">Read the NativeScope quickstart</Link>
       </footer>
     </div>
   );

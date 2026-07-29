@@ -1,11 +1,12 @@
 ---
 title: Configuration
-description: The optional nativescope.config.ts file, and when you actually need it.
+description: The nativescope.config.ts file — declare your modules and tune Storage's app-side behavior.
 ---
 
-Core storage discovery, inspection and editing work with no configuration at all. You only add a
-config file when a module needs app-side behavior that cannot be inferred safely. Today, the
-Storage module exposes an in-app indicator and cache invalidation for a layer like React Query.
+NativeScope is configured through one root `nativescope.config.ts`, where you declare the modules to
+enable. Storage instances are still discovered automatically — you name the module, not each store.
+The `storage` block is also where its app-side behavior lives: an in-app indicator and cache
+invalidation for a layer like React Query.
 
 ## The file
 
@@ -58,7 +59,7 @@ Use it when you want visual confirmation that the app received your edit. Most o
 
 ## `modules.storage.reactQuery`
 
-Covered in depth in the [React Query bridge](/docs/react-query). The short version:
+Covered in depth in the [React Query bridge](/docs/storage/react-query). The short version:
 
 ```ts
 export default defineNativeScopeConfig({

@@ -1,13 +1,15 @@
 ---
-title: Introduction
-description: What NativeScope is, what it deliberately is not, and how it stays out of your app's way.
+title: Storage
+description: Inspect, edit, diff and restore AsyncStorage, MMKV and SQLite while your React Native app runs.
 ---
 
-NativeScope is a local studio for the data inside a running React Native app. It reads and writes
-AsyncStorage, MMKV and SQLite live, so you can see what your app actually stored instead of
-guessing from log statements.
+The Storage module reads and writes AsyncStorage, MMKV and SQLite live, so you can see what your app
+actually stored instead of guessing from log statements. It adds no provider, root-component wrapper
+or instance registry. The same local Studio that captures your
+[Network](/docs/network/introduction) requests also edits the state behind them.
 
-It is built around one constraint: **you should not have to change your app to inspect it.**
+Storage is built around one constraint: **you should not have to restructure your app to inspect
+it.** You enable the module with one line in the root config, and its stores are discovered for you.
 
 ## How it stays out of the way
 
@@ -45,12 +47,12 @@ against `127.0.0.1` and holds no database of app values. Closing it discards ins
 small interface preferences may remain in that browser.
 
 <Callout kind="note">
-NativeScope is pre-1.0 and the API is still moving. The storage module is the one that is
-complete; anything beyond it should be treated as unstable.
+NativeScope is pre-1.0 and the API is still moving. Storage and Network are the modules available
+today; anything beyond them should be treated as unstable.
 </Callout>
 
 ## Where to go next
 
-Start with the [Quickstart](/docs/quickstart). If you use React Query or another cache layer in
-front of your storage, read the [React Query bridge](/docs/react-query) afterwards — it is the one
+Start with the [Quickstart](/docs/storage/quickstart). If you use React Query or another cache layer in
+front of your storage, read the [React Query bridge](/docs/storage/react-query) afterwards — it is the one
 piece of configuration most projects end up wanting.

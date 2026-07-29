@@ -90,6 +90,22 @@ body {
   animation: rnsi-activity-focus 1600ms ease-out;
 }
 
+@keyframes rnsi-network-row-arrival {
+  0%,
+  30% {
+    background-color: color-mix(in srgb, var(--accent) 14%, var(--surface));
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 2px 0 0 transparent;
+  }
+}
+
+.rnsi-network-row-arrival {
+  animation: rnsi-network-row-arrival 1400ms ease-out;
+}
+
 @keyframes rnsi-snackbar-in {
   from {
     opacity: 0;
@@ -124,6 +140,14 @@ body {
 :focus-visible {
   outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent);
   outline-offset: 0;
+}
+
+/* Structured replay fields rely on their row background rather than a second focus frame. */
+.rnsi-replay-pair-input:focus,
+.rnsi-replay-pair-input:focus-visible {
+  outline: none !important;
+  outline-offset: 0;
+  box-shadow: none !important;
 }
 
 .rnsi-switch {
@@ -172,4 +196,10 @@ body {
 
 .rnsi-switch-lg[data-checked="true"]::after {
   transform: translateX(20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rnsi-network-row-arrival {
+    animation-duration: 1ms;
+  }
 }

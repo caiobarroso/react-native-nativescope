@@ -336,7 +336,7 @@ export function startFakeRuntime(options: {
   runtime.onModuleCommand("network", (command, data) => {
     const input = (data && typeof data === "object" ? data : {}) as {
       id?: string;
-      overrides?: { query?: string | null; headers?: Record<string, string>; body?: string | null };
+      overrides?: { query?: string | null; headers?: Record<string, string>; removedHeaders?: string[]; body?: string | null };
     };
     if (command === "replay") {
       const orig = input.id ? emittedById.get(input.id) : undefined;
@@ -344,10 +344,12 @@ export function startFakeRuntime(options: {
       const overrides = input.overrides ?? {};
       const query = overrides.query !== undefined ? overrides.query : (orig.query as string | null);
       const url = netOrigin + (orig.path as string) + (query ? `?${query.replace(/^\?/, "")}` : "");
-      const headers = {
-        ...(orig.requestHeaders as Record<string, string>),
-        ...(overrides.headers ?? {}),
-      };
+      let headers = { ...(orig.requestHeaders as Record<string, string>) };
+      for (const name of overrides.removedHeaders ?? []) {
+        const lower = name.toLowerCase();
+        headers = Object.fromEntries(Object.entries(headers).filter(([key]) => key.toLowerCase() !== lower));
+      }
+      headers = { ...headers, ...(overrides.headers ?? {}) };
       const bodyText =
         overrides.body !== undefined
           ? overrides.body

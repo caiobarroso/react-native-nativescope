@@ -131,6 +131,12 @@ function withHeader(
   return out;
 }
 
+/** Remove um header sem distinguir maiúsculas de minúsculas. */
+function withoutHeader(headers: Record<string, string>, name: string): Record<string, string> {
+  const lower = name.toLowerCase();
+  return Object.fromEntries(Object.entries(headers).filter(([key]) => key.toLowerCase() !== lower));
+}
+
 /** Troca a query string de uma URL (preserva path e fragmento). */
 function setQuery(url: string, query: string | null): string {
   const hashIdx = url.indexOf("#");
@@ -330,6 +336,7 @@ export function installNetworkModule(runtime: Runtime, config?: unknown): () => 
         url?: unknown;
         query?: unknown;
         headers?: Record<string, unknown>;
+        removedHeaders?: unknown;
         body?: unknown;
       };
     };
@@ -346,6 +353,11 @@ export function installNetworkModule(runtime: Runtime, config?: unknown): () => 
     }
 
     let headers: Record<string, string> = { ...entry.requestHeaders };
+    if (Array.isArray(overrides.removedHeaders)) {
+      for (const name of overrides.removedHeaders) {
+        if (typeof name === "string") headers = withoutHeader(headers, name);
+      }
+    }
     if (overrides.headers && typeof overrides.headers === "object") {
       for (const [key, value] of Object.entries(overrides.headers)) {
         if (typeof value === "string") headers = withHeader(headers, key, value);

@@ -1,6 +1,11 @@
 import { Layers, Search, X } from "lucide-react";
 import { useNetwork, type StatusClass } from "../../lib/network-store.ts";
-import { METHOD_OPTIONS, SLOW_PRESETS, STATUS_CLASS_OPTIONS } from "../../lib/network-select.ts";
+import {
+  METHOD_OPTIONS,
+  SLOW_PRESETS,
+  STATUS_CLASS_OPTIONS,
+} from "../../lib/network-select.ts";
+import { NetworkCaptureControls } from "./NetworkCaptureControls.tsx";
 
 const STATUS_COLOR: Record<StatusClass, string> = {
   "2xx": "text-created",
@@ -26,9 +31,13 @@ export function NetworkFilters() {
     filters.slowerThanMs !== null;
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface-sunken px-2 py-1.5">
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface-sunken px-3 py-2">
       <label className="relative flex min-w-[160px] flex-1 items-center">
-        <Search size={13} strokeWidth={1.5} className="absolute left-2 text-text-subtle" />
+        <Search
+          size={13}
+          strokeWidth={1.5}
+          className="absolute left-2 text-text-subtle"
+        />
         <input
           value={filters.search}
           onChange={(event) => setSearch(event.target.value)}
@@ -37,15 +46,17 @@ export function NetworkFilters() {
         />
       </label>
 
-      <div className="flex items-center gap-0.5 rounded-md border border-border bg-surface-raised p-0.5">
+      <div className="flex h-7 items-center gap-0.5 rounded-md border border-border bg-surface-raised p-0.5">
         {METHOD_OPTIONS.map((method) => {
           const active = filters.methods.includes(method);
           return (
             <button
               key={method}
               onClick={() => toggleMethod(method)}
-              className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
-                active ? "bg-accent-wash text-accent" : "text-text-subtle hover:text-text"
+              className={`inline-flex h-6 items-center rounded px-1.5 font-mono text-[10px] font-bold ${
+                active
+                  ? "bg-accent-wash text-accent"
+                  : "text-text-subtle hover:text-text"
               }`}
             >
               {method}
@@ -54,14 +65,14 @@ export function NetworkFilters() {
         })}
       </div>
 
-      <div className="flex items-center gap-0.5 rounded-md border border-border bg-surface-raised p-0.5">
+      <div className="flex h-7 items-center gap-0.5 rounded-md border border-border bg-surface-raised p-0.5">
         {STATUS_CLASS_OPTIONS.map((cls) => {
           const active = filters.statusClasses.includes(cls);
           return (
             <button
               key={cls}
               onClick={() => toggleStatusClass(cls)}
-              className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+              className={`inline-flex h-6 items-center rounded px-1.5 font-mono text-[10px] font-semibold ${
                 active ? "bg-accent-wash" : "hover:bg-surface-hover"
               } ${active ? STATUS_COLOR[cls] : "text-text-subtle"}`}
             >
@@ -74,14 +85,19 @@ export function NetworkFilters() {
       <select
         value={filters.slowerThanMs ?? ""}
         onChange={(event) =>
-          setSlowerThan(event.target.value === "" ? null : Number(event.target.value))
+          setSlowerThan(
+            event.target.value === "" ? null : Number(event.target.value),
+          )
         }
         title="Show only requests slower than…"
         className="h-7 rounded-md border border-border bg-surface-raised px-1.5 text-[11px] text-text-muted focus:border-accent focus:outline-none"
       >
         <option value="">Any speed</option>
         {SLOW_PRESETS.map((preset) => (
-          <option key={preset.ms} value={preset.ms}>{`≥ ${preset.label}`}</option>
+          <option
+            key={preset.ms}
+            value={preset.ms}
+          >{`≥ ${preset.label}`}</option>
         ))}
       </select>
 
@@ -108,6 +124,8 @@ export function NetworkFilters() {
           Clear
         </button>
       )}
+
+      <NetworkCaptureControls />
     </div>
   );
 }

@@ -54,7 +54,7 @@ export function ProductStory() {
 
       <Reveal>
       <section data-story="zero-config">
-        <div data-resolver-demo aria-label="How zero config works">
+        <div data-resolver-demo aria-label="How the Metro resolver works">
           <div data-code-label>your app code</div>
           <pre><code>{`import AsyncStorage from
   '@react-native-async-storage/async-storage'
@@ -69,7 +69,7 @@ same API
         </div>
 
         <div data-story-copy>
-          <p data-section-kicker>Zero config is architecture, not a slogan</p>
+          <p data-section-kicker>Plug-and-play is architecture, not a slogan</p>
           <h2>Your code stays yours.</h2>
           <p>
             NativeScope attaches at the Metro resolver. It substitutes the storage modules your app

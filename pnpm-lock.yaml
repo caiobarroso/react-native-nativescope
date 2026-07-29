@@ -51,6 +51,9 @@ importers:
       '@codemirror/autocomplete':
         specifier: ^6.20.3
         version: 6.20.3
+      '@codemirror/lang-json':
+        specifier: ^6.0.2
+        version: 6.0.2
       '@codemirror/lang-sql':
         specifier: ^6.10.0
         version: 6.10.0
@@ -366,6 +369,9 @@ packages:
 
   '@codemirror/commands@6.10.4':
     resolution: {integrity: sha512-Ryk9y9T0FFVF0cUGhAknveAyUOl/A1qReTFi+qPKtOh2Z9F4AUBz3XOrYD4ZEgZirdugVzHvd/2/Wcwy5OliTg==}
+
+  '@codemirror/lang-json@6.0.2':
+    resolution: {integrity: sha512-x2OtO+AvwEHrEwR0FyyPtfDUiloG3rnVTSZV1W8UteaLL8/MajQd8DpvUb2YVzC+/T18aSDv0H9mu+xw0EStoQ==}
 
   '@codemirror/lang-sql@6.10.0':
     resolution: {integrity: sha512-6ayPkEd/yRw0XKBx5uAiToSgGECo/GY2NoJIHXIIQh1EVwLuKoU8BP/qK0qH5NLXAbtJRLuT73hx7P9X34iO4w==}
@@ -950,6 +956,9 @@ packages:
 
   '@lezer/highlight@1.2.3':
     resolution: {integrity: sha512-qXdH7UqTvGfdVBINrgKhDsVTJTxactNNxLk7+UMwZhU13lMHaOBlJe9Vqp907ya56Y3+ed2tlqzys7jDkTmW0g==}
+
+  '@lezer/json@1.0.3':
+    resolution: {integrity: sha512-BP9KzdF9Y35PDpv04r0VeSTKDeox5vVr3efE7eBbx3r4s3oNLfunchejZhjArmeieBH+nVOpgIiBJpEAv8ilqQ==}
 
   '@lezer/lr@1.4.10':
     resolution: {integrity: sha512-rnCpTIBafOx4mRp43xOxDJbFipJm/c0cia/V5TiGlhmMa+wsSdoGmUN3w5Bqrks/09Q/D4tNAmWaT8p6NRi77A==}
@@ -3754,6 +3763,11 @@ snapshots:
       '@codemirror/view': 6.43.6
       '@lezer/common': 1.5.2
 
+  '@codemirror/lang-json@6.0.2':
+    dependencies:
+      '@codemirror/language': 6.12.4
+      '@lezer/json': 1.0.3
+
   '@codemirror/lang-sql@6.10.0':
     dependencies:
       '@codemirror/autocomplete': 6.20.3
@@ -4187,6 +4201,12 @@ snapshots:
   '@lezer/highlight@1.2.3':
     dependencies:
       '@lezer/common': 1.5.2
+
+  '@lezer/json@1.0.3':
+    dependencies:
+      '@lezer/common': 1.5.2
+      '@lezer/highlight': 1.2.3
+      '@lezer/lr': 1.4.10
 
   '@lezer/lr@1.4.10':
     dependencies:

@@ -1,0 +1,63 @@
+---
+title: Network configuration
+description: Configure body capture, request limits, URL exclusions and header redaction.
+---
+
+Start with `network: true`. The defaults are deliberately useful before they are configurable.
+
+```ts
+import { defineNativeScopeConfig } from "react-native-nativescope/app";
+
+export default defineNativeScopeConfig({
+  modules: {
+    network: true,
+  },
+});
+```
+
+## Full object
+
+Use an object only when the app needs different boundaries:
+
+```ts
+export default defineNativeScopeConfig({
+  modules: {
+    network: {
+      captureBody: true,
+      maxBodyPreview: 32 * 1024,
+      maxBodyStore: 2 * 1024 * 1024,
+      maxRequests: 1000,
+      ignoreUrls: ["/health", "analytics.example.com"],
+      redactHeaders: ["x-internal-secret"],
+    },
+  },
+});
+```
+
+| Option           |            Default | Purpose                                               |
+| ---------------- | -----------------: | ----------------------------------------------------- |
+| `captureBody`    |             `true` | Capture request and response bodies.                  |
+| `maxBodyPreview` |            `32768` | Bytes included in the fast list/detail preview.       |
+| `maxBodyStore`   |          `2097152` | Largest complete body retained for on-demand loading. |
+| `maxRequests`    |             `1000` | Maximum requests kept in the bounded session history. |
+| `ignoreUrls`     | built-in dev noise | Additional URL fragments to exclude.                  |
+| `redactHeaders`  | sensitive defaults | Additional header names whose values are hidden.      |
+
+## Choosing limits
+
+Increase `maxBodyStore` only when complete responses above 2 MB are part of the debugging workflow.
+The preview usually should remain small: it is optimized for finding the request, not replacing the
+full-body view.
+
+Reduce `maxRequests` for long-running sessions on constrained development devices. The oldest
+request leaves the ring buffer first.
+
+## Ignoring URLs
+
+Each `ignoreUrls` entry is matched as a URL fragment. Use stable host or path fragments rather than
+tokens or complete query strings.
+
+## Redacting headers
+
+Header names are case-insensitive. Add organization-specific secrets to `redactHeaders`; common
+sensitive credentials are already protected by the runtime defaults.

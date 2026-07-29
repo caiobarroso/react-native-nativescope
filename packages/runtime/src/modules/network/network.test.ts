@@ -350,6 +350,29 @@ describe("network module — replay", () => {
     expect(replayed.requestBody?.text).toBe('{"x":1}');
   });
 
+  it("replay remove headers capturados quando solicitado", () => {
+    const { fake, instances } = setupTracked();
+    const Ctor = newCtor();
+    const xhr = new Ctor();
+    xhr.open("GET", "https://api.app.com/profile");
+    xhr.setRequestHeader("Authorization", "Bearer old");
+    xhr.setRequestHeader("X-Client", "NativeScope");
+    xhr.send();
+    xhr.respond(200, "{}", "");
+    const id = lastRecord(fake).id;
+
+    const before = instances.length;
+    fake.invoke("replay", {
+      id,
+      mode: "original",
+      overrides: { removedHeaders: ["authorization"] },
+    });
+    instances[before]!.respond(200, "{}", "");
+
+    expect(lastRecord(fake).requestHeaders.Authorization).toBeUndefined();
+    expect(lastRecord(fake).requestHeaders["X-Client"]).toBe("NativeScope");
+  });
+
   it("replay de id inexistente → { id: null }, sem nova request", () => {
     const { fake } = setupTracked();
     const before = fake.events.length;

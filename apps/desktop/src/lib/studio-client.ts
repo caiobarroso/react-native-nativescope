@@ -565,6 +565,7 @@ export async function replayRequest(
     url?: string;
     query?: string | null;
     headers?: Record<string, string>;
+    removedHeaders?: string[];
     body?: string | null;
   },
 ): Promise<string | null> {

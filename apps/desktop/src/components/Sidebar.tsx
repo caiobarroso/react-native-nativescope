@@ -26,32 +26,56 @@ const FEEDBACK_URL =
 function ModuleSection({
   label,
   icon: Icon,
+  active,
+  onActivate,
   children,
 }: {
   label: string;
   icon: LucideIcon;
+  active: boolean;
+  onActivate: () => void;
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(true);
 
+  function handleModuleClick(): void {
+    if (!active) {
+      onActivate();
+      setExpanded(true);
+      return;
+    }
+    setExpanded((current) => !current);
+  }
+
   return (
-    <section className="mt-1" aria-label={`${label} module`}>
+    <section className="mt-1.5" aria-label={`${label} module`}>
       <button
         type="button"
         aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
-        className="flex h-10 w-full items-center gap-2 rounded-md border border-border bg-surface-raised px-2 text-left text-[12px] font-semibold text-text hover:bg-surface-hover"
+        aria-current={active ? "page" : undefined}
+        onClick={handleModuleClick}
+        className={`group flex h-9 w-full items-center gap-2 rounded-md border px-2 text-left text-[12px] font-semibold transition-colors ${
+          active
+            ? "border-border bg-surface-raised text-text"
+            : "border-transparent bg-transparent text-text-muted hover:border-border hover:bg-surface-hover hover:text-text"
+        }`}
       >
         {expanded ? (
           <ChevronDown size={13} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
         ) : (
           <ChevronRight size={13} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
         )}
-        <Icon size={14} strokeWidth={1.5} className="shrink-0 text-accent" />
+        <Icon
+          size={14}
+          strokeWidth={1.5}
+          className={`shrink-0 transition-colors ${
+            active ? "text-accent" : "text-text-subtle group-hover:text-accent"
+          }`}
+        />
         <span className="min-w-0 flex-1 truncate">{label}</span>
       </button>
       {expanded && (
-        <div className="ml-[18px] mt-1 border-l border-border-strong pl-3">
+        <div className="ml-[15px] mt-1 border-l border-border pl-3">
           {children}
         </div>
       )}
@@ -96,12 +120,17 @@ export function Sidebar() {
         <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
           Modules
         </p>
-        <ModuleSection label="Storage" icon={KeyRound}>
+        <ModuleSection
+          label="Storage"
+          icon={KeyRound}
+          active={activeModule === "storage"}
+          onActivate={() => setActiveModule("storage")}
+        >
           {providers.length === 0 && (
             <p className="px-2 py-3 text-[12px] text-text-subtle">No storage detected yet.</p>
           )}
           {providers.map((provider) => (
-            <div key={provider.providerId} className="relative mb-1.5 before:absolute before:-left-3 before:top-[17px] before:h-px before:w-3 before:bg-border-strong">
+            <div key={provider.providerId} className="relative mb-1 before:absolute before:-left-3 before:top-[16px] before:h-px before:w-3 before:bg-border">
               <div
                 className={`flex h-8 items-center gap-2 rounded px-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted ${
                   arrivedLate.includes(provider.providerId) ? "rnsi-flash" : ""
@@ -134,9 +163,9 @@ export function Sidebar() {
                         void loadKeys(provider.providerId, instance.instanceId);
                       }
                     }}
-                    className={`block w-full rounded-md py-1.5 pl-8 pr-2 text-left font-mono text-[12px] ${
+                    className={`block w-full rounded-md py-1.5 pl-8 pr-2 text-left font-mono text-[12px] transition-colors ${
                       active
-                        ? "bg-accent-wash text-accent"
+                        ? "bg-accent-wash font-medium text-accent"
                         : "text-text-muted hover:bg-surface-hover hover:text-text"
                     }`}
                   >
@@ -148,12 +177,17 @@ export function Sidebar() {
           ))}
         </ModuleSection>
 
-        <ModuleSection label="Network" icon={Globe}>
+        <ModuleSection
+          label="Network"
+          icon={Globe}
+          active={activeModule === "network"}
+          onActivate={() => setActiveModule("network")}
+        >
           <button
             onClick={() => setActiveModule("network")}
-            className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-5 pr-2 text-left font-mono text-[12px] ${
+            className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-5 pr-2 text-left font-mono text-[12px] transition-colors ${
               activeModule === "network"
-                ? "bg-accent-wash text-accent"
+                ? "bg-accent-wash font-medium text-accent"
                 : "text-text-muted hover:bg-surface-hover hover:text-text"
             }`}
           >

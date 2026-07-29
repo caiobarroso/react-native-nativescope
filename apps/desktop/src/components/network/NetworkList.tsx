@@ -1,9 +1,20 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDown, ChevronRight, Database, Radio } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Database,
+  Eye,
+  EyeOff,
+  Flag,
+  Radio,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { useNetwork } from "../../lib/network-store.ts";
 import { useStorageAttribution } from "../../lib/use-storage-impact.ts";
 import { buildDisplayRows, type DisplayRow } from "../../lib/network-select.ts";
+import { ConfirmDialog } from "../ConfirmDialog.tsx";
 import {
   endpointLabel,
   formatBytes,
@@ -14,26 +25,77 @@ import {
 } from "./format.ts";
 
 const ROW_HEIGHT = 40;
+const SESSION_ROW_HEIGHT = 36;
+
+type NetworkListRow =
+  | DisplayRow
+  | {
+      kind: "session";
+      startedAt: number;
+      currentCount: number;
+      earlierCount: number;
+      showEarlier: boolean;
+    };
 
 export function NetworkList() {
   const requests = useNetwork((s) => s.requests);
   const filters = useNetwork((s) => s.filters);
   const expandedGroups = useNetwork((s) => s.expandedGroups);
   const selectedId = useNetwork((s) => s.selectedId);
+  const recentRequestIds = useNetwork((s) => s.recentRequestIds);
+  const sessionStartedAt = useNetwork((s) => s.sessionStartedAt);
+  const sessionEarlierIds = useNetwork((s) => s.sessionEarlierIds);
+  const showEarlier = useNetwork((s) => s.showEarlier);
   const select = useNetwork((s) => s.select);
   const toggleGroup = useNetwork((s) => s.toggleGroup);
+  const setShowEarlier = useNetwork((s) => s.setShowEarlier);
+  const clearEarlier = useNetwork((s) => s.clearEarlier);
   const attribution = useStorageAttribution();
   const parentRef = useRef<HTMLDivElement>(null);
-
-  const rows = useMemo(
-    () => buildDisplayRows(requests, filters, expandedGroups),
-    [requests, filters, expandedGroups],
+  const [confirmClearEarlier, setConfirmClearEarlier] = useState(false);
+  const recentRequests = useMemo(
+    () => new Set(recentRequestIds),
+    [recentRequestIds],
   );
+
+  const rows = useMemo<NetworkListRow[]>(() => {
+    if (sessionStartedAt === null) {
+      return buildDisplayRows(requests, filters, expandedGroups);
+    }
+
+    const earlierIds = new Set(sessionEarlierIds);
+    const current = requests.filter((request) => !earlierIds.has(request.id));
+    const earlier = requests.filter((request) => earlierIds.has(request.id));
+    const currentRows = buildDisplayRows(current, filters, expandedGroups);
+    if (earlier.length === 0) return currentRows;
+    const earlierRows = showEarlier
+      ? buildDisplayRows(earlier, filters, expandedGroups)
+      : [];
+    return [
+      ...currentRows,
+      {
+        kind: "session",
+        startedAt: sessionStartedAt,
+        currentCount: current.length,
+        earlierCount: earlier.length,
+        showEarlier,
+      },
+      ...earlierRows,
+    ];
+  }, [
+    requests,
+    filters,
+    expandedGroups,
+    sessionStartedAt,
+    sessionEarlierIds,
+    showEarlier,
+  ]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: (index) =>
+      rows[index]?.kind === "session" ? SESSION_ROW_HEIGHT : ROW_HEIGHT,
     overscan: 14,
   });
 
@@ -57,7 +119,13 @@ export function NetworkList() {
         <EmptyState title="No requests match the filters." />
       ) : (
         <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto">
-          <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+          <div
+            style={{
+              height: virtualizer.getTotalSize(),
+              position: "relative",
+              width: "100%",
+            }}
+          >
             {virtualizer.getVirtualItems().map((item) => {
               const row = rows[item.index]!;
               return (
@@ -68,16 +136,27 @@ export function NetworkList() {
                     top: 0,
                     left: 0,
                     width: "100%",
-                    height: ROW_HEIGHT,
+                    height: item.size,
                     transform: `translateY(${item.start}px)`,
                   }}
                 >
-                  {row.kind === "group" ? (
-                    <GroupRow row={row} onToggle={() => toggleGroup(row.key)} />
+                  {row.kind === "session" ? (
+                    <CaptureBoundaryRow
+                      row={row}
+                      onToggleEarlier={() => setShowEarlier(!row.showEarlier)}
+                      onClearEarlier={() => setConfirmClearEarlier(true)}
+                    />
+                  ) : row.kind === "group" ? (
+                    <GroupRow
+                      row={row}
+                      arrived={recentRequests.has(row.sample.id)}
+                      onToggle={() => toggleGroup(row.key)}
+                    />
                   ) : (
                     <RequestRow
                       row={row}
                       active={row.request.id === selectedId}
+                      arrived={recentRequests.has(row.request.id)}
                       impact={attribution.counts.get(row.request.id) ?? 0}
                       onSelect={() => select(row.request.id)}
                     />
@@ -88,31 +167,109 @@ export function NetworkList() {
           </div>
         </div>
       )}
+
+      {confirmClearEarlier && sessionStartedAt !== null && (
+        <ConfirmDialog
+          title="Clear earlier requests?"
+          description="This removes only the requests captured before the current marker. Requests in the active capture stay available."
+          confirmLabel="Clear earlier"
+          onCancel={() => setConfirmClearEarlier(false)}
+          onConfirm={() => {
+            clearEarlier();
+            setConfirmClearEarlier(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function CaptureBoundaryRow({
+  row,
+  onToggleEarlier,
+  onClearEarlier,
+}: {
+  row: Extract<NetworkListRow, { kind: "session" }>;
+  onToggleEarlier: () => void;
+  onClearEarlier: () => void;
+}) {
+  return (
+    <div className="flex h-full items-center gap-2 border-b border-t border-accent/30 bg-accent-wash/60 px-3 text-[10px]">
+      <Flag size={11} strokeWidth={1.5} className="shrink-0 text-accent" />
+      <span className="font-semibold text-accent">New capture</span>
+      <time className="text-text-subtle">
+        {new Date(row.startedAt).toLocaleTimeString("en-US")}
+      </time>
+      <span className="text-text-subtle">
+        {row.currentCount} new {row.currentCount === 1 ? "request" : "requests"}
+      </span>
+      {row.earlierCount > 0 && (
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onToggleEarlier}
+            className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-text-muted hover:bg-surface-hover hover:text-text"
+          >
+            {row.showEarlier ? (
+              <EyeOff size={11} strokeWidth={1.5} />
+            ) : (
+              <Eye size={11} strokeWidth={1.5} />
+            )}
+            {row.showEarlier ? "Hide" : "Show"} {row.earlierCount} earlier
+          </button>
+          <button
+            type="button"
+            onClick={onClearEarlier}
+            title="Clear requests captured before this marker"
+            className="inline-flex h-6 w-6 items-center justify-center rounded text-text-subtle hover:bg-surface-hover hover:text-deleted"
+          >
+            <Trash2 size={11} strokeWidth={1.5} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 function GroupRow({
   row,
+  arrived,
   onToggle,
 }: {
   row: Extract<DisplayRow, { kind: "group" }>;
+  arrived: boolean;
   onToggle: () => void;
 }) {
   const Chevron = row.expanded ? ChevronDown : ChevronRight;
   return (
     <button
       onClick={onToggle}
-      className="flex h-full w-full items-center gap-2 border-b border-border/60 bg-surface-sunken px-3 text-left text-[12px] hover:bg-surface-hover"
+      className={`flex h-full w-full items-center gap-2 border-b border-border/60 bg-surface-sunken px-3 text-left text-[12px] hover:bg-surface-hover ${
+        arrived ? "rnsi-network-row-arrival" : ""
+      }`}
     >
-      <Chevron size={13} strokeWidth={1.5} className="shrink-0 text-text-subtle" />
-      <span className={`w-12 shrink-0 font-mono text-[10px] font-bold uppercase ${methodColorClass(row.method)}`}>
+      <Chevron
+        size={13}
+        strokeWidth={1.5}
+        className="shrink-0 text-text-subtle"
+      />
+      <span
+        className={`w-12 shrink-0 font-mono text-[10px] font-bold uppercase ${methodColorClass(row.method)}`}
+      >
         {row.method}
       </span>
-      <span className="min-w-0 flex-1 truncate font-mono font-semibold text-text" title={`${row.origin}${row.path}`}>
+      <span
+        className="min-w-0 flex-1 truncate font-mono font-semibold text-text"
+        title={`${row.origin}${row.path}`}
+      >
         {row.path}
       </span>
-      {row.hasError && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-deleted" title="Contains failed requests" />}
+      {row.hasError && (
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-deleted"
+          title="Contains failed requests"
+        />
+      )}
       <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">
         {row.count}
       </span>
@@ -123,11 +280,13 @@ function GroupRow({
 function RequestRow({
   row,
   active,
+  arrived,
   impact,
   onSelect,
 }: {
   row: Extract<DisplayRow, { kind: "request" }>;
   active: boolean;
+  arrived: boolean;
   impact: number;
   onSelect: () => void;
 }) {
@@ -137,14 +296,30 @@ function RequestRow({
       onClick={onSelect}
       className={`flex h-full w-full items-center gap-2 border-b border-border/60 pr-3 text-left text-[12px] ${
         row.indent ? "pl-8" : "pl-3"
-      } ${active ? "bg-accent-wash" : "hover:bg-surface-hover"}`}
+      } ${active ? "bg-accent-wash" : "hover:bg-surface-hover"} ${
+        arrived ? "rnsi-network-row-arrival" : ""
+      }`}
     >
-      <span className={`w-12 shrink-0 font-mono text-[10px] font-bold uppercase ${methodColorClass(request.method)}`}>
+      <span
+        className={`w-12 shrink-0 font-mono text-[10px] font-bold uppercase ${methodColorClass(request.method)}`}
+      >
         {request.method}
       </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-text" title={endpointLabel(request)}>
+      <span
+        className="min-w-0 flex-1 truncate font-mono text-text"
+        title={endpointLabel(request)}
+      >
         {endpointLabel(request)}
       </span>
+      {request.replayOf ? (
+        <span
+          className="inline-flex shrink-0 items-center gap-1 rounded bg-accent-wash px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-accent"
+          title={`Replay of ${request.replayOf}`}
+        >
+          <RefreshCw size={9} strokeWidth={2} />
+          Replay
+        </span>
+      ) : null}
       {impact > 0 && (
         <span
           className="inline-flex shrink-0 items-center gap-0.5 rounded bg-accent-wash px-1 py-0.5 font-mono text-[9px] font-semibold text-accent"
@@ -154,7 +329,9 @@ function RequestRow({
           {impact}
         </span>
       )}
-      <span className={`w-10 shrink-0 text-right font-mono text-[11px] font-semibold ${statusColorClass(request)}`}>
+      <span
+        className={`w-10 shrink-0 text-right font-mono text-[11px] font-semibold ${statusColorClass(request)}`}
+      >
         {statusLabel(request)}
       </span>
       <span className="w-16 shrink-0 text-right font-mono text-[11px] text-text-muted">
@@ -178,9 +355,13 @@ function EmptyState({
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-      {icon && <Radio size={22} strokeWidth={1.5} className="text-text-subtle" />}
+      {icon && (
+        <Radio size={22} strokeWidth={1.5} className="text-text-subtle" />
+      )}
       <p className="text-[13px] text-text-muted">{title}</p>
-      {subtitle && <p className="max-w-[260px] text-[11px] text-text-subtle">{subtitle}</p>}
+      {subtitle && (
+        <p className="max-w-[260px] text-[11px] text-text-subtle">{subtitle}</p>
+      )}
     </div>
   );
 }

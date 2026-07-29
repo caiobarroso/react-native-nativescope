@@ -1,0 +1,45 @@
+---
+title: Network
+description: Capture, inspect, replay and compare React Native network requests in the local NativeScope Studio.
+---
+
+The Network module records the `fetch` and `XMLHttpRequest` traffic your React Native app already
+makes. It adds no request client, proxy account or remote dashboard. The same local Studio that
+understands your app storage now understands the requests around it.
+
+<Callout title="The useful difference">
+  Network and Storage share context. When a response is followed by a storage change, NativeScope
+  can show the affected entry and open it directly in the Storage module.
+</Callout>
+
+## What you can do
+
+- Filter by URL, headers, body, method, status class and duration.
+- Group repeated calls by endpoint.
+- Inspect request data, response data and response headers separately.
+- Navigate JSON responses with the shared read-only visual viewer.
+- Replay a captured request with structured query, header and body editing.
+- Compare executions of the same endpoint.
+- Follow storage changes associated with a response.
+
+## How capture works
+
+NativeScope instruments the global `fetch` and `XMLHttpRequest` APIs during development. Your app
+keeps using its existing networking code. A guard prevents the classic React Native path from
+capturing a `fetch` twice when it is implemented through XHR.
+
+Capture is fail-open: instrumentation errors are contained and must never break the app request.
+Release builds resolve the original APIs without the NativeScope shim.
+
+## Start here
+
+Enable the module with one line in the root config:
+
+```ts
+modules: {
+  network: true,
+}
+```
+
+Continue to the [Quickstart](/docs/network/quickstart), then learn the request surface in
+[Inspecting requests](/docs/network/requests).
