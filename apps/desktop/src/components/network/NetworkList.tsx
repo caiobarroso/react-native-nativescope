@@ -16,12 +16,17 @@ import { useStorageAttribution } from "../../lib/use-storage-impact.ts";
 import { buildDisplayRows, type DisplayRow } from "../../lib/network-select.ts";
 import { ConfirmDialog } from "../ConfirmDialog.tsx";
 import {
+  getGraphQLRequestInfo,
+  getGraphQLResponseInfo,
+} from "../../lib/network-graphql.ts";
+import {
   endpointLabel,
-  formatBytes,
+  formatClock,
   formatDuration,
   methodColorClass,
   statusColorClass,
   statusLabel,
+  requestTypeLabel,
 } from "./format.ts";
 
 const ROW_HEIGHT = 40;
@@ -56,6 +61,10 @@ export function NetworkList() {
   const recentRequests = useMemo(
     () => new Set(recentRequestIds),
     [recentRequestIds],
+  );
+  const hasGraphQL = useMemo(
+    () => requests.some((request) => getGraphQLRequestInfo(request) !== null),
+    [requests],
   );
 
   const rows = useMemo<NetworkListRow[]>(() => {
@@ -101,12 +110,12 @@ export function NetworkList() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border bg-surface-sunken px-3 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
-        <span className="w-12 shrink-0">Method</span>
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-b-border border-l-2 border-l-transparent bg-surface-sunken px-3 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+        <span className="w-12 shrink-0">{hasGraphQL ? "Type" : "Method"}</span>
         <span className="min-w-0 flex-1">Endpoint</span>
         <span className="w-10 shrink-0 text-right">Status</span>
+        <span className="w-16 shrink-0 text-right">Duration</span>
         <span className="w-16 shrink-0 text-right">Time</span>
-        <span className="w-16 shrink-0 text-right">Size</span>
       </div>
 
       {requests.length === 0 ? (
@@ -194,7 +203,7 @@ function CaptureBoundaryRow({
   onClearEarlier: () => void;
 }) {
   return (
-    <div className="flex h-full items-center gap-2 border-b border-t border-accent/30 bg-accent-wash/60 px-3 text-[10px]">
+    <div className="flex h-full items-center gap-2 border-b border-t border-l-2 border-accent/30 bg-accent-wash/60 px-3 text-[10px]">
       <Flag size={11} strokeWidth={1.5} className="shrink-0 text-accent" />
       <span className="font-semibold text-accent">New capture</span>
       <time className="text-text-subtle">
@@ -244,7 +253,7 @@ function GroupRow({
   return (
     <button
       onClick={onToggle}
-      className={`flex h-full w-full items-center gap-2 border-b border-border/60 bg-surface-sunken px-3 text-left text-[12px] hover:bg-surface-hover ${
+      className={`flex h-full w-full items-center gap-2 border-b border-b-border/60 border-l-2 border-l-transparent bg-surface-sunken px-3 text-left text-[12px] hover:bg-surface-hover ${
         arrived ? "rnsi-network-row-arrival" : ""
       }`}
     >
@@ -254,15 +263,15 @@ function GroupRow({
         className="shrink-0 text-text-subtle"
       />
       <span
-        className={`w-12 shrink-0 font-mono text-[10px] font-bold uppercase ${methodColorClass(row.method)}`}
+        className={`w-12 shrink-0 font-mono text-[10px] font-bold uppercase ${methodColorClass(requestTypeLabel(row.sample))}`}
       >
-        {row.method}
+        {requestTypeLabel(row.sample)}
       </span>
       <span
         className="min-w-0 flex-1 truncate font-mono font-semibold text-text"
         title={`${row.origin}${row.path}`}
       >
-        {row.path}
+        {endpointLabel(row.sample)}
       </span>
       {row.hasError && (
         <span
@@ -291,19 +300,20 @@ function RequestRow({
   onSelect: () => void;
 }) {
   const request = row.request;
+  const graphQLErrors = getGraphQLResponseInfo(request)?.errors.length ?? 0;
   return (
     <button
       onClick={onSelect}
-      className={`flex h-full w-full items-center gap-2 border-b border-border/60 pr-3 text-left text-[12px] ${
+      className={`flex h-full w-full items-center gap-2 border-b border-b-border/60 border-l-2 pr-3 text-left text-[12px] ${
         row.indent ? "pl-8" : "pl-3"
-      } ${active ? "bg-accent-wash" : "hover:bg-surface-hover"} ${
+      } ${active ? "border-l-accent bg-accent-wash" : "border-l-transparent hover:bg-surface-hover"} ${
         arrived ? "rnsi-network-row-arrival" : ""
       }`}
     >
       <span
-        className={`w-12 shrink-0 font-mono text-[10px] font-bold uppercase ${methodColorClass(request.method)}`}
+        className={`w-12 shrink-0 font-mono text-[10px] font-bold uppercase ${methodColorClass(requestTypeLabel(request))}`}
       >
-        {request.method}
+        {requestTypeLabel(request)}
       </span>
       <span
         className="min-w-0 flex-1 truncate font-mono text-text"
@@ -311,6 +321,14 @@ function RequestRow({
       >
         {endpointLabel(request)}
       </span>
+      {graphQLErrors > 0 ? (
+        <span
+          className="inline-flex shrink-0 items-center rounded bg-deleted-wash px-1.5 py-0.5 font-mono text-[9px] font-semibold text-deleted"
+          title={`${graphQLErrors} GraphQL ${graphQLErrors === 1 ? "error" : "errors"} in an HTTP ${request.status ?? "error"} response`}
+        >
+          GQL {graphQLErrors}
+        </span>
+      ) : null}
       {request.replayOf ? (
         <span
           className="inline-flex shrink-0 items-center gap-1 rounded bg-accent-wash px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-accent"
@@ -322,7 +340,7 @@ function RequestRow({
       ) : null}
       {impact > 0 && (
         <span
-          className="inline-flex shrink-0 items-center gap-0.5 rounded bg-accent-wash px-1 py-0.5 font-mono text-[9px] font-semibold text-accent"
+          className="inline-flex shrink-0 items-center gap-0.5 rounded border border-accent/40 bg-surface-raised px-1 py-0.5 font-mono text-[9px] font-semibold text-accent"
           title={`Changed ${impact} storage ${impact === 1 ? "entry" : "entries"} right after this response`}
         >
           <Database size={9} strokeWidth={2} />
@@ -337,8 +355,11 @@ function RequestRow({
       <span className="w-16 shrink-0 text-right font-mono text-[11px] text-text-muted">
         {formatDuration(request.duration)}
       </span>
-      <span className="w-16 shrink-0 text-right font-mono text-[11px] text-text-subtle">
-        {formatBytes(request.responseSize)}
+      <span
+        className="w-16 shrink-0 text-right font-mono text-[11px] text-text-subtle"
+        title={new Date(request.startedAt).toLocaleString()}
+      >
+        {formatClock(request.startedAt)}
       </span>
     </button>
   );

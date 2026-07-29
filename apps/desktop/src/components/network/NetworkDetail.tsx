@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Copy,
   Database,
+  Download,
   GitCompare,
   RefreshCw,
 } from "lucide-react";
@@ -12,6 +13,13 @@ import type { NetworkBody, NetworkRequest } from "@rnsi/protocol";
 import { useNetwork } from "../../lib/network-store.ts";
 import { groupKey } from "../../lib/network-select.ts";
 import { getNetworkBody } from "../../lib/studio-client.ts";
+import {
+  getGraphQLRequestInfo,
+  getGraphQLResponseInfo,
+  getGraphQLResponseInfoFromBody,
+  type GraphQLResponseInfo,
+  type GraphQLOperation,
+} from "../../lib/network-graphql.ts";
 import { JsonWorkspace } from "../ValueEditor.tsx";
 import {
   EXPORT_FORMATS,
@@ -25,11 +33,13 @@ const NetworkReplayModal = lazy(() =>
 );
 import { NetworkDiff } from "./NetworkDiff.tsx";
 import { StorageImpactPanel } from "./StorageImpactPanel.tsx";
+import { GraphQLCodeEditor } from "./GraphQLCodeEditor.tsx";
 import { useStorageAttribution } from "../../lib/use-storage-impact.ts";
 import {
   formatBytes,
   formatDuration,
   methodColorClass,
+  requestTypeLabel,
   statusColorClass,
   statusLabel,
 } from "./format.ts";
@@ -51,6 +61,8 @@ export function NetworkDetail() {
   const compareRequest = compareId ? (byId[compareId] ?? null) : null;
   const impactItems = request ? (attribution.items.get(request.id) ?? []) : [];
   const impactCount = impactItems.length;
+  const graphQLRequest = request ? getGraphQLRequestInfo(request) : null;
+  const graphQLResponse = request ? getGraphQLResponseInfo(request) : null;
   if (request && compareRequest) {
     return (
       <NetworkDiff
@@ -77,7 +89,7 @@ export function NetworkDetail() {
         request={request}
         impactCount={impactCount}
         impactActive={tab === "storage-impact"}
-        onOpenImpact={() => setTab("storage-impact")}
+        onStorageImpact={() => setTab("storage-impact")}
       />
 
       <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border bg-surface-sunken px-3">
@@ -111,20 +123,27 @@ export function NetworkDetail() {
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
         {tab === "request" ? (
-          <>
-            <HeaderTable
-              title="Request headers"
+          graphQLRequest ? (
+            <GraphQLRequestPanel
+              operations={graphQLRequest.operations}
               headers={request.requestHeaders}
             />
-            <BodySection
-              key={`${request.id}-request`}
-              title="Request body"
-              body={request.requestBody}
-              requestId={request.id}
-              side="request"
-              sourceName={`${request.path} request`}
-            />
-          </>
+          ) : (
+            <>
+              <HeaderTable
+                title="Request headers"
+                headers={request.requestHeaders}
+              />
+              <BodySection
+                key={`${request.id}-request`}
+                title="Request body"
+                body={request.requestBody}
+                requestId={request.id}
+                side="request"
+                sourceName={`${request.path} request`}
+              />
+            </>
+          )
         ) : tab === "response-headers" ? (
           <HeaderTable
             title="Response headers"
@@ -132,6 +151,12 @@ export function NetworkDetail() {
           />
         ) : tab === "storage-impact" ? (
           <StorageImpactPanel items={impactItems} />
+        ) : graphQLRequest ? (
+          <GraphQLResponsePanel
+            key={request.id}
+            request={request}
+            response={graphQLResponse}
+          />
         ) : (
           <BodySection
             key={`${request.id}-response`}
@@ -160,75 +185,81 @@ function RequestSummary({
   request,
   impactCount,
   impactActive,
-  onOpenImpact,
+  onStorageImpact,
 }: {
   request: NetworkRequest;
   impactCount: number;
   impactActive: boolean;
-  onOpenImpact: () => void;
+  onStorageImpact: () => void;
 }) {
+  const graphQL = getGraphQLRequestInfo(request);
+  const graphQLErrors = getGraphQLResponseInfo(request)?.errors.length ?? 0;
+  const typeLabel = requestTypeLabel(request);
   return (
     <div className="shrink-0 border-b border-border bg-surface px-3 py-2.5">
-      <div className="flex items-center gap-2">
-        <span
-          className={`font-mono text-[11px] font-bold uppercase ${methodColorClass(request.method)}`}
-        >
-          {request.method}
-        </span>
-        <span
-          className={`font-mono text-[13px] font-semibold ${statusColorClass(request)}`}
-        >
-          {statusLabel(request)}
-        </span>
-        {request.statusText ? (
-          <span className="text-[12px] text-text-muted">
-            {request.statusText}
-          </span>
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={`font-mono text-[11px] font-bold uppercase ${methodColorClass(typeLabel)}`}
+            >
+              {typeLabel}
+            </span>
+            <span
+              className={`font-mono text-[13px] font-semibold ${statusColorClass(request)}`}
+            >
+              {statusLabel(request)}
+            </span>
+            {request.statusText ? (
+              <span className="text-[12px] text-text-muted">
+                {request.statusText}
+              </span>
+            ) : null}
+            <span className="flex items-center gap-2.5 font-mono text-[11px] text-text-subtle">
+              <span title="Duration">{formatDuration(request.duration)}</span>
+              <span title="Response size">
+                {formatBytes(request.responseSize)}
+              </span>
+            </span>
+            {request.replayOf ? (
+              <span
+                className="inline-flex items-center gap-1 rounded bg-accent-wash px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent"
+                title={`Replay of ${request.replayOf}`}
+              >
+                <RefreshCw size={9} strokeWidth={2} />
+                Replay
+              </span>
+            ) : null}
+            {graphQL ? (
+              <span className="inline-flex items-center rounded bg-accent-wash px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-accent">
+                GraphQL
+              </span>
+            ) : null}
+            {graphQLErrors > 0 ? (
+              <span className="inline-flex items-center rounded bg-deleted-wash px-1.5 py-0.5 font-mono text-[9px] font-semibold text-deleted">
+                {graphQLErrors} GraphQL {graphQLErrors === 1 ? "error" : "errors"}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5">
+            <p
+              className="min-w-0 break-all font-mono text-[11px] text-text-muted"
+              title={request.url}
+            >
+              {request.url}
+            </p>
+            <CopyIconButton value={request.url} title="Copy URL" />
+          </div>
+        </div>
+        {impactCount > 0 ? (
+          <div className="shrink-0">
+            <StorageImpactButton
+              active={impactActive}
+              count={impactCount}
+              onClick={onStorageImpact}
+            />
+          </div>
         ) : null}
-        {request.replayOf ? (
-          <span
-            className="inline-flex items-center gap-1 rounded bg-accent-wash px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent"
-            title={`Replay of ${request.replayOf}`}
-          >
-            <RefreshCw size={9} strokeWidth={2} />
-            Replay
-          </span>
-        ) : null}
-        <span className="ml-auto flex items-center gap-3 font-mono text-[11px] text-text-subtle">
-          <span title="Duration">{formatDuration(request.duration)}</span>
-          <span title="Response size">{formatBytes(request.responseSize)}</span>
-        </span>
-      </div>
-      <div className="mt-1 flex min-w-0 items-start gap-3">
-        <p
-          className="min-w-0 flex-1 break-all font-mono text-[11px] text-text-muted"
-          title={request.url}
-        >
-          {request.url}
-        </p>
-        <button
-          type="button"
-          onClick={onOpenImpact}
-          aria-pressed={impactActive}
-          title={
-            impactCount > 0
-              ? `Inspect ${impactCount} storage ${
-                  impactCount === 1 ? "change" : "changes"
-                } correlated with this response`
-              : "Inspect storage changes correlated with this response"
-          }
-          className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[10px] transition-colors ${
-            impactActive
-              ? "border-accent bg-accent-wash text-accent"
-              : impactCount > 0
-                ? "border-border bg-surface-raised text-text-muted hover:border-accent hover:text-accent"
-                : "border-border/70 bg-surface-raised text-text-subtle hover:bg-surface-hover hover:text-text-muted"
-          }`}
-        >
-          <Database size={11} strokeWidth={1.5} />
-          Storage impact
-          <span className="font-mono tabular-nums">{impactCount}</span>
-        </button>
       </div>
       {request.error ? (
         <p className="mt-1 font-mono text-[11px] text-deleted">
@@ -237,6 +268,245 @@ function RequestSummary({
       ) : null}
     </div>
   );
+}
+
+function GraphQLRequestPanel({
+  operations,
+  headers,
+}: {
+  operations: GraphQLOperation[];
+  headers: Record<string, string>;
+}) {
+  return (
+    <>
+      {operations.map((operation, index) => (
+        <section
+          key={`${operation.operationName ?? "anonymous"}-${index}`}
+          className="space-y-3"
+        >
+          <div className="flex items-center gap-2">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+              GraphQL operation
+            </h3>
+            <span className="rounded bg-accent-wash px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-accent">
+              {operation.operationType}
+            </span>
+            <span className="font-mono text-[11px] font-semibold text-text">
+              {operation.operationName ?? "Anonymous operation"}
+            </span>
+            {operations.length > 1 ? (
+              <span className="text-[10px] text-text-subtle">
+                {index + 1} of {operations.length}
+              </span>
+            ) : null}
+          </div>
+
+          {operation.formattedQuery ? (
+            <GraphQLCodeEditor
+              value={operation.formattedQuery}
+              readOnly
+              minHeight="150px"
+              maxHeight="320px"
+            />
+          ) : (
+            <p className="rounded-md border border-border bg-surface-sunken px-3 py-2 text-[11px] text-text-muted">
+              Persisted operation. The request did not include its GraphQL document.
+            </p>
+          )}
+
+          <div className="grid min-h-[220px] grid-cols-1 gap-3 xl:grid-cols-2">
+            <JsonValuePanel
+              title="Variables"
+              value={operation.variables}
+              sourceName={`${operation.operationName ?? "operation"} variables`}
+            />
+            {operation.extensions != null ? (
+              <JsonValuePanel
+                title="Extensions"
+                value={operation.extensions}
+                sourceName={`${operation.operationName ?? "operation"} extensions`}
+              />
+            ) : null}
+          </div>
+        </section>
+      ))}
+      <HeaderTable title="Request headers" headers={headers} />
+    </>
+  );
+}
+
+function GraphQLResponsePanel({
+  request,
+  response,
+}: {
+  request: NetworkRequest;
+  response: GraphQLResponseInfo | null;
+}) {
+  const [fullBody, setFullBody] = useState<NetworkBody | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const effectiveResponse =
+    response ?? getGraphQLResponseInfoFromBody(fullBody);
+  const [surface, setSurface] = useState<"data" | "errors" | "extensions" | "raw">(
+    response?.hasErrors ? "errors" : "data",
+  );
+
+  if (!effectiveResponse) {
+    if (request.responseBody?.truncated) {
+      return (
+        <section className="flex min-h-[280px] flex-1 flex-col items-center justify-center rounded-md border border-border bg-surface-sunken px-6 text-center">
+          <ArrowDownUp
+            size={18}
+            strokeWidth={1.5}
+            className="mb-2 text-accent"
+          />
+          <h3 className="text-[12px] font-semibold text-text">
+            Load the full GraphQL response
+          </h3>
+          <p className="mt-1 max-w-md text-[11px] leading-relaxed text-text-muted">
+            The timeline keeps a bounded preview. Load this payload on demand to
+            inspect its data, errors and extensions separately.
+          </p>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={async () => {
+              setLoading(true);
+              setLoadError(null);
+              try {
+                const body = await getNetworkBody(request.id, "response");
+                if (body) {
+                  const parsed = getGraphQLResponseInfoFromBody(body);
+                  setFullBody(body);
+                  if (parsed?.hasErrors) setSurface("errors");
+                }
+                else setLoadError("The full response is no longer available.");
+              } catch {
+                setLoadError("Failed to load the full response.");
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[11px] font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
+          >
+            <Download size={13} strokeWidth={2} />
+            {loading ? "Loading…" : "Load full response"}
+          </button>
+          {loadError ? (
+            <p className="mt-2 text-[10px] text-deleted">{loadError}</p>
+          ) : null}
+        </section>
+      );
+    }
+    return (
+      <BodySection
+        title="Response body"
+        body={request.responseBody}
+        requestId={request.id}
+        side="response"
+        sourceName={request.path}
+      />
+    );
+  }
+
+  const options = [
+    {
+      id: "data" as const,
+      label: "Data",
+      available: effectiveResponse.data !== undefined,
+    },
+    {
+      id: "errors" as const,
+      label: `Errors${effectiveResponse.errors.length ? ` ${effectiveResponse.errors.length}` : ""}`,
+      available: effectiveResponse.errors.length > 0,
+    },
+    {
+      id: "extensions" as const,
+      label: "Extensions",
+      available: effectiveResponse.extensions !== undefined,
+    },
+    { id: "raw" as const, label: "Raw", available: true },
+  ];
+  const value =
+    surface === "data"
+      ? effectiveResponse.data
+      : surface === "errors"
+        ? effectiveResponse.errors
+        : surface === "extensions"
+          ? effectiveResponse.extensions
+          : effectiveResponse.raw;
+
+  return (
+    <section className="flex min-h-[320px] flex-1 flex-col">
+      <div className="mb-2 flex items-center gap-1 rounded-md border border-border bg-surface-sunken p-0.5">
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            disabled={!option.available}
+            onClick={() => setSurface(option.id)}
+            className={`inline-flex h-7 items-center rounded px-2.5 text-[11px] font-medium ${
+              surface === option.id
+                ? option.id === "errors"
+                  ? "bg-deleted-wash text-deleted"
+                  : "bg-surface-raised text-text shadow-sm"
+                : "text-text-muted hover:text-text"
+            } disabled:cursor-default disabled:opacity-35`}
+          >
+            {option.label}
+          </button>
+        ))}
+        <span className="ml-auto pr-2 text-[10px] text-text-subtle">
+          GraphQL response
+        </span>
+      </div>
+      <JsonWorkspace
+        draft={stringifyJsonValue(value)}
+        onDraftChange={() => {}}
+        sourceName={`${request.path} ${surface}`}
+        readOnly
+      />
+    </section>
+  );
+}
+
+function JsonValuePanel({
+  title,
+  value,
+  sourceName,
+}: {
+  title: string;
+  value: unknown;
+  sourceName: string;
+}) {
+  return (
+    <section className="flex min-h-[220px] flex-col">
+      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+        {title}
+      </h3>
+      {value == null ? (
+        <div className="flex min-h-[120px] flex-1 items-center justify-center rounded-md border border-border bg-surface-sunken text-[11px] text-text-subtle">
+          None.
+        </div>
+      ) : (
+        <JsonWorkspace
+          draft={stringifyJsonValue(value)}
+          onDraftChange={() => {}}
+          sourceName={sourceName}
+          readOnly
+        />
+      )}
+    </section>
+  );
+}
+
+function stringifyJsonValue(value: unknown): string {
+  if (value === undefined) return "null";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "null";
+  }
 }
 
 function TabButton({
@@ -258,6 +528,71 @@ function TabButton({
       }`}
     >
       {children}
+    </button>
+  );
+}
+
+/** Storage impact promovido ao cabeçalho do request: pill de ação com destaque
+ *  coral + contagem quando há impacto — é o diferencial do produto, fica à vista
+ *  no topo (não escondido entre as abas). */
+function StorageImpactButton({
+  active,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title="Storage changes correlated with this response"
+      className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium ${
+        active
+          ? "border-accent/50 bg-accent-wash text-accent"
+          : "border-accent/40 text-accent hover:bg-accent-wash"
+      }`}
+    >
+      <Database size={13} strokeWidth={1.5} />
+      Storage impact
+      <span className="inline-flex h-4 min-w-4 items-center justify-center rounded bg-accent px-1 font-mono text-[10px] tabular-nums text-white">
+        {count}
+      </span>
+    </button>
+  );
+}
+
+/** Botão minimalista de copiar (só ícone) com feedback de check. */
+function CopyIconButton({
+  value,
+  title = "Copy",
+}: {
+  value: string;
+  title?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard indisponível: silencioso */
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={title}
+      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text"
+    >
+      {copied ? (
+        <Check size={13} strokeWidth={1.5} />
+      ) : (
+        <Copy size={13} strokeWidth={1.5} />
+      )}
     </button>
   );
 }
@@ -485,16 +820,18 @@ function BodySection({
       ) : (
         <div className="flex min-h-[220px] flex-1 flex-col">
           {effective.truncated ? (
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <p className="flex items-center gap-1 text-[10px] text-text-subtle">
-                <ArrowDownUp size={11} strokeWidth={1.5} />
-                Preview truncated to {formatBytes(effective.text.length)}.
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-created/40 bg-created-wash px-2.5 py-1.5">
+              <ArrowDownUp size={12} strokeWidth={1.5} className="shrink-0 text-created" />
+              <p className="text-[11px] text-text-muted">
+                Showing first {formatBytes(effective.text.length)} of{" "}
+                {formatBytes(effective.size)}.
               </p>
               <button
                 onClick={loadFull}
                 disabled={loading}
-                className="rounded border border-border bg-surface-raised px-1.5 py-0.5 text-[10px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-50"
+                className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-created px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
               >
+                <Download size={12} strokeWidth={2} />
                 {loading ? "Loading…" : "Load full body"}
               </button>
             </div>

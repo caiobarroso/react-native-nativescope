@@ -3,15 +3,16 @@ import Link from "next/link";
 import {
   Activity,
   ArrowRight,
+  BarChart3,
+  BellRing,
   Braces,
   Clock3,
   Database,
   Filter,
-  GitCompareArrows,
+  Flag,
   Group,
   LockKeyhole,
   Network,
-  Repeat2,
   ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -20,13 +21,13 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { breadcrumbSchema, pageMetadata } from "@/lib/seo";
 
 export const metadata = pageMetadata({
-  title: "Network — React Native request inspection and replay",
+  title: "Network — HTTP and GraphQL debugging for React Native",
   description:
-    "Capture fetch and XHR, inspect complete payloads, replay requests, compare executions and follow storage impact in one local React Native Studio.",
+    "Capture HTTP and GraphQL, filter traffic, inspect payloads, replay requests, analyze endpoints and follow storage impact in one local React Native Studio.",
   path: "/modules/network",
-  ogTitle: "NativeScope Network — see every request in context",
+  ogTitle: "NativeScope Network — HTTP and GraphQL in context",
   ogDescription:
-    "Capture, filter, inspect, replay and compare React Native requests locally, then follow the storage they changed.",
+    "Capture, filter, inspect, replay and analyze React Native HTTP and GraphQL traffic locally, then follow the storage it changed.",
 });
 
 const quickConfig = `import { defineNativeScopeConfig } from
@@ -40,34 +41,40 @@ export default defineNativeScopeConfig({
 
 const capabilities = [
   [
-    Activity,
-    "Capture without rewrites",
-    "NativeScope instruments the fetch and XMLHttpRequest APIs your app already uses.",
+    Flag,
+    "Focus without deleting history",
+    "Start a new capture from this moment, keep earlier traffic behind a marker and return to it whenever context matters.",
+    "/docs/network/capture-controls",
   ],
   [
     Filter,
-    "Find signal quickly",
-    "Filter by URL, header, body, method, status class or duration. Group repeated endpoints when the list gets noisy.",
+    "Search every layer",
+    "Combine URL, header and body search with method, status, duration, protocol and GraphQL operation filters.",
+    "/docs/network/requests",
   ],
   [
     Braces,
-    "Read real payloads",
-    "Inspect request, response and headers separately. Large bodies stay bounded and load completely only when requested.",
+    "Read complete payloads",
+    "Inspect request, response and headers separately. Large bodies stay bounded, then load completely only when requested.",
+    "/docs/network/requests",
   ],
   [
-    Repeat2,
-    "Replay deliberately",
-    "Choose original or current credentials, edit structured query parameters and headers, validate JSON, then replay.",
+    BarChart3,
+    "Understand the session",
+    "Open Insights for request volume, failures, p95 latency, transferred data, a timeline and endpoint-level drill-down.",
+    "/docs/network/insights",
   ],
   [
-    GitCompareArrows,
-    "Compare executions",
-    "Put repeated calls side by side and isolate what changed instead of scanning two payloads by hand.",
+    BellRing,
+    "Hear only what matters",
+    "Use a local sound for every request, failures only or selected endpoint rules, with a compact volume control.",
+    "/docs/network/capture-controls",
   ],
   [
     Database,
     "Follow storage impact",
     "See which storage entries changed immediately after a response and open the exact value in the Storage module.",
+    "/docs/network/storage-impact",
   ],
 ] as const;
 
@@ -88,8 +95,9 @@ export default function NetworkModulePage() {
           </p>
           <h1>See every request in the context that made it matter.</h1>
           <p>
-            Capture fetch and XHR, inspect the complete exchange, replay with control and follow a
-            response into the storage it changed. Fully local, inside the same Studio.
+            Capture HTTP and GraphQL, find the exact call, inspect the complete exchange, replay
+            with control and follow a response into the storage it changed. Fully local, inside the
+            same Studio.
           </p>
           <div data-network-actions>
             <Button href="/docs/network/quickstart" size="lg">
@@ -136,40 +144,125 @@ export default function NetworkModulePage() {
 
       <section data-network-promise>
         <p>
+          <strong>HTTP + GraphQL</strong>
+          <span>one operation-aware timeline</span>
+        </p>
+        <p>
           <strong>fetch + XHR</strong>
-          <span>the APIs your app already calls</span>
+          <span>automatic development capture</span>
         </p>
         <p>
-          <strong>1,000</strong>
-          <span>bounded requests by default</span>
+          <strong>1 line</strong>
+          <span>to enable the whole module</span>
         </p>
         <p>
-          <strong>32 KB</strong>
-          <span>fast body preview by default</span>
+          <strong>0 cloud</strong>
+          <span>accounts, proxies or remote dashboards</span>
         </p>
-        <p>
-          <strong>2 MB</strong>
-          <span>full-body retention limit by default</span>
-        </p>
+      </section>
+
+      <section data-network-protocol>
+        <div data-network-protocol-visual aria-label="HTTP and GraphQL requests in one timeline">
+          <header>
+            <div>
+              <Activity size={14} aria-hidden />
+              <strong>Unified timeline</strong>
+            </div>
+            <span>live</span>
+          </header>
+          <div data-network-protocol-filters>
+            <span data-active>All traffic</span>
+            <span>HTTP</span>
+            <span>GraphQL</span>
+            <span>Mutations</span>
+          </div>
+          <div data-network-protocol-head>
+            <span>Type</span>
+            <span>Operation or endpoint</span>
+            <span>Status</span>
+          </div>
+          <div data-network-protocol-row>
+            <b data-tone="query">QUERY</b>
+            <p>
+              <strong>GetViewer</strong>
+              <small>/graphql</small>
+            </p>
+            <em data-tone="ok">200</em>
+          </div>
+          <div data-network-protocol-row data-selected>
+            <b data-tone="mutation">MUT</b>
+            <p>
+              <strong>UpdateSettings</strong>
+              <small>/graphql · 2 variables</small>
+            </p>
+            <em data-tone="semantic">GQL 1</em>
+          </div>
+          <div data-network-protocol-row>
+            <b data-tone="http">GET</b>
+            <p>
+              <strong>/api/profile</strong>
+              <small>HTTP · 148 ms</small>
+            </p>
+            <em data-tone="ok">200</em>
+          </div>
+          <div data-network-protocol-row>
+            <b data-tone="http">POST</b>
+            <p>
+              <strong>/checkout</strong>
+              <small>HTTP · 1.2 s</small>
+            </p>
+            <em data-tone="error">409</em>
+          </div>
+        </div>
+
+        <div data-network-protocol-copy>
+          <p data-section-kicker>One timeline, two protocols</p>
+          <h2>GraphQL should not look like a wall of POST requests.</h2>
+          <p>
+            NativeScope recognizes GraphQL over HTTP automatically. Queries, mutations, persisted
+            operations and batches keep their operation names, variables and semantic errors
+            without another client adapter or schema upload.
+          </p>
+          <ul>
+            <li>
+              <Braces size={14} aria-hidden />
+              Document and variables remain separate.
+            </li>
+            <li>
+              <Filter size={14} aria-hidden />
+              Filter by protocol, query, mutation or batch.
+            </li>
+            <li>
+              <Activity size={14} aria-hidden />
+              GraphQL errors stay visible even when HTTP returns 200.
+            </li>
+          </ul>
+          <Link href="/docs/network/graphql">
+            Explore GraphQL debugging <ArrowRight size={15} aria-hidden />
+          </Link>
+        </div>
       </section>
 
       <section data-network-capabilities>
         <header data-platform-section-head>
           <div>
-            <p data-section-kicker>The working surface</p>
-            <h2>From traffic to explanation.</h2>
+            <p data-section-kicker>Control the session</p>
+            <h2>Keep the signal. Lose the noise.</h2>
           </div>
           <p>
-            The interface stays dense where comparison matters and quiet where a single request
-            needs your attention.
+            Capture controls, filtering and session-level analysis stay close to the timeline
+            without changing how your app makes a request.
           </p>
         </header>
         <div>
-          {capabilities.map(([Icon, title, body]) => (
+          {capabilities.map(([Icon, title, body, href]) => (
             <article key={title}>
               <Icon size={19} aria-hidden />
               <h3>{title}</h3>
               <p>{body}</p>
+              <Link href={href} aria-label={`Learn more about ${title}`}>
+                Learn more <ArrowRight size={13} aria-hidden />
+              </Link>
             </article>
           ))}
         </div>
@@ -177,12 +270,12 @@ export default function NetworkModulePage() {
 
       <section data-network-flow>
         <div data-network-flow-copy>
-          <p data-section-kicker>Replay without the guesswork</p>
+          <p data-section-kicker>Replay HTTP and GraphQL</p>
           <h2>Change the request, not your concentration.</h2>
           <p>
             Query parameters and headers are structured rows. Common header names are suggested but
-            never forced. JSON bodies are formatted and validated before the request leaves your
-            machine, and untouched sections keep the captured request exactly as it was.
+            never forced. JSON bodies are formatted and validated; GraphQL gets dedicated Operation
+            and Variables editors. Untouched sections keep the captured request exactly as it was.
           </p>
           <ol>
             <li>
@@ -196,7 +289,7 @@ export default function NetworkModulePage() {
               <span>02</span>
               <div>
                 <strong>Edit only what matters</strong>
-                <small>Query, headers and body remain separate.</small>
+                <small>Query, headers, body, operation and variables stay separate.</small>
               </div>
             </li>
             <li>
@@ -255,7 +348,8 @@ export default function NetworkModulePage() {
         <div>
           <p>
             <strong>Preview first.</strong> Large payloads send a bounded preview to keep the
-            request list responsive. The full body loads on demand.
+            request list responsive. The full body loads on demand, with a 32 KB preview and 2 MB
+            retention limit by default.
           </p>
           <p>
             <strong>Buffers stay finite.</strong> Request history and retained bodies have explicit,

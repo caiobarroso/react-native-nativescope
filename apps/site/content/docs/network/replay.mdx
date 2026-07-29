@@ -30,6 +30,19 @@ preview.
 
 Untouched sections use the captured request exactly as it was.
 
+## Replay GraphQL
+
+Detected GraphQL requests replace the generic body workflow with **Operation** and **Variables**.
+The operation editor formats and validates GraphQL syntax; variables keep JSON highlighting and
+validation. NativeScope rebuilds the original GraphQL envelope when replaying, preserving captured
+extensions and headers.
+
+GraphQL GET calls, raw `application/graphql` bodies and batches remain available through the
+generic URL/body editors when their wire shape needs direct control.
+
+Read the [GraphQL guide](/docs/network/graphql) for automatic detection, operation-aware grouping
+and semantic errors returned with HTTP 200.
+
 ## Compare executions
 
 A replay is tagged both in the list and in its detail header. Select calls from the same endpoint

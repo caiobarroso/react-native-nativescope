@@ -33,6 +33,8 @@ const NO_FILTERS: NetworkFilters = {
   search: "",
   slowerThanMs: null,
   grouped: true,
+  protocol: "all",
+  graphQLOperation: "all",
 };
 
 describe("statusClassOf", () => {
@@ -84,6 +86,54 @@ describe("matchesFilters", () => {
     expect(matchesFilters(r, { ...NO_FILTERS, search: "secret-token" })).toBe(true); // header value
     expect(matchesFilters(r, { ...NO_FILTERS, search: "caio" })).toBe(true); // body, case-insensitive
     expect(matchesFilters(r, { ...NO_FILTERS, search: "nope" })).toBe(false);
+  });
+
+  it("filtra HTTP e GraphQL sem separar as timelines", () => {
+    const http = req({
+      id: "http",
+      method: "POST",
+      requestBody: {
+        text: '{"username":"ada"}',
+        size: 18,
+        truncated: false,
+        kind: "json",
+      },
+    });
+    const graphQL = req({
+      id: "graphql",
+      method: "POST",
+      path: "/graphql",
+      requestBody: {
+        text: JSON.stringify({
+          query: "mutation SaveUser { saveUser { id } }",
+          operationName: "SaveUser",
+        }),
+        size: 70,
+        truncated: false,
+        kind: "json",
+      },
+    });
+
+    expect(
+      matchesFilters(http, { ...NO_FILTERS, protocol: "http" }),
+    ).toBe(true);
+    expect(
+      matchesFilters(graphQL, { ...NO_FILTERS, protocol: "http" }),
+    ).toBe(false);
+    expect(
+      matchesFilters(graphQL, {
+        ...NO_FILTERS,
+        protocol: "graphql",
+        graphQLOperation: "mutation",
+      }),
+    ).toBe(true);
+    expect(
+      matchesFilters(graphQL, {
+        ...NO_FILTERS,
+        protocol: "graphql",
+        graphQLOperation: "query",
+      }),
+    ).toBe(false);
   });
 });
 

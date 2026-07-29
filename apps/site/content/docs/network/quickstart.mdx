@@ -58,6 +58,15 @@ Trigger any screen that calls `fetch` or `XMLHttpRequest`. The newest request ap
 
 Select it to inspect the complete exchange.
 
+<Callout title="HTTP and GraphQL use the same setup">
+  `network: true` captures ordinary HTTP and recognizes GraphQL-over-HTTP automatically. Apollo,
+  urql, Relay, custom clients and apps that mix REST with GraphQL need no additional NativeScope
+  adapter when their traffic uses `fetch` or `XMLHttpRequest`.
+</Callout>
+
+Continue with [Inspecting requests](/docs/network/requests), or open the dedicated
+[GraphQL guide](/docs/network/graphql).
+
 ## If nothing appears
 
 1. Confirm the app was restarted after adding `network: true`.

@@ -343,6 +343,7 @@ summary {
 }
 [data-platform-section-head] h2,
 [data-platform-config] h2,
+[data-network-protocol] h2,
 [data-network-flow] h2,
 [data-network-config] h2,
 [data-network-safety] h2 {
@@ -579,6 +580,26 @@ summary {
   font-size: 13px;
   line-height: 1.68;
 }
+[data-network-capabilities] article {
+  display: flex;
+  flex-direction: column;
+}
+[data-network-capabilities] article > a {
+  margin-top: auto;
+  padding-top: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 620;
+}
+[data-network-capabilities] article > a svg {
+  transition: transform 180ms ease;
+}
+[data-network-capabilities] article > a:hover svg {
+  transform: translateX(3px);
+}
 [data-network-capabilities] > div {
   grid-template-columns: repeat(3, 1fr);
 }
@@ -646,6 +667,178 @@ summary {
   width: 100%;
   height: auto;
   display: block;
+}
+[data-network-protocol] {
+  padding: 112px 0;
+  display: grid;
+  grid-template-columns: minmax(520px, 1.12fr) minmax(340px, 0.88fr);
+  align-items: center;
+  gap: 80px;
+}
+[data-network-protocol-visual] {
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+}
+[data-network-protocol-visual] > header {
+  min-height: 48px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+[data-network-protocol-visual] > header div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+[data-network-protocol-visual] > header svg {
+  color: var(--accent);
+}
+[data-network-protocol-visual] > header strong {
+  font-size: 12px;
+  font-weight: 620;
+}
+[data-network-protocol-visual] > header > span {
+  color: var(--created);
+  font: 9px var(--site-mono);
+  text-transform: uppercase;
+}
+[data-network-protocol-filters] {
+  min-height: 52px;
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+[data-network-protocol-filters] span {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-subtle);
+  font: 9px var(--site-mono);
+}
+[data-network-protocol-filters] span[data-active] {
+  border-color: var(--accent-border);
+  background: var(--accent-wash);
+  color: var(--accent-text);
+}
+[data-network-protocol-head],
+[data-network-protocol-row] {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 72px;
+  align-items: center;
+}
+[data-network-protocol-head] {
+  min-height: 34px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-subtle);
+  font: 8px var(--site-mono);
+  text-transform: uppercase;
+}
+[data-network-protocol-head] span:last-child {
+  text-align: right;
+}
+[data-network-protocol-row] {
+  min-height: 66px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  transition:
+    background 180ms ease,
+    border-color 180ms ease;
+}
+[data-network-protocol-row]:last-child {
+  border-bottom: 0;
+}
+[data-network-protocol-row][data-selected] {
+  background: var(--accent-wash);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+[data-network-protocol-row] > b,
+[data-network-protocol-row] > em {
+  font: 620 9px var(--site-mono);
+  font-style: normal;
+}
+[data-network-protocol-row] > b[data-tone="query"],
+[data-network-protocol-row] > em[data-tone="ok"] {
+  color: var(--created);
+}
+[data-network-protocol-row] > b[data-tone="mutation"],
+[data-network-protocol-row] > em[data-tone="semantic"] {
+  color: var(--accent-text);
+}
+[data-network-protocol-row] > b[data-tone="http"] {
+  color: var(--text-muted);
+}
+[data-network-protocol-row] > em[data-tone="error"] {
+  color: var(--deleted);
+}
+[data-network-protocol-row] > em {
+  text-align: right;
+}
+[data-network-protocol-row] p {
+  min-width: 0;
+  margin: 0;
+  display: grid;
+  gap: 3px;
+}
+[data-network-protocol-row] p strong {
+  overflow: hidden;
+  color: var(--text);
+  font: 600 11px var(--site-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-network-protocol-row] p small {
+  overflow: hidden;
+  color: var(--text-subtle);
+  font: 9px var(--site-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-network-protocol-copy] > p:not([data-section-kicker]) {
+  margin: 23px 0 26px;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.76;
+}
+[data-network-protocol-copy] ul {
+  margin: 0 0 30px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+[data-network-protocol-copy] li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+[data-network-protocol-copy] li svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+[data-network-protocol-copy] > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 620;
+}
+[data-network-protocol-copy] > a svg {
+  transition: transform 180ms ease;
+}
+[data-network-protocol-copy] > a:hover svg {
+  transform: translateX(3px);
 }
 [data-network-capabilities] article {
   min-height: 250px;
@@ -938,15 +1131,20 @@ summary {
   }
   [data-platform-section-head] h2,
   [data-platform-config] h2,
+  [data-network-protocol] h2,
   [data-network-flow] h2,
   [data-network-config] h2,
   [data-network-safety] h2 {
     font-size: 36px;
   }
   [data-module-feature],
+  [data-network-protocol],
   [data-network-flow],
   [data-network-safety] {
     grid-template-columns: 1fr;
+  }
+  [data-network-protocol-copy] {
+    order: -1;
   }
   [data-module-feature="network"] [data-module-copy] {
     order: 0;
@@ -969,6 +1167,7 @@ summary {
   }
   [data-platform-config],
   [data-network-config],
+  [data-network-protocol],
   [data-network-flow],
   [data-network-safety] {
     padding: 80px 0;
@@ -1015,6 +1214,20 @@ summary {
 }
 
 @media (max-width: 520px) {
+  [data-network-protocol-filters] {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  [data-network-protocol-filters] span {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  [data-network-protocol-head],
+  [data-network-protocol-row] {
+    grid-template-columns: 58px minmax(0, 1fr) 52px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
   [data-platform-actions],
   [data-network-actions],
   [data-platform-closer] > div:last-child,

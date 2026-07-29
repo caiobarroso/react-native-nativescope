@@ -156,7 +156,7 @@ export function softwareApplicationSchema() {
     applicationSubCategory: "React Native debugging and developer tools",
     operatingSystem: "macOS, Windows, Linux",
     description:
-      "A plug-and-play, fully local debugging environment for React Native. Inspect storage, capture network traffic, replay requests and keep debugging context in one Studio.",
+      "A plug-and-play, fully local debugging environment for React Native. Inspect storage, capture HTTP and GraphQL traffic, replay requests and keep debugging context in one Studio.",
     url: SITE_URL,
     downloadUrl: SOCIAL.repo,
     softwareVersion: "1.0.0",

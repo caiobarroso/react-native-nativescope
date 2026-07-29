@@ -1,18 +1,29 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json as jsonLanguage } from "@codemirror/lang-json";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { parse as parseGraphQL } from "graphql";
 import { Braces, Check, ChevronDown, ChevronUp, CircleAlert, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import type { NetworkRequest } from "@rnsi/protocol";
 import { useNetwork } from "../../lib/network-store.ts";
 import { getNetworkBody, replayRequest } from "../../lib/studio-client.ts";
-import { methodColorClass } from "./format.ts";
+import {
+  formatGraphQLQuery,
+  getGraphQLRequestInfo,
+} from "../../lib/network-graphql.ts";
+import { methodColorClass, requestTypeLabel } from "./format.ts";
+import { GraphQLCodeEditor } from "./GraphQLCodeEditor.tsx";
 
 type ReplayMode = "original" | "current-session";
-type ReplayTab = "query" | "headers" | "body";
+type ReplayTab =
+  | "query"
+  | "headers"
+  | "body"
+  | "graphql-operation"
+  | "graphql-variables";
 
 type PairRow = {
   id: string;
@@ -120,6 +131,28 @@ function headerValue(headers: Record<string, string>, name: string): string | nu
   return null;
 }
 
+function buildGraphQLReplayBody(
+  baselineBody: string,
+  query: string,
+  variables: unknown,
+  operationName: string,
+): string {
+  const parsed = parseJson(baselineBody);
+  const envelope =
+    parsed.valid &&
+    typeof parsed.value === "object" &&
+    parsed.value !== null &&
+    !Array.isArray(parsed.value)
+      ? { ...(parsed.value as Record<string, unknown>) }
+      : {};
+
+  envelope.query = query;
+  envelope.variables = variables;
+  if (operationName.trim()) envelope.operationName = operationName.trim();
+  else delete envelope.operationName;
+  return JSON.stringify(envelope, null, 2);
+}
+
 const replayJsonHighlight = HighlightStyle.define([
   { tag: tags.propertyName, color: "var(--cm-property)" },
   { tag: [tags.string, tags.special(tags.string)], color: "var(--cm-string)" },
@@ -190,6 +223,15 @@ export function NetworkReplayModal({
   onClose: () => void;
 }) {
   const select = useNetwork((state) => state.select);
+  const graphQL = useMemo(() => getGraphQLRequestInfo(request), [request]);
+  const graphQLEditable =
+    graphQL?.source === "body" &&
+    graphQL.batched === false &&
+    !request.requestBody?.contentType
+      ?.toLowerCase()
+      .includes("application/graphql") &&
+    request.requestBody?.kind !== "binary" &&
+    request.requestBody?.kind !== "form";
   const initialQueryRows = useMemo(() => rowsFromQuery(request.query), [request.query]);
   const initialHeaderRows = useMemo(() => rowsFromHeaders(request.requestHeaders), [request.requestHeaders]);
   const initialBody = useMemo(() => {
@@ -200,16 +242,39 @@ export function NetworkReplayModal({
     request.requestBody?.contentType ?? headerValue(request.requestHeaders, "content-type") ?? "";
   const capturedBodyKind = request.requestBody?.kind ?? "text";
   const bodyCanBeEdited = capturedBodyKind !== "binary" && capturedBodyKind !== "form";
+  const initialGraphQLQuery =
+    graphQLEditable
+      ? (graphQL.primary.formattedQuery ?? graphQL.primary.query ?? "")
+      : "";
+  const initialGraphQLVariables =
+    graphQLEditable && graphQL.primary.variables != null
+      ? JSON.stringify(graphQL.primary.variables, null, 2)
+      : "{}";
+  const initialGraphQLOperationName =
+    graphQLEditable ? (graphQL.primary.operationName ?? "") : "";
 
   const [mode, setMode] = useState<ReplayMode>("original");
   const [tab, setTab] = useState<ReplayTab>(() =>
-    request.requestBody?.text ? "body" : request.query ? "query" : "headers",
+    graphQLEditable
+      ? "graphql-operation"
+      : request.requestBody?.text
+        ? "body"
+        : request.query
+          ? "query"
+          : "headers",
   );
   const [queryRows, setQueryRows] = useState<PairRow[]>(initialQueryRows);
   const [headerRows, setHeaderRows] = useState<PairRow[]>(initialHeaderRows);
   const [baselineBody, setBaselineBody] = useState(initialBody);
   const [body, setBody] = useState(initialBody);
   const [bodyEdited, setBodyEdited] = useState(false);
+  const [graphQLQuery, setGraphQLQuery] = useState(initialGraphQLQuery);
+  const [graphQLVariables, setGraphQLVariables] = useState(
+    initialGraphQLVariables,
+  );
+  const [graphQLOperationName, setGraphQLOperationName] = useState(
+    initialGraphQLOperationName,
+  );
   const [loadedFullBody, setLoadedFullBody] = useState(false);
   const [loadingFullBody, setLoadingFullBody] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -232,7 +297,33 @@ export function NetworkReplayModal({
   const queryDirty = query !== queryFromRows(initialQueryRows);
   const headersDirty = pairSignature(headerRows) !== pairSignature(initialHeaderRows);
   const bodyDirty = bodyCanBeEdited && bodyEdited && bodySignature(body) !== bodySignature(baselineBody);
-  const changeCount = Number(queryDirty) + Number(headersDirty) + Number(bodyDirty);
+  const graphQLQueryError = useMemo(() => {
+    if (!graphQLEditable || graphQLQuery.trim() === "") return null;
+    try {
+      parseGraphQL(graphQLQuery);
+      return null;
+    } catch (cause) {
+      return cause instanceof Error ? cause.message : "Invalid GraphQL document";
+    }
+  }, [graphQLEditable, graphQLQuery]);
+  const graphQLVariablesParse = useMemo(
+    () => parseJson(graphQLVariables),
+    [graphQLVariables],
+  );
+  const graphQLDirty =
+    Boolean(graphQLEditable) &&
+    (formatGraphQLQuery(graphQLQuery) !==
+      formatGraphQLQuery(initialGraphQLQuery) ||
+      bodySignature(graphQLVariables) !==
+        bodySignature(initialGraphQLVariables) ||
+      graphQLOperationName !== initialGraphQLOperationName);
+  const graphQLInvalid =
+    Boolean(graphQLEditable) &&
+    (graphQLQueryError !== null || !graphQLVariablesParse.valid);
+  const changeCount =
+    Number(queryDirty) +
+    Number(headersDirty) +
+    Number(bodyDirty || graphQLDirty);
   const removedHeaders = useMemo(() => {
     const remaining = new Set(headerRows.map((row) => row.key.trim().toLowerCase()).filter(Boolean));
     return Object.keys(request.requestHeaders).filter((header) => !remaining.has(header.toLowerCase()));
@@ -253,6 +344,9 @@ export function NetworkReplayModal({
     setHeaderRows(rowsFromHeaders(request.requestHeaders));
     setBody(baselineBody);
     setBodyEdited(false);
+    setGraphQLQuery(initialGraphQLQuery);
+    setGraphQLVariables(initialGraphQLVariables);
+    setGraphQLOperationName(initialGraphQLOperationName);
     setError(null);
   }
 
@@ -284,7 +378,7 @@ export function NetworkReplayModal({
   }
 
   const replay = async () => {
-    if (busy || bodyInvalid) return;
+    if (busy || bodyInvalid || graphQLInvalid) return;
     setBusy(true);
     setError(null);
     try {
@@ -299,7 +393,16 @@ export function NetworkReplayModal({
         overrides.headers = headers;
         if (removedHeaders.length > 0) overrides.removedHeaders = removedHeaders;
       }
-      if (bodyDirty) overrides.body = body === "" ? null : body;
+      if (bodyDirty) {
+        overrides.body = body === "" ? null : body;
+      } else if (graphQLDirty) {
+        overrides.body = buildGraphQLReplayBody(
+          baselineBody,
+          graphQLQuery,
+          graphQLVariablesParse.value,
+          graphQLOperationName,
+        );
+      }
 
       const newId = await replayRequest(
         request.id,
@@ -328,10 +431,12 @@ export function NetworkReplayModal({
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3.5">
           <RefreshCw size={16} strokeWidth={1.5} className="text-accent" />
           <h2 className="text-[14px] font-semibold text-text">Replay request</h2>
-          <span className={`ml-1 font-mono text-[11px] font-bold uppercase ${methodColorClass(request.method)}`}>
-            {request.method}
+          <span className={`ml-1 font-mono text-[11px] font-bold uppercase ${methodColorClass(requestTypeLabel(request))}`}>
+            {requestTypeLabel(request)}
           </span>
-          <span className="min-w-0 truncate font-mono text-[12px] text-text-muted">{request.path}</span>
+          <span className="min-w-0 truncate font-mono text-[12px] text-text-muted">
+            {graphQL?.primary.operationName ?? request.path}
+          </span>
           <button
             onClick={onClose}
             aria-label="Close replay"
@@ -369,14 +474,30 @@ export function NetworkReplayModal({
         </div>
 
         <div className="flex shrink-0 items-center border-b border-border px-5">
+          {graphQLEditable ? (
+            <>
+              <ReplayTab
+                active={tab === "graphql-operation"}
+                onClick={() => setTab("graphql-operation")}
+              >
+                Operation
+              </ReplayTab>
+              <ReplayTab
+                active={tab === "graphql-variables"}
+                onClick={() => setTab("graphql-variables")}
+              >
+                Variables
+              </ReplayTab>
+            </>
+          ) : null}
           <ReplayTab active={tab === "query"} onClick={() => setTab("query")} count={queryRows.filter((row) => row.key.trim()).length}>
-            Query
+            URL params
           </ReplayTab>
           <ReplayTab active={tab === "headers"} onClick={() => setTab("headers")} count={headerRows.filter((row) => row.key.trim()).length}>
             Headers
           </ReplayTab>
           <ReplayTab active={tab === "body"} onClick={() => setTab("body")}>
-            Body
+            {graphQLEditable ? "Raw body" : "Body"}
           </ReplayTab>
           {changeCount > 0 && (
             <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-accent">
@@ -387,7 +508,110 @@ export function NetworkReplayModal({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {tab === "query" ? (
+          {tab === "graphql-operation" && graphQLEditable ? (
+            <div className="flex min-h-[330px] flex-col">
+              <div className="mb-3 flex items-end gap-3">
+                <label className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+                    Operation name
+                  </span>
+                  <input
+                    value={graphQLOperationName}
+                    onChange={(event) => {
+                      setGraphQLOperationName(event.target.value);
+                      setError(null);
+                    }}
+                    placeholder="Anonymous operation"
+                    className="h-8 rounded-md border border-border bg-surface-raised px-2.5 font-mono text-[12px] text-text outline-none focus:border-accent"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setGraphQLQuery(formatGraphQLQuery(graphQLQuery))
+                  }
+                  disabled={graphQLQueryError !== null}
+                  className="inline-flex h-8 items-center rounded-md border border-border bg-surface-raised px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-40"
+                >
+                  Format operation
+                </button>
+              </div>
+              <GraphQLCodeEditor
+                value={graphQLQuery}
+                onChange={(value) => {
+                  setGraphQLQuery(value);
+                  setError(null);
+                }}
+                minHeight="280px"
+                maxHeight="min(430px, 48vh)"
+              />
+              {graphQLQueryError ? (
+                <p className="mt-2 flex items-start gap-1.5 text-[11px] text-deleted">
+                  <CircleAlert
+                    size={13}
+                    strokeWidth={1.5}
+                    className="mt-0.5 shrink-0"
+                  />
+                  {graphQLQueryError}
+                </p>
+              ) : null}
+            </div>
+          ) : tab === "graphql-variables" && graphQLEditable ? (
+            <div className="flex min-h-[330px] flex-col">
+              <div className="mb-3 flex items-center gap-2">
+                <Braces
+                  size={13}
+                  strokeWidth={1.5}
+                  className="text-text-subtle"
+                />
+                <span className="text-[12px] font-medium text-text">
+                  JSON variables
+                </span>
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                    graphQLVariablesParse.valid
+                      ? "bg-created-wash text-created"
+                      : "bg-deleted-wash text-deleted"
+                  }`}
+                >
+                  {graphQLVariablesParse.valid ? "Valid JSON" : "Invalid JSON"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setGraphQLVariables(prettyJson(graphQLVariables))
+                  }
+                  disabled={!graphQLVariablesParse.valid}
+                  className="ml-auto inline-flex h-7 items-center rounded-md border border-border bg-surface-raised px-2 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text disabled:opacity-40"
+                >
+                  Format JSON
+                </button>
+              </div>
+              <CodeMirror
+                value={graphQLVariables}
+                onChange={(value) => {
+                  setGraphQLVariables(value);
+                  setError(null);
+                }}
+                extensions={jsonEditorExtensions}
+                basicSetup={{
+                  foldGutter: true,
+                  highlightActiveLine: true,
+                  highlightActiveLineGutter: false,
+                  lineNumbers: true,
+                }}
+                theme="none"
+                minHeight="280px"
+                maxHeight="min(430px, 48vh)"
+              />
+              {!graphQLVariablesParse.valid ? (
+                <p className="mt-2 text-[11px] text-deleted">
+                  Fix the variables JSON before replaying.{" "}
+                  {graphQLVariablesParse.error}
+                </p>
+              ) : null}
+            </div>
+          ) : tab === "query" ? (
             <PairEditor
               description="Edit URL parameters without touching the path. Empty parameter names are ignored."
               emptyLabel="No query parameters captured."
@@ -518,7 +742,7 @@ export function NetworkReplayModal({
           </button>
           <button
             onClick={() => void replay()}
-            disabled={busy || bodyInvalid}
+            disabled={busy || bodyInvalid || graphQLInvalid}
             className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw size={13} strokeWidth={2} className={busy ? "animate-spin" : ""} />
@@ -676,7 +900,6 @@ function PairEditor({
           rows.map((row) => {
             const isLong = row.value.length > LONG_VALUE_THRESHOLD || row.value.includes("\n");
             const isExpanded = expandedRows.has(row.id) || (isLong && !collapsedRows.has(row.id));
-            const valueRows = Math.max(2, Math.ceil(row.value.length / 92));
 
             return (
               <div
@@ -689,28 +912,15 @@ function PairEditor({
                   aria-label={keyLabel}
                   placeholder={keyLabel}
                   list={suggestionListId}
-                  className="h-9 min-w-0 bg-surface px-3 font-mono text-[12px] text-text outline-none shadow-none placeholder:text-text-subtle focus:bg-surface-raised focus-visible:outline-none focus-visible:shadow-none rnsi-replay-pair-input"
+                  className="h-9 min-w-0 self-start bg-surface px-3 font-mono text-[12px] text-text outline-none shadow-none placeholder:text-text-subtle focus:bg-surface-raised focus-visible:outline-none focus-visible:shadow-none rnsi-replay-pair-input"
                 />
-                {isExpanded ? (
-                  <textarea
-                    value={row.value}
-                    onChange={(event) => onChange(row.id, "value", event.target.value)}
-                    aria-label={valueLabel}
-                    placeholder={valueLabel}
-                    rows={valueRows}
-                    spellCheck={false}
-                    className="min-h-[54px] min-w-0 resize-y border-l border-border bg-surface px-3 py-2 font-mono text-[12px] leading-relaxed text-text outline-none shadow-none placeholder:text-text-subtle focus:bg-surface-raised focus-visible:outline-none focus-visible:shadow-none rnsi-replay-pair-input"
-                    style={{ overflowWrap: "anywhere" }}
-                  />
-                ) : (
-                  <input
-                    value={row.value}
-                    onChange={(event) => onChange(row.id, "value", event.target.value)}
-                    aria-label={valueLabel}
-                    placeholder={valueLabel}
-                    className="h-9 min-w-0 border-l border-border bg-surface px-3 font-mono text-[12px] text-text outline-none shadow-none placeholder:text-text-subtle focus:bg-surface-raised focus-visible:outline-none focus-visible:shadow-none rnsi-replay-pair-input"
-                  />
-                )}
+                <PairValueField
+                  value={row.value}
+                  onChange={(next) => onChange(row.id, "value", next)}
+                  ariaLabel={valueLabel}
+                  placeholder={valueLabel}
+                  maxHeight={isLong && !isExpanded ? 56 : 240}
+                />
                 <div className="flex items-start justify-center border-l border-border bg-surface pt-1.5">
                   {isLong ? (
                     <button
@@ -743,5 +953,51 @@ function PairEditor({
         </datalist>
       ) : null}
     </section>
+  );
+}
+
+/** Campo de valor do par (header/query) que cresce em ALTURA conforme o
+ *  conteúdo — quebra tokens longos (JWT, cookie) em várias linhas dentro da
+ *  largura da célula em vez de cortar na horizontal como um <input>. Cresce até
+ *  `maxHeight` e então rola. Estética da célula do grid: borda só à esquerda,
+ *  sem canto arredondado; `min-h-9` alinha valores de uma linha à coluna da
+ *  chave. */
+function PairValueField({
+  value,
+  onChange,
+  ariaLabel,
+  placeholder,
+  maxHeight,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel: string;
+  placeholder: string;
+  maxHeight: number;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  // Mede o conteúdo e ajusta a altura. `height="auto"` primeiro para o
+  // scrollHeight refletir o tamanho natural. Sem borda vertical aqui, então
+  // scrollHeight (conteúdo + padding) já é a altura exata — nada a somar.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+  }, [value, maxHeight]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      rows={1}
+      spellCheck={false}
+      style={{ maxHeight, overflowWrap: "anywhere" }}
+      className="min-h-9 min-w-0 resize-none self-start border-l border-border bg-surface px-3 py-2 font-mono text-[12px] leading-relaxed text-text outline-none shadow-none placeholder:text-text-subtle focus:bg-surface-raised focus-visible:outline-none focus-visible:shadow-none rnsi-replay-pair-input"
+    />
   );
 }

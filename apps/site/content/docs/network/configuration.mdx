@@ -4,6 +4,7 @@ description: Configure body capture, request limits, URL exclusions and header r
 ---
 
 Start with `network: true`. The defaults are deliberately useful before they are configurable.
+The same flag covers HTTP and GraphQL-over-HTTP; protocol detection is automatic.
 
 ```ts
 import { defineNativeScopeConfig } from "react-native-nativescope/app";

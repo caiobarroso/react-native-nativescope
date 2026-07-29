@@ -28,11 +28,15 @@ export function AutoTextarea({
 
   // Mede o conteúdo e ajusta a altura. `height="auto"` primeiro para o
   // scrollHeight refletir o tamanho natural (senão a caixa só cresceria).
+  // Somamos a borda: com `box-sizing: border-box` o `scrollHeight` NÃO inclui
+  // a borda, então `height = scrollHeight` deixa a caixa ~2px curta demais e
+  // dispara um scrollbar fantasma mesmo com uma linha só.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+    const borderY = el.offsetHeight - el.clientHeight;
+    el.style.height = `${Math.min(el.scrollHeight + borderY, maxHeight)}px`;
   }, [value, maxHeight]);
 
   return (

@@ -1,5 +1,12 @@
 import type { NetworkRequest } from "@rnsi/protocol";
 import type { NetworkFilters, StatusClass } from "./network-store.ts";
+import {
+  getGraphQLRequestInfo,
+  getGraphQLResponseInfo,
+  getNetworkProtocol,
+  graphQLGroupKey,
+  graphQLSearchText,
+} from "./network-graphql.ts";
 
 /** Classe HTTP de um status (err = sem resposta). */
 export function statusClassOf(status: number | null): StatusClass {
@@ -12,7 +19,10 @@ export function statusClassOf(status: number | null): StatusClass {
 
 /** Chave de agrupamento: método + baseURL + path (query ignorada, de propósito). */
 export function groupKey(request: NetworkRequest): string {
-  return `${request.method} ${request.origin}${request.path}`;
+  return (
+    graphQLGroupKey(request) ??
+    `${request.method} ${request.origin}${request.path}`
+  );
 }
 
 function headersInclude(headers: Record<string, string>, needle: string): boolean {
@@ -24,10 +34,27 @@ function headersInclude(headers: Record<string, string>, needle: string): boolea
 
 /** Um request passa nos filtros ativos? Buscas vazias = sem restrição. */
 export function matchesFilters(request: NetworkRequest, filters: NetworkFilters): boolean {
+  const protocol = getNetworkProtocol(request);
+  if (filters.protocol !== "all" && protocol !== filters.protocol) return false;
+  if (protocol === "graphql" && filters.graphQLOperation !== "all") {
+    const info = getGraphQLRequestInfo(request);
+    if (
+      !info?.operations.some(
+        (operation) =>
+          operation.operationType === filters.graphQLOperation,
+      )
+    ) {
+      return false;
+    }
+  }
   if (filters.methods.length > 0 && !filters.methods.includes(request.method)) return false;
   if (
     filters.statusClasses.length > 0 &&
-    !filters.statusClasses.includes(statusClassOf(request.status))
+    !filters.statusClasses.includes(
+      getGraphQLResponseInfo(request)?.hasErrors
+        ? "err"
+        : statusClassOf(request.status),
+    )
   ) {
     return false;
   }
@@ -41,7 +68,8 @@ export function matchesFilters(request: NetworkRequest, filters: NetworkFilters)
       headersInclude(request.responseHeaders, search);
     const inReqBody = request.requestBody?.text.toLowerCase().includes(search) ?? false;
     const inResBody = request.responseBody?.text.toLowerCase().includes(search) ?? false;
-    if (!inUrl && !inHeaders && !inReqBody && !inResBody) return false;
+    const inGraphQL = graphQLSearchText(request).includes(search);
+    if (!inUrl && !inHeaders && !inReqBody && !inResBody && !inGraphQL) return false;
   }
   return true;
 }
@@ -63,7 +91,11 @@ export type DisplayRow =
   | { kind: "request"; request: NetworkRequest; indent: boolean };
 
 function isError(request: NetworkRequest): boolean {
-  return request.status === null || request.status >= 400;
+  return (
+    request.status === null ||
+    request.status >= 400 ||
+    getGraphQLResponseInfo(request)?.hasErrors === true
+  );
 }
 
 /**
@@ -127,4 +159,10 @@ export const SLOW_PRESETS: Array<{ label: string; ms: number }> = [
 ];
 
 export const METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
-export const STATUS_CLASS_OPTIONS: StatusClass[] = ["2xx", "3xx", "4xx", "5xx"];
+export const STATUS_CLASS_OPTIONS: StatusClass[] = [
+  "2xx",
+  "3xx",
+  "4xx",
+  "5xx",
+  "err",
+];

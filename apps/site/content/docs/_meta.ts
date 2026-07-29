@@ -57,7 +57,16 @@ export const networkDocsNav: DocGroup[] = [
     items: [
       { slug: "network/introduction", title: "Introduction" },
       { slug: "network/quickstart", title: "Quickstart" },
+    ],
+  },
+  {
+    module: "network",
+    product: "Network",
+    title: "Inspect",
+    items: [
       { slug: "network/requests", title: "Inspecting requests" },
+      { slug: "network/graphql", title: "GraphQL" },
+      { slug: "network/insights", title: "Network Insights" },
     ],
   },
   {
@@ -65,6 +74,10 @@ export const networkDocsNav: DocGroup[] = [
     product: "Network",
     title: "Workflows",
     items: [
+      {
+        slug: "network/capture-controls",
+        title: "Capture controls & sounds",
+      },
       { slug: "network/replay", title: "Replay & compare" },
       { slug: "network/storage-impact", title: "Storage impact" },
     ],

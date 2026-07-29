@@ -902,7 +902,7 @@ function JsonFilterButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
+      className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
         activeCount > 0
           ? "border-accent bg-accent-wash text-accent"
           : "border-border text-text-muted hover:bg-surface-hover hover:text-text"
@@ -1452,7 +1452,7 @@ function JsonVisualExplorer({
 
       {Array.isArray(current) ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-3">
+          <div className="flex h-9 shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-3">
             <div className="relative w-56 shrink-0">
               <Search
                 size={13}
@@ -1466,7 +1466,7 @@ function JsonVisualExplorer({
                   setSelectedItems(new Set());
                 }}
                 placeholder="Search records..."
-                className="h-7 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none focus:border-accent"
+                className="h-6 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none focus:border-accent"
               />
             </div>
             <JsonFilterButton
@@ -1484,13 +1484,13 @@ function JsonVisualExplorer({
             )}
             {!readOnly && selectedItems.size > 0 && (
               <>
-                <span className="ml-2 inline-flex h-7 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
+                <span className="ml-2 inline-flex h-6 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
                   {selectedItems.size} selected
                 </span>
                 {selectedItems.size === 1 && (
                   <button
                     onClick={duplicateSelectedArrayRow}
-                    className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] font-medium text-text-muted hover:bg-surface-hover hover:text-text"
+                    className="inline-flex h-6 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] font-medium text-text-muted hover:bg-surface-hover hover:text-text"
                   >
                     <Copy size={12} strokeWidth={1.5} />
                     Duplicate
@@ -1498,14 +1498,14 @@ function JsonVisualExplorer({
                 )}
                 <button
                   onClick={() => setDeleteConfirm("array")}
-                  className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted"
+                  className="inline-flex h-6 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted"
                 >
                   <Trash2 size={12} strokeWidth={1.5} />
                   Delete
                 </button>
                 <button
                   onClick={clearSelection}
-                  className="inline-flex h-7 items-center rounded-md border border-transparent px-2.5 text-[11px] text-text-subtle hover:border-border hover:bg-surface-hover hover:text-text"
+                  className="inline-flex h-6 items-center rounded-md border border-transparent px-2.5 text-[11px] text-text-subtle hover:border-border hover:bg-surface-hover hover:text-text"
                 >
                   Clear selection
                 </button>
@@ -1517,7 +1517,7 @@ function JsonVisualExplorer({
                 setFilterDrawerOpen(false);
                 setAddModal({ kind: "array", path, array: current });
               }}
-              className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+              className="ml-auto inline-flex h-6 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
             >
               <Plus size={12} strokeWidth={1.5} />
               Add
@@ -1544,7 +1544,7 @@ function JsonVisualExplorer({
                   : "No items found."
             }
           />
-          <div className="flex h-10 shrink-0 items-center gap-2 border-t border-border px-3 text-[12px] text-text-muted">
+          <div className="flex h-9 shrink-0 items-center gap-2 border-t border-border px-3 text-[12px] text-text-muted">
             <span>
               {arrayRows.length} {arrayRows.length === 1 ? "item" : "items"}
               {query.trim() || activeFilterCount > 0 ? " found" : ""}
@@ -1562,7 +1562,7 @@ function JsonVisualExplorer({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-3">
+          <div className="flex h-9 shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-3">
             <div className="relative w-56 shrink-0">
               <Search
                 size={13}
@@ -1576,7 +1576,7 @@ function JsonVisualExplorer({
                   setSelectedItems(new Set());
                 }}
                 placeholder="Search fields..."
-                className="h-7 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none focus:border-accent"
+                className="h-6 w-full rounded-md border border-border bg-surface px-2 pl-7 text-[12px] outline-none focus:border-accent"
               />
             </div>
             <JsonFilterButton
@@ -1594,13 +1594,13 @@ function JsonVisualExplorer({
             </span>
             {!readOnly && selectedItems.size > 0 && (
               <>
-                <span className="ml-2 inline-flex h-7 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
+                <span className="ml-2 inline-flex h-6 items-center rounded-md border border-border bg-surface-sunken px-2.5 text-[11px] text-text-muted">
                   {selectedItems.size} selected
                 </span>
                 {selectedItems.size === 1 && (
                   <button
                     onClick={duplicateSelectedObjectField}
-                    className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] font-medium text-text-muted hover:bg-surface-hover hover:text-text"
+                    className="inline-flex h-6 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] font-medium text-text-muted hover:bg-surface-hover hover:text-text"
                   >
                     <Copy size={12} strokeWidth={1.5} />
                     Duplicate
@@ -1608,14 +1608,14 @@ function JsonVisualExplorer({
                 )}
                 <button
                   onClick={() => setDeleteConfirm("object")}
-                  className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted"
+                  className="inline-flex h-6 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted"
                 >
                   <Trash2 size={12} strokeWidth={1.5} />
                   Delete
                 </button>
                 <button
                   onClick={clearSelection}
-                  className="inline-flex h-7 items-center rounded-md border border-transparent px-2.5 text-[11px] text-text-subtle hover:border-border hover:bg-surface-hover hover:text-text"
+                  className="inline-flex h-6 items-center rounded-md border border-transparent px-2.5 text-[11px] text-text-subtle hover:border-border hover:bg-surface-hover hover:text-text"
                 >
                   Clear selection
                 </button>
@@ -1627,7 +1627,7 @@ function JsonVisualExplorer({
                 setFilterDrawerOpen(false);
                 setAddModal({ kind: "field", path, keys: objectKeys });
               }}
-              className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
+              className="ml-auto inline-flex h-6 items-center gap-1 rounded-md border border-border px-2.5 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text"
             >
               <Plus size={12} strokeWidth={1.5} />
               Add field
@@ -1838,12 +1838,12 @@ export function JsonWorkspace({
 
   return (
     <div className={`flex h-full ${minHeight} min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-surface-raised`}>
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-surface-sunken px-2">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface-sunken px-2">
         <div className="flex rounded-md border border-border bg-surface-raised p-0.5">
           <button
             onClick={() => setMode("visual")}
             disabled={parsed.error !== null}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+            className={`flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] ${
               mode === "visual" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
             } disabled:opacity-40`}
           >
@@ -1852,7 +1852,7 @@ export function JsonWorkspace({
           </button>
           <button
             onClick={() => setMode("tree")}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+            className={`flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] ${
               mode === "tree" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
             }`}
           >
@@ -1861,7 +1861,7 @@ export function JsonWorkspace({
           </button>
           <button
             onClick={() => setMode("raw")}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+            className={`flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] ${
               mode === "raw" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
             }`}
           >
@@ -1871,7 +1871,7 @@ export function JsonWorkspace({
           <button
             onClick={() => setMode("ts")}
             disabled={parsed.error !== null}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] ${
+            className={`flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] ${
               mode === "ts" ? "bg-accent text-white" : "text-text-muted hover:bg-surface-hover"
             } disabled:opacity-40`}
           >
@@ -1885,37 +1885,42 @@ export function JsonWorkspace({
           {parsed.error === null ? `${rootLabel(parsed.value)} · ${nodeCountLabel}` : "invalid"}
         </span>
 
-        <button
-          onClick={() => setCollapse(false)}
-          disabled={!treeValue}
-          title="Expand all"
-          className="ml-auto rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
-        >
-          <Maximize2 size={13} strokeWidth={1.5} />
-        </button>
-        <button
-          onClick={() => setCollapse(2)}
-          disabled={!treeValue}
-          title="Collapse to depth 2"
-          className="rounded px-1.5 py-1 font-mono text-[11px] text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
-        >
-          2
-        </button>
-        <button
-          onClick={() => setCollapse(true)}
-          disabled={!treeValue}
-          title="Colapsar tudo"
-          className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40"
-        >
-          <Minimize2 size={13} strokeWidth={1.5} />
-        </button>
-        <button
-          onClick={() => void copyJson()}
-          title="Copy JSON"
-          className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
-        >
-          {copied ? <Check size={13} strokeWidth={1.5} /> : <Copy size={13} strokeWidth={1.5} />}
-        </button>
+        {/* Expandir/recolher só faz sentido na árvore (o Visual navega por
+            drill-in, não por colapso). Fora do modo Tree eram botões mortos. */}
+        <div className="ml-auto flex items-center gap-0.5">
+          {mode === "tree" && treeValue && (
+            <>
+              <button
+                onClick={() => setCollapse(false)}
+                title="Expand all"
+                className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+              >
+                <Maximize2 size={13} strokeWidth={1.5} />
+              </button>
+              <button
+                onClick={() => setCollapse(2)}
+                title="Collapse to depth 2"
+                className="rounded px-1.5 py-1 font-mono text-[11px] text-text-subtle hover:bg-surface-hover hover:text-text"
+              >
+                2
+              </button>
+              <button
+                onClick={() => setCollapse(true)}
+                title="Collapse all"
+                className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+              >
+                <Minimize2 size={13} strokeWidth={1.5} />
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => void copyJson()}
+            title="Copy JSON"
+            className="rounded p-1 text-text-subtle hover:bg-surface-hover hover:text-text"
+          >
+            {copied ? <Check size={13} strokeWidth={1.5} /> : <Copy size={13} strokeWidth={1.5} />}
+          </button>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-3">

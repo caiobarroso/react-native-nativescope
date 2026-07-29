@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { Radio } from "lucide-react";
 import { useNetwork } from "../../lib/network-store.ts";
 import { useLayout } from "../../lib/layout.ts";
@@ -6,13 +7,21 @@ import { NetworkFilters } from "./NetworkFilters.tsx";
 import { NetworkList } from "./NetworkList.tsx";
 import { NetworkDetail } from "./NetworkDetail.tsx";
 
+// Lazy: o Insights carrega o recharts. Só baixa esse chunk quando o usuário abre
+// o resumo — o load inicial do Studio continua leve.
+const NetworkInsights = lazy(() =>
+  import("./NetworkInsights.tsx").then((m) => ({ default: m.NetworkInsights })),
+);
+
 /** Área principal do módulo de Network: filtros + lista (redimensionável) + detalhe. */
 export function NetworkView() {
   const width = useLayout((s) => s.panels.networkList.size);
   const requestCount = useNetwork((s) => s.requests.length);
   const paused = useNetwork((s) => s.capturePaused);
+  const insightsOpen = useNetwork((s) => s.insightsOpen);
+  const setInsightsOpen = useNetwork((s) => s.setInsightsOpen);
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <NetworkFilters />
       {requestCount === 0 ? (
         <NetworkEmptyState paused={paused} />
@@ -27,6 +36,11 @@ export function NetworkView() {
           </div>
           <NetworkDetail />
         </div>
+      )}
+      {insightsOpen && (
+        <Suspense fallback={null}>
+          <NetworkInsights open onClose={() => setInsightsOpen(false)} />
+        </Suspense>
       )}
     </div>
   );

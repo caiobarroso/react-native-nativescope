@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart3,
   Bell,
   BellRing,
   Flag,
@@ -50,6 +51,7 @@ export function NetworkCaptureControls() {
   const setCapturePaused = useNetwork((state) => state.setCapturePaused);
   const clearRequests = useNetwork((state) => state.clearRequests);
   const setSound = useNetwork((state) => state.setSound);
+  const setInsightsOpen = useNetwork((state) => state.setInsightsOpen);
   const [soundOpen, setSoundOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [ruleDraft, setRuleDraft] = useState("");
@@ -106,6 +108,17 @@ export function NetworkCaptureControls() {
   return (
     <>
       <div className="ml-auto flex h-7 items-center gap-1.5 border-l border-border pl-2">
+        <button
+          type="button"
+          onClick={() => setInsightsOpen(true)}
+          disabled={requests.length === 0}
+          title="Open the session summary — metrics, timeline and endpoints"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 text-[11px] text-text-muted hover:bg-surface-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <BarChart3 size={12} strokeWidth={1.5} />
+          Insights
+        </button>
+
         <button
           type="button"
           onClick={startNewCapture}

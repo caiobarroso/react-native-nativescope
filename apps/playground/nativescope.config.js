@@ -14,7 +14,7 @@
  * (installNativeScopeDevtools), então aqui só ligamos o indicador.
  *
  * network: true instala o inspetor de rede no earlyBoot (patch de XHR, antes
- * do app). A aba "API" no App.js faz requests reais para exercitá-lo.
+ * do app). A aba "Request" no App.js faz HTTP e GraphQL reais para exercitá-lo.
  */
 module.exports = {
   modules: {

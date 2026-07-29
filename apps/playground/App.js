@@ -116,7 +116,7 @@ const TABS = [
   { key: "zoo", label: "Zoo", icon: "🦁" },
   { key: "toys", label: "Toys", icon: "🧸" },
   { key: "scores", label: "Scores", icon: "🏆" },
-  { key: "api", label: "API", icon: "🌐" },
+  { key: "api", label: "Request", icon: "🌐" },
 ];
 
 function Shell() {
@@ -551,6 +551,94 @@ async function apiPlainText() {
   return await res.text();
 }
 
+const GRAPHQL_API = "https://graphqlzero.almansi.me/api";
+
+async function graphQLRequest(query, variables, operationName) {
+  const res = await fetch(GRAPHQL_API, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Playground-Client": "NativeScope",
+    },
+    body: JSON.stringify({ query, variables, operationName }),
+  });
+  const payload = await res.json();
+  return { status: res.status, payload };
+}
+
+async function graphQLLoadUser() {
+  const result = await graphQLRequest(
+    `query GetUser($id: ID!) {
+      user(id: $id) {
+        id
+        name
+        username
+        email
+        company { name }
+      }
+    }`,
+    { id: "1" },
+    "GetUser",
+  );
+  if (result.payload.data?.user) {
+    session.set("graphql.user", JSON.stringify(result.payload.data.user));
+  }
+  return result;
+}
+
+async function graphQLLoadPosts() {
+  return graphQLRequest(
+    `query GetPosts($options: PageQueryOptions) {
+      posts(options: $options) {
+        data { id title body }
+        meta { totalCount }
+      }
+    }`,
+    { options: { paginate: { page: 1, limit: 5 } } },
+    "GetPosts",
+  );
+}
+
+async function graphQLCreatePost() {
+  const result = await graphQLRequest(
+    `mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        id
+        title
+        body
+      }
+    }`,
+    {
+      input: {
+        title: `NativeScope replay ${Date.now()}`,
+        body: "Created from the NativeScope playground",
+      },
+    },
+    "CreatePost",
+  );
+  if (result.payload.data?.createPost) {
+    session.set(
+      "graphql.lastMutation",
+      JSON.stringify(result.payload.data.createPost),
+    );
+  }
+  return result;
+}
+
+async function graphQLTriggerError() {
+  return graphQLRequest(
+    `query BrokenProduct {
+      post(id: 1) {
+        id
+        fieldThatDoesNotExist
+      }
+    }`,
+    {},
+    "BrokenProduct",
+  );
+}
+
 async function readSession() {
   const token = await AsyncStorage.getItem(TOKEN_KEY);
   const raw = session.getString("user");
@@ -570,6 +658,8 @@ function ApiScreen() {
   const { data: sess } = useQuery({ queryKey: ["session"], queryFn: readSession });
   const [products, setProducts] = useState([]);
   const [note, setNote] = useState(null);
+  const [requestMode, setRequestMode] = useState("http");
+  const [graphQLResult, setGraphQLResult] = useState(null);
 
   const signIn = useMutation({
     mutationFn: apiSignIn,
@@ -605,39 +695,177 @@ function ApiScreen() {
     onSuccess: (ip) => setNote(`Plain-text response “${ip}” — open it in the Network tab`),
     onError: (e) => setNote(`Plain text failed: ${e.message}`),
   });
+  const gqlUser = useMutation({
+    mutationFn: graphQLLoadUser,
+    onSuccess: ({ status, payload }) => {
+      setGraphQLResult(payload);
+      setNote(
+        payload.errors?.length
+          ? `GraphQL returned ${payload.errors.length} error(s) over HTTP ${status}`
+          : "GetUser completed — the user was also saved to MMKV",
+      );
+    },
+    onError: (e) => setNote(`GraphQL query failed: ${e.message}`),
+  });
+  const gqlPosts = useMutation({
+    mutationFn: graphQLLoadPosts,
+    onSuccess: ({ status, payload }) => {
+      setGraphQLResult(payload);
+      setNote(
+        payload.errors?.length
+          ? `GraphQL returned ${payload.errors.length} error(s) over HTTP ${status}`
+          : `GetPosts completed over HTTP ${status}`,
+      );
+    },
+    onError: (e) => setNote(`GraphQL query failed: ${e.message}`),
+  });
+  const gqlMutation = useMutation({
+    mutationFn: graphQLCreatePost,
+    onSuccess: ({ status, payload }) => {
+      setGraphQLResult(payload);
+      setNote(
+        payload.errors?.length
+          ? `GraphQL returned ${payload.errors.length} error(s) over HTTP ${status}`
+          : "CreatePost completed — its result was saved to MMKV",
+      );
+    },
+    onError: (e) => setNote(`GraphQL mutation failed: ${e.message}`),
+  });
+  const gqlError = useMutation({
+    mutationFn: graphQLTriggerError,
+    onSuccess: ({ status, payload }) => {
+      setGraphQLResult(payload);
+      setNote(
+        `Intentional GraphQL failure: ${payload.errors?.length ?? 0} error(s), HTTP ${status}`,
+      );
+    },
+    onError: (e) => setNote(`GraphQL request failed: ${e.message}`),
+  });
 
   const signedIn = Boolean(sess?.user);
   const busy =
-    signIn.isPending || profile.isPending || browse.isPending || boom.isPending || plain.isPending;
+    signIn.isPending ||
+    profile.isPending ||
+    browse.isPending ||
+    boom.isPending ||
+    plain.isPending ||
+    gqlUser.isPending ||
+    gqlPosts.isPending ||
+    gqlMutation.isPending ||
+    gqlError.isPending;
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <Header emoji="🌐" title="API Playground" subtitle="Real HTTP — watch it in the Network tab" />
+      <Header
+        emoji="🌐"
+        title="Request Playground"
+        subtitle="HTTP and GraphQL in the same Network timeline"
+      />
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>
-          {signedIn ? `👤  ${sess.user.firstName} ${sess.user.lastName}` : "🔒  Not signed in"}
-        </Text>
-        <Text style={styles.empty}>
-          {signedIn ? `@${sess.user.username} · token in AsyncStorage` : "Sign in to store an auth token"}
-        </Text>
+      <View style={styles.requestModeSwitch}>
+        {[
+          { key: "http", label: "HTTP", hint: "REST-style requests" },
+          { key: "graphql", label: "GraphQL", hint: "Queries and mutations" },
+        ].map((mode) => {
+          const active = requestMode === mode.key;
+          return (
+            <Pressable
+              key={mode.key}
+              onPress={() => {
+                setRequestMode(mode.key);
+                setNote(null);
+              }}
+              style={[
+                styles.requestModeButton,
+                active && styles.requestModeButtonActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.requestModeLabel,
+                  active && styles.requestModeLabelActive,
+                ]}
+              >
+                {mode.label}
+              </Text>
+              <Text
+                style={[
+                  styles.requestModeHint,
+                  active && styles.requestModeHintActive,
+                ]}
+              >
+                {mode.hint}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
-      <View style={styles.buttonRow}>
-        <BigButton label={signIn.isPending ? "Signing in…" : "Sign in"} emoji="🔑" onPress={() => signIn.mutate()} disabled={busy} />
-        <BigButton label={profile.isPending ? "Loading…" : "Load profile"} emoji="🪪" onPress={() => profile.mutate()} disabled={busy} />
-      </View>
-      <View style={styles.buttonRow}>
-        <BigButton label={browse.isPending ? "Fetching…" : "Browse ×3"} emoji="🛍️" onPress={() => browse.mutate()} disabled={busy} />
-        <BigButton label="Trigger 404" emoji="💥" onPress={() => boom.mutate()} disabled={busy} />
-      </View>
-      <View style={styles.buttonRow}>
-        <BigButton label={plain.isPending ? "Fetching…" : "Plain text"} emoji="🧾" onPress={() => plain.mutate()} disabled={busy} />
-      </View>
+      {requestMode === "http" ? (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>
+              {signedIn ? `👤  ${sess.user.firstName} ${sess.user.lastName}` : "🔒  Not signed in"}
+            </Text>
+            <Text style={styles.empty}>
+              {signedIn ? `@${sess.user.username} · token in AsyncStorage` : "Sign in to store an auth token"}
+            </Text>
+          </View>
+
+          <View style={styles.buttonRow}>
+            <BigButton label={signIn.isPending ? "Signing in…" : "Sign in"} emoji="🔑" onPress={() => signIn.mutate()} disabled={busy} />
+            <BigButton label={profile.isPending ? "Loading…" : "Load profile"} emoji="🪪" onPress={() => profile.mutate()} disabled={busy} />
+          </View>
+          <View style={styles.buttonRow}>
+            <BigButton label={browse.isPending ? "Fetching…" : "Browse ×3"} emoji="🛍️" onPress={() => browse.mutate()} disabled={busy} />
+            <BigButton label="Trigger 404" emoji="💥" onPress={() => boom.mutate()} disabled={busy} />
+          </View>
+          <View style={styles.buttonRow}>
+            <BigButton label={plain.isPending ? "Fetching…" : "Plain text"} emoji="🧾" onPress={() => plain.mutate()} disabled={busy} />
+          </View>
+        </>
+      ) : (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>GraphQLZero</Text>
+            <Text style={styles.empty}>
+              Named operations, variables, mutations and semantic errors.
+            </Text>
+          </View>
+          <View style={styles.buttonRow}>
+            <BigButton
+              label={gqlUser.isPending ? "Querying…" : "Get user"}
+              emoji="👤"
+              onPress={() => gqlUser.mutate()}
+              disabled={busy}
+            />
+            <BigButton
+              label={gqlPosts.isPending ? "Querying…" : "Get posts"}
+              emoji="📚"
+              onPress={() => gqlPosts.mutate()}
+              disabled={busy}
+            />
+          </View>
+          <View style={styles.buttonRow}>
+            <BigButton
+              label={gqlMutation.isPending ? "Mutating…" : "Create post"}
+              emoji="✍️"
+              onPress={() => gqlMutation.mutate()}
+              disabled={busy}
+            />
+            <BigButton
+              label={gqlError.isPending ? "Querying…" : "GraphQL error"}
+              emoji="⚠️"
+              onPress={() => gqlError.mutate()}
+              disabled={busy}
+            />
+          </View>
+        </>
+      )}
 
       {note ? <Text style={styles.apiNote}>{note}</Text> : null}
 
-      {products.length > 0 && (
+      {requestMode === "http" && products.length > 0 && (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>
             Latest products<Text style={styles.cardCount}>   {products.length}</Text>
@@ -651,11 +879,27 @@ function ApiScreen() {
         </View>
       )}
 
+      {requestMode === "graphql" && graphQLResult ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>
+            Latest GraphQL result
+            <Text style={styles.cardCount}>
+              {graphQLResult.errors?.length
+                ? `   ${graphQLResult.errors.length} error(s)`
+                : "   data"}
+            </Text>
+          </Text>
+          <Text style={styles.graphQLPreview} numberOfLines={10}>
+            {JSON.stringify(graphQLResult, null, 2)}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.impactHint}>
         <Text style={styles.impactHintText}>
-          💡 “Sign in” and “Load profile” write to storage right after the response.
-          Open either in the Network tab → the Storage impact panel lights up with
-          the keys it touched.
+          💡 HTTP and GraphQL share one timeline. GraphQL operations are detected
+          automatically and show their query, variables, data and errors. “Get
+          user” and “Create post” also write to MMKV, so Storage impact lights up.
         </Text>
       </View>
       <LiveHint />
@@ -855,6 +1099,33 @@ const styles = StyleSheet.create({
 
   // API / network
   apiNote: { color: MUTED, fontSize: 14, fontWeight: "600", textAlign: "center" },
+  requestModeSwitch: {
+    flexDirection: "row",
+    gap: 8,
+    padding: 5,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: BORDER,
+    backgroundColor: CARD,
+  },
+  requestModeButton: {
+    flex: 1,
+    alignItems: "center",
+    gap: 2,
+    borderRadius: 11,
+    paddingVertical: 10,
+  },
+  requestModeButtonActive: { backgroundColor: CORAL },
+  requestModeLabel: { color: MUTED, fontSize: 15, fontWeight: "900" },
+  requestModeLabelActive: { color: "#fff" },
+  requestModeHint: { color: "#aaa49b", fontSize: 11 },
+  requestModeHintActive: { color: "#fbe8e0" },
+  graphQLPreview: {
+    color: INK,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "monospace",
+  },
   impactHint: {
     backgroundColor: "#f7ede8",
     borderRadius: 14,

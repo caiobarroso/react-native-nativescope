@@ -63,8 +63,8 @@ export function PlatformHome() {
           <h1>One local Studio for what your React Native app is doing.</h1>
           <p>
             NativeScope is a modular debugging environment with no account and no cloud. Inspect
-            storage, understand network traffic and move between both without rebuilding your
-            workflow around another platform.
+            storage, understand HTTP and GraphQL traffic and move between both without rebuilding
+            your workflow around another platform.
           </p>
           <div data-platform-actions>
             <Button href="/docs/storage/quickstart" size="lg">
@@ -220,17 +220,17 @@ export function PlatformHome() {
             </span>
             <h3>Follow every request from the wire to the state it changed.</h3>
             <p>
-              Capture fetch and XHR, filter and group traffic, inspect full payloads, replay safely
-              and compare repeated executions.
+              Capture HTTP and GraphQL, isolate a new scenario without deleting history, inspect
+              full payloads, replay safely and understand the complete session.
             </p>
             <ul>
               <li>
                 <Activity size={14} aria-hidden />
-                Request, response and timing
+                Operation-aware HTTP + GraphQL timeline
               </li>
               <li>
                 <Repeat2 size={14} aria-hidden />
-                Structured replay and compare
+                Structured replay and session Insights
               </li>
               <li>
                 <Database size={14} aria-hidden />
@@ -247,7 +247,7 @@ export function PlatformHome() {
               width={1440}
               height={900}
               quality={95}
-              alt="NativeScope Network request inspector"
+              alt="NativeScope Network inspector for HTTP and GraphQL traffic"
             />
           </div>
         </article>

@@ -11,11 +11,19 @@ grows. Use the toolbar to combine:
 - free-text search across URL, headers and body;
 - method filters: GET, POST, PUT, PATCH and DELETE;
 - status classes: 2xx, 3xx, 4xx and 5xx;
+- protocol and operation filters when GraphQL traffic is present;
 - duration ranges;
 - grouping by endpoint.
 
 Grouping is useful for polling, retries and repeated mutations. Expand an endpoint to inspect each
 execution independently.
+
+GraphQL calls stay in this same list. NativeScope replaces an unhelpful `POST /graphql` label with
+the operation name and a compact Query, Mutation or Batch type. Grouping follows the operation, so
+`GetViewer` and `UpdateViewer` never collapse into the same endpoint group.
+
+Read the [GraphQL guide](/docs/network/graphql) for detection, semantic errors and
+operation-aware replay.
 
 ## Focus a new capture
 
@@ -23,21 +31,17 @@ Select **New capture** before exercising a new code path. NativeScope keeps the 
 hides it below a local marker and shows only the requests that arrive from that point forward.
 Nothing is deleted: use **Show earlier** on the marker whenever you need the previous context.
 
-The same marker can permanently clear only the earlier requests. The toolbar also lets you pause
-capture, resume it later or clear the complete Network history. These controls affect only the
-Studio; they never pause, cancel or change requests in your app.
+The toolbar also lets you pause capture, clear the complete history and configure local request
+sounds. See [Capture controls & sounds](/docs/network/capture-controls) for the complete workflow.
 
-## Request sounds
+## Understand the session
 
-Request sounds are off by default and stored as a local Studio preference. They can notify you
-about:
+Open **Insights** when the question is larger than one request. It summarizes request volume,
+failures, p95 latency, transferred data and endpoint behavior across the complete history or only
+the current filters.
 
-- every new request;
-- network errors and 4xx/5xx responses only;
-- selected endpoints, using a path or a rule such as `POST /auth/*`.
-
-Endpoint rules can be selected from captured traffic or typed manually. Adjust the compact volume
-control to match your environment, then use **Test** to confirm the current browser allows audio.
+Read [Network Insights](/docs/network/insights) for timeline analysis, endpoint normalization and
+drill-down.
 
 ## Request detail
 
@@ -52,6 +56,11 @@ The detail pane keeps four concerns separate:
 JSON bodies use the NativeScope visual viewer in read-only mode. You can move through collections,
 search fields, filter structured values, switch to Tree or Raw, and copy data without exposing
 editing controls that cannot affect a captured response.
+
+For GraphQL, Request shows the formatted document and variables separately. Response offers
+dedicated Data, Errors, Extensions and Raw surfaces. A response with GraphQL errors remains HTTP
+200 when that is what the server returned, but receives an explicit semantic error marker and is
+included by the `err` filter.
 
 ## Large bodies
 

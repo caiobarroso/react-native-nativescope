@@ -6,6 +6,10 @@ import {
   saveNetworkSoundSettings,
   type NetworkSoundSettings,
 } from "./network-sound.ts";
+import type {
+  GraphQLOperationType,
+  NetworkProtocol,
+} from "./network-graphql.ts";
 
 /**
  * Store do módulo de Network — separado do `useStudio` (storage) de propósito:
@@ -33,6 +37,10 @@ export interface NetworkFilters {
   slowerThanMs: number | null;
   /** Agrupa por método+baseURL+path (reduz ruído de endpoints repetidos). */
   grouped: boolean;
+  /** Protocolo derivado automaticamente. all = tráfego unificado. */
+  protocol: NetworkProtocol | "all";
+  /** Tipo de operação GraphQL. Só é aplicado quando o protocolo é GraphQL. */
+  graphQLOperation: GraphQLOperationType | "all";
 }
 
 const INITIAL_FILTERS: NetworkFilters = {
@@ -41,6 +49,8 @@ const INITIAL_FILTERS: NetworkFilters = {
   search: "",
   slowerThanMs: null,
   grouped: true,
+  protocol: "all",
+  graphQLOperation: "all",
 };
 
 interface NetworkState {
@@ -63,6 +73,8 @@ interface NetworkState {
   /** Requests inéditas ainda dentro da janela de destaque visual. */
   recentRequestIds: string[];
   sound: NetworkSoundSettings;
+  /** Overlay do resumo (Insights) aberto? */
+  insightsOpen: boolean;
 
   /** Recebe o `data` cru do module.event; valida e faz upsert por id. */
   addRequest(raw: unknown): void;
@@ -75,12 +87,15 @@ interface NetworkState {
   clearEarlier(): void;
   clearRequests(): void;
   setSound(settings: NetworkSoundSettings): void;
+  setInsightsOpen(open: boolean): void;
 
   toggleMethod(method: string): void;
   toggleStatusClass(cls: StatusClass): void;
   setSearch(query: string): void;
   setSlowerThan(ms: number | null): void;
   setGrouped(grouped: boolean): void;
+  setProtocol(protocol: NetworkProtocol | "all"): void;
+  setGraphQLOperation(operation: GraphQLOperationType | "all"): void;
   clearFilters(): void;
   toggleGroup(key: string): void;
 }
@@ -104,6 +119,7 @@ export const useNetwork = create<NetworkState>((set, get) => ({
   showEarlier: false,
   recentRequestIds: [],
   sound: loadNetworkSoundSettings(),
+  insightsOpen: false,
 
   addRequest: (raw) => {
     const parsed = networkRequestSchema.safeParse(raw);
@@ -169,6 +185,7 @@ export const useNetwork = create<NetworkState>((set, get) => ({
       sessionEarlierIds: [],
       showEarlier: false,
       recentRequestIds: [],
+      insightsOpen: false,
     }),
 
   startNewCapture: () =>
@@ -233,6 +250,8 @@ export const useNetwork = create<NetworkState>((set, get) => ({
     set({ sound });
   },
 
+  setInsightsOpen: (insightsOpen) => set({ insightsOpen }),
+
   toggleMethod: (method) =>
     set((state) => ({
       filters: {
@@ -257,6 +276,21 @@ export const useNetwork = create<NetworkState>((set, get) => ({
 
   setGrouped: (grouped) =>
     set((state) => ({ filters: { ...state.filters, grouped } })),
+
+  setProtocol: (protocol) =>
+    set((state) => ({
+      filters: {
+        ...state.filters,
+        protocol,
+        graphQLOperation:
+          protocol === "graphql" ? state.filters.graphQLOperation : "all",
+      },
+    })),
+
+  setGraphQLOperation: (graphQLOperation) =>
+    set((state) => ({
+      filters: { ...state.filters, protocol: "graphql", graphQLOperation },
+    })),
 
   clearFilters: () =>
     set((state) => ({
