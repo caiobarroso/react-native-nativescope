@@ -3,6 +3,7 @@ import {
   ArrowDownUp,
   Check,
   ChevronDown,
+  ChevronRight,
   Copy,
   Database,
   Download,
@@ -42,6 +43,7 @@ import {
   requestTypeLabel,
   statusColorClass,
   statusLabel,
+  statusReason,
 } from "./format.ts";
 
 type Tab = "request" | "response" | "response-headers" | "storage-impact";
@@ -181,6 +183,16 @@ export function NetworkDetail() {
   );
 }
 
+/** Separador sutil entre os metadados de status (reason · tempo · size).
+ *  Opacidade recuada cria a hierarquia sem virar ruído. */
+function MetaSep() {
+  return (
+    <span aria-hidden className="text-text-subtle" style={{ opacity: 0.4 }}>
+      ·
+    </span>
+  );
+}
+
 function RequestSummary({
   request,
   impactCount,
@@ -195,29 +207,39 @@ function RequestSummary({
   const graphQL = getGraphQLRequestInfo(request);
   const graphQLErrors = getGraphQLResponseInfo(request)?.errors.length ?? 0;
   const typeLabel = requestTypeLabel(request);
+  const reason = statusReason(request);
+  // Reason phrase só agrega em erro/redirect; num 2xx o código verde já basta,
+  // então escondemos "OK" pra manter a linha limpa.
+  const showReason =
+    reason !== null && (request.status === null || request.status >= 300);
   return (
     <div className="shrink-0 border-b border-border bg-surface px-3 py-2.5">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span
-              className={`font-mono text-[11px] font-bold uppercase ${methodColorClass(typeLabel)}`}
+              className={`font-mono text-[11px] font-semibold uppercase tracking-wide ${methodColorClass(typeLabel)}`}
             >
               {typeLabel}
             </span>
             <span
-              className={`font-mono text-[13px] font-semibold ${statusColorClass(request)}`}
+              className={`font-mono text-[14px] font-bold leading-none ${statusColorClass(request)}`}
             >
               {statusLabel(request)}
             </span>
-            {request.statusText ? (
-              <span className="text-[12px] text-text-muted">
-                {request.statusText}
+            <span className="flex items-center gap-1.5 font-mono text-[11px] text-text-subtle">
+              {showReason ? (
+                <>
+                  <MetaSep />
+                  <span className="text-text-muted">{reason}</span>
+                </>
+              ) : null}
+              <MetaSep />
+              <span className="tabular-nums" title="Duration">
+                {formatDuration(request.duration)}
               </span>
-            ) : null}
-            <span className="flex items-center gap-2.5 font-mono text-[11px] text-text-subtle">
-              <span title="Duration">{formatDuration(request.duration)}</span>
-              <span title="Response size">
+              <MetaSep />
+              <span className="tabular-nums" title="Response size">
                 {formatBytes(request.responseSize)}
               </span>
             </span>
@@ -237,7 +259,8 @@ function RequestSummary({
             ) : null}
             {graphQLErrors > 0 ? (
               <span className="inline-flex items-center rounded bg-deleted-wash px-1.5 py-0.5 font-mono text-[9px] font-semibold text-deleted">
-                {graphQLErrors} GraphQL {graphQLErrors === 1 ? "error" : "errors"}
+                {graphQLErrors} GraphQL{" "}
+                {graphQLErrors === 1 ? "error" : "errors"}
               </span>
             ) : null}
           </div>
@@ -279,59 +302,110 @@ function GraphQLRequestPanel({
 }) {
   return (
     <>
-      {operations.map((operation, index) => (
-        <section
-          key={`${operation.operationName ?? "anonymous"}-${index}`}
-          className="space-y-3"
-        >
-          <div className="flex items-center gap-2">
-            <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
-              GraphQL operation
-            </h3>
-            <span className="rounded bg-accent-wash px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-accent">
-              {operation.operationType}
-            </span>
-            <span className="font-mono text-[11px] font-semibold text-text">
-              {operation.operationName ?? "Anonymous operation"}
-            </span>
-            {operations.length > 1 ? (
-              <span className="text-[10px] text-text-subtle">
-                {index + 1} of {operations.length}
-              </span>
-            ) : null}
-          </div>
-
-          {operation.formattedQuery ? (
-            <GraphQLCodeEditor
-              value={operation.formattedQuery}
-              readOnly
-              minHeight="150px"
-              maxHeight="320px"
-            />
-          ) : (
-            <p className="rounded-md border border-border bg-surface-sunken px-3 py-2 text-[11px] text-text-muted">
-              Persisted operation. The request did not include its GraphQL document.
-            </p>
-          )}
-
-          <div className="grid min-h-[220px] grid-cols-1 gap-3 xl:grid-cols-2">
-            <JsonValuePanel
-              title="Variables"
-              value={operation.variables}
-              sourceName={`${operation.operationName ?? "operation"} variables`}
-            />
-            {operation.extensions != null ? (
-              <JsonValuePanel
-                title="Extensions"
-                value={operation.extensions}
-                sourceName={`${operation.operationName ?? "operation"} extensions`}
-              />
-            ) : null}
-          </div>
-        </section>
-      ))}
+      {/* Headers no topo — consistente com o painel HTTP (headers acima do
+          corpo). A operação GraphQL é o análogo do "corpo", vem depois. */}
       <HeaderTable title="Request headers" headers={headers} />
+      {operations.map((operation, index) => (
+        <GraphQLOperationSection
+          key={`${operation.operationName ?? "anonymous"}-${index}`}
+          operation={operation}
+          index={index}
+          total={operations.length}
+        />
+      ))}
     </>
+  );
+}
+
+/** Uma operação GraphQL: documento (colapsável) + Variables/Extensions. O
+ *  documento pode ser enorme e empurrar o viewer de Variables pra baixo — além
+ *  do teto de 320px que já limita a altura, dá pra recolhê-lo e trazer o viewer
+ *  de volta pro topo. */
+function GraphQLOperationSection({
+  operation,
+  index,
+  total,
+}: {
+  operation: GraphQLOperation;
+  index: number;
+  total: number;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const Chevron = collapsed ? ChevronRight : ChevronDown;
+  return (
+    <section className="@container space-y-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed((value) => !value)}
+          className="flex min-w-0 items-center gap-2 text-left"
+          title={collapsed ? "Show query document" : "Hide query document"}
+        >
+          <Chevron
+            size={13}
+            strokeWidth={1.5}
+            className="shrink-0 text-text-subtle"
+          />
+          <h3 className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+            GraphQL operation
+          </h3>
+          <span className="shrink-0 rounded bg-accent-wash px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-accent">
+            {operation.operationType}
+          </span>
+          <span className="min-w-0 truncate font-mono text-[11px] font-semibold text-text">
+            {operation.operationName ?? "Anonymous operation"}
+          </span>
+        </button>
+        {total > 1 ? (
+          <span className="shrink-0 text-[10px] text-text-subtle">
+            {index + 1} of {total}
+          </span>
+        ) : null}
+        {collapsed && operation.formattedQuery ? (
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-text-subtle">
+            {operation.formattedQuery.split("\n").length} lines hidden
+          </span>
+        ) : null}
+      </div>
+
+      {!collapsed ? (
+        operation.formattedQuery ? (
+          <GraphQLCodeEditor
+            value={operation.formattedQuery}
+            readOnly
+            minHeight="150px"
+            maxHeight="320px"
+          />
+        ) : (
+          <p className="rounded-md border border-border bg-surface-sunken px-3 py-2 text-[11px] text-text-muted">
+            Persisted operation. The request did not include its GraphQL
+            document.
+          </p>
+        )
+      ) : null}
+
+      {/* Só divide em 2 colunas quando (a) há Extensions para preencher a 2ª
+          coluna — senão a Variables ficava órfã na metade esquerda — e (b) o
+          CONTÊINER (não a viewport) é largo o bastante. */}
+      <div
+        className={`grid min-h-[220px] grid-cols-1 gap-3 ${
+          operation.extensions != null ? "@2xl:grid-cols-2" : ""
+        }`}
+      >
+        <JsonValuePanel
+          title="Variables"
+          value={operation.variables}
+          sourceName={`${operation.operationName ?? "operation"} variables`}
+        />
+        {operation.extensions != null ? (
+          <JsonValuePanel
+            title="Extensions"
+            value={operation.extensions}
+            sourceName={`${operation.operationName ?? "operation"} extensions`}
+          />
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -347,9 +421,9 @@ function GraphQLResponsePanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const effectiveResponse =
     response ?? getGraphQLResponseInfoFromBody(fullBody);
-  const [surface, setSurface] = useState<"data" | "errors" | "extensions" | "raw">(
-    response?.hasErrors ? "errors" : "data",
-  );
+  const [surface, setSurface] = useState<
+    "data" | "errors" | "extensions" | "raw"
+  >(response?.hasErrors ? "errors" : "data");
 
   if (!effectiveResponse) {
     if (request.responseBody?.truncated) {
@@ -379,8 +453,8 @@ function GraphQLResponsePanel({
                   const parsed = getGraphQLResponseInfoFromBody(body);
                   setFullBody(body);
                   if (parsed?.hasErrors) setSurface("errors");
-                }
-                else setLoadError("The full response is no longer available.");
+                } else
+                  setLoadError("The full response is no longer available.");
               } catch {
                 setLoadError("Failed to load the full response.");
               } finally {
@@ -480,7 +554,7 @@ function JsonValuePanel({
   sourceName: string;
 }) {
   return (
-    <section className="flex min-h-[220px] flex-col">
+    <section className="flex min-h-[220px] min-w-0 flex-col">
       <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
         {title}
       </h3>
@@ -731,12 +805,30 @@ function HeaderTable({
   headers: Record<string, string>;
 }) {
   const entries = Object.entries(headers);
+  const [collapsed, setCollapsed] = useState(false);
+  const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (
     <section>
-      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
-        {title} {entries.length > 0 ? `· ${entries.length}` : ""}
-      </h3>
-      {entries.length === 0 ? (
+      <button
+        type="button"
+        onClick={() => setCollapsed((value) => !value)}
+        className="mb-1 flex items-center gap-1.5 text-left"
+        title={
+          collapsed
+            ? `Show ${title.toLowerCase()}`
+            : `Hide ${title.toLowerCase()}`
+        }
+      >
+        <Chevron
+          size={12}
+          strokeWidth={1.5}
+          className="shrink-0 text-text-subtle"
+        />
+        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+          {title} {entries.length > 0 ? `· ${entries.length}` : ""}
+        </h3>
+      </button>
+      {collapsed ? null : entries.length === 0 ? (
         <p className="text-[12px] text-text-subtle">None.</p>
       ) : (
         <div className="overflow-hidden rounded-md border border-border">
@@ -821,7 +913,11 @@ function BodySection({
         <div className="flex min-h-[220px] flex-1 flex-col">
           {effective.truncated ? (
             <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-created/40 bg-created-wash px-2.5 py-1.5">
-              <ArrowDownUp size={12} strokeWidth={1.5} className="shrink-0 text-created" />
+              <ArrowDownUp
+                size={12}
+                strokeWidth={1.5}
+                className="shrink-0 text-created"
+              />
               <p className="text-[11px] text-text-muted">
                 Showing first {formatBytes(effective.text.length)} of{" "}
                 {formatBytes(effective.size)}.

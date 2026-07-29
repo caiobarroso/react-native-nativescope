@@ -8,12 +8,18 @@ import {
 import type { WebSocketLike, SQLiteDatabaseLike } from "@rnsi/runtime";
 
 /** Semente GB-scale (plano de grandes volumes §E): prova os orçamentos ao vivo. */
-function seedScale(raw: DatabaseSync, adapter: ReturnType<typeof createMemoryAdapter>): void {
+function seedScale(
+  raw: DatabaseSync,
+  adapter: ReturnType<typeof createMemoryAdapter>,
+): void {
   // 5.000 chaves pequenas + valores grandes (o preview/get-full/export em ação)
   for (let i = 0; i < 5000; i += 1) {
     adapter.writeFromApp("default", `bulk.item.${String(i).padStart(4, "0")}`, {
       type: "json",
-      value: JSON.stringify({ index: i, status: i % 3 === 0 ? "done" : "pending" }),
+      value: JSON.stringify({
+        index: i,
+        status: i % 3 === 0 ? "done" : "pending",
+      }),
     });
   }
   adapter.writeFromApp("default", "huge.payload", {
@@ -75,8 +81,13 @@ function createFakeDatabase(): { db: SQLiteDatabaseLike; raw: DatabaseSync } {
         .map((row) => ({ ...(row as Record<string, unknown>) }));
     },
     async runAsync(sql, params = []) {
-      const result = raw.prepare(sql).run(...(params as Array<string | number | null>));
-      return { changes: Number(result.changes), lastInsertRowId: Number(result.lastInsertRowid) };
+      const result = raw
+        .prepare(sql)
+        .run(...(params as Array<string | number | null>));
+      return {
+        changes: Number(result.changes),
+        lastInsertRowId: Number(result.lastInsertRowid),
+      };
     },
   };
   return { db, raw };
@@ -117,7 +128,10 @@ export function startFakeRuntime(options: {
           value: JSON.stringify({ newCheckout: true, darkLaunch: false }),
         },
         "sync.queue": { type: "json", value: "[]" },
-        "device.info": { type: "json", value: JSON.stringify({ model: "Pixel 8" }) },
+        "device.info": {
+          type: "json",
+          value: JSON.stringify({ model: "Pixel 8" }),
+        },
         "onboarding.done": { type: "boolean", value: true },
         "session.count": { type: "number", value: 7 },
       },
@@ -136,7 +150,10 @@ export function startFakeRuntime(options: {
         "flags.newNavigation": { type: "boolean", value: true },
       },
       "user-cache": {
-        "cache.avatarUrl": { type: "string", value: "https://cdn.example/u/caio.png" },
+        "cache.avatarUrl": {
+          type: "string",
+          value: "https://cdn.example/u/caio.png",
+        },
         "cache.ttl": { type: "number", value: 3600 },
       },
     },
@@ -156,7 +173,12 @@ export function startFakeRuntime(options: {
       name: "app-playground (fake)",
       platform,
       deviceId,
-      label: platform === "ios" ? "iOS" : platform === "android" ? "Android" : platform,
+      label:
+        platform === "ios"
+          ? "iOS"
+          : platform === "android"
+            ? "Android"
+            : platform,
     },
     createWebSocket: (url) => new WebSocket(url) as unknown as WebSocketLike,
   });
@@ -182,7 +204,13 @@ export function startFakeRuntime(options: {
       status: 200,
       duration: 142,
       response: JSON.stringify(
-        { page: 1, items: [{ id: 1, name: "Arroz 5kg", price: 24.9 }, { id: 2, name: "Feijão 1kg", price: 8.5 }] },
+        {
+          page: 1,
+          items: [
+            { id: 1, name: "Arroz 5kg", price: 24.9 },
+            { id: 2, name: "Feijão 1kg", price: 8.5 },
+          ],
+        },
         null,
         2,
       ),
@@ -192,7 +220,11 @@ export function startFakeRuntime(options: {
       pathq: "/products?page=2",
       status: 200,
       duration: 128,
-      response: JSON.stringify({ page: 2, items: [{ id: 3, name: "Café 500g", price: 18 }] }, null, 2),
+      response: JSON.stringify(
+        { page: 2, items: [{ id: 3, name: "Café 500g", price: 18 }] },
+        null,
+        2,
+      ),
     },
     {
       method: "GET",
@@ -206,9 +238,16 @@ export function startFakeRuntime(options: {
       pathq: "/login",
       status: 200,
       duration: 306,
-      request: JSON.stringify({ email: "caio@example.com", password: "•••••••" }, null, 2),
+      request: JSON.stringify(
+        { email: "caio@example.com", password: "•••••••" },
+        null,
+        2,
+      ),
       response: JSON.stringify(
-        { token: "eyJhbGciOiJIUzI1NiJ9.fake", user: { id: 7, name: "Caio", premium: false } },
+        {
+          token: "eyJhbGciOiJIUzI1NiJ9.fake",
+          user: { id: 7, name: "Caio", premium: false },
+        },
         null,
         2,
       ),
@@ -219,7 +258,13 @@ export function startFakeRuntime(options: {
       status: 200,
       duration: 88,
       response: JSON.stringify(
-        { id: 7, name: "Caio", email: "caio@example.com", roles: ["admin"], settings: { theme: "dark", notifications: true } },
+        {
+          id: 7,
+          name: "Caio",
+          email: "caio@example.com",
+          roles: ["admin"],
+          settings: { theme: "dark", notifications: true },
+        },
         null,
         2,
       ),
@@ -230,7 +275,120 @@ export function startFakeRuntime(options: {
       status: 200,
       duration: 214,
       response: JSON.stringify(
-        { items: Array.from({ length: 12 }, (_, i) => ({ id: i + 1, title: `Post ${i + 1}`, likes: (i * 7) % 50 })) },
+        {
+          items: Array.from({ length: 12 }, (_, i) => ({
+            id: i + 1,
+            title: `Post ${i + 1}`,
+            likes: (i * 7) % 50,
+          })),
+        },
+        null,
+        2,
+      ),
+    },
+    {
+      method: "POST",
+      pathq: "/graphql",
+      status: 200,
+      duration: 118,
+      request: JSON.stringify({
+        operationName: "GetViewer",
+        query: `query GetViewer($includeTeams: Boolean!) {
+  viewer {
+    id
+    name
+    email
+    teams @include(if: $includeTeams) {
+      id
+      name
+      role
+    }
+  }
+}`,
+        variables: { includeTeams: true },
+      }),
+      response: JSON.stringify(
+        {
+          data: {
+            viewer: {
+              id: "usr_7",
+              name: "Caio",
+              email: "caio@example.com",
+              teams: [
+                { id: "team_1", name: "Mobile", role: "OWNER" },
+                { id: "team_2", name: "Product", role: "MEMBER" },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    },
+    {
+      method: "POST",
+      pathq: "/graphql",
+      status: 200,
+      duration: 184,
+      request: JSON.stringify({
+        operationName: "UpdateNotificationSettings",
+        query: `mutation UpdateNotificationSettings($input: NotificationSettingsInput!) {
+  updateNotificationSettings(input: $input) {
+    settings {
+      email
+      push
+      digest
+    }
+    updatedAt
+  }
+}`,
+        variables: {
+          input: { email: true, push: false, digest: "WEEKLY" },
+        },
+      }),
+      response: JSON.stringify(
+        {
+          data: {
+            updateNotificationSettings: {
+              settings: {
+                email: true,
+                push: false,
+                digest: "WEEKLY",
+              },
+              updatedAt: "2026-07-29T14:30:00.000Z",
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    },
+    {
+      method: "POST",
+      pathq: "/graphql",
+      status: 200,
+      duration: 247,
+      request: JSON.stringify({
+        operationName: "CreateCheckout",
+        query: `mutation CreateCheckout($cartId: ID!) {
+  createCheckout(cartId: $cartId) {
+    id
+    status
+  }
+}`,
+        variables: { cartId: "cart_expired" },
+      }),
+      response: JSON.stringify(
+        {
+          data: { createCheckout: null },
+          errors: [
+            {
+              message: "The cart has expired",
+              path: ["createCheckout"],
+              extensions: { code: "CART_EXPIRED" },
+            },
+          ],
+        },
         null,
         2,
       ),
@@ -240,7 +398,11 @@ export function startFakeRuntime(options: {
       pathq: "/orders/9182",
       status: 404,
       duration: 61,
-      response: JSON.stringify({ error: "not_found", message: "Order 9182 does not exist" }, null, 2),
+      response: JSON.stringify(
+        { error: "not_found", message: "Order 9182 does not exist" },
+        null,
+        2,
+      ),
     },
     {
       method: "POST",
@@ -248,10 +410,18 @@ export function startFakeRuntime(options: {
       status: 500,
       duration: 523,
       request: JSON.stringify({ cart: [1, 2, 3], coupon: "SAVE10" }),
-      response: JSON.stringify({ error: "internal", message: "Payment provider timeout" }, null, 2),
+      response: JSON.stringify(
+        { error: "internal", message: "Payment provider timeout" },
+        null,
+        2,
+      ),
     },
   ];
-  const netStatusText: Record<number, string> = { 200: "OK", 404: "Not Found", 500: "Internal Server Error" };
+  const netStatusText: Record<number, string> = {
+    200: "OK",
+    404: "Not Found",
+    500: "Internal Server Error",
+  };
   let netId = 1;
   let netCursor = 0;
   const emittedById = new Map<string, Record<string, unknown>>();
@@ -280,14 +450,26 @@ export function startFakeRuntime(options: {
       responseSize: Buffer.byteLength(resText),
       requestHeaders:
         spec.method === "POST"
-          ? { "Content-Type": "application/json", Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.fake" }
-          : { Accept: "application/json", Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.fake" },
+          ? {
+              "Content-Type": "application/json",
+              Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.fake",
+            }
+          : {
+              Accept: "application/json",
+              Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.fake",
+            },
       responseHeaders: {
         "content-type": "application/json; charset=utf-8",
         "content-length": String(Buffer.byteLength(resText)),
       },
       requestBody: reqText
-        ? { text: reqText, size: Buffer.byteLength(reqText), truncated: false, contentType: "application/json", kind: "json" }
+        ? {
+            text: reqText,
+            size: Buffer.byteLength(reqText),
+            truncated: false,
+            contentType: "application/json",
+            kind: "json",
+          }
         : null,
       responseBody: resText
         ? {
@@ -295,7 +477,11 @@ export function startFakeRuntime(options: {
             size: Buffer.byteLength(resText),
             truncated: false,
             contentType: "application/json",
-            kind: resText.trimStart().startsWith("{") || resText.trimStart().startsWith("[") ? "json" : "text",
+            kind:
+              resText.trimStart().startsWith("{") ||
+              resText.trimStart().startsWith("[")
+                ? "json"
+                : "text",
           }
         : null,
     };
@@ -320,7 +506,11 @@ export function startFakeRuntime(options: {
           } else {
             adapter.writeFromApp("default", "user.profile", {
               type: "json",
-              value: JSON.stringify({ name: "Caio", premium: false, seenAt: Date.now() }),
+              value: JSON.stringify({
+                name: "Caio",
+                premium: false,
+                seenAt: Date.now(),
+              }),
             });
           }
         } catch {
@@ -336,18 +526,33 @@ export function startFakeRuntime(options: {
   runtime.onModuleCommand("network", (command, data) => {
     const input = (data && typeof data === "object" ? data : {}) as {
       id?: string;
-      overrides?: { query?: string | null; headers?: Record<string, string>; removedHeaders?: string[]; body?: string | null };
+      overrides?: {
+        query?: string | null;
+        headers?: Record<string, string>;
+        removedHeaders?: string[];
+        body?: string | null;
+      };
     };
     if (command === "replay") {
       const orig = input.id ? emittedById.get(input.id) : undefined;
       if (!orig) return { id: null };
       const overrides = input.overrides ?? {};
-      const query = overrides.query !== undefined ? overrides.query : (orig.query as string | null);
-      const url = netOrigin + (orig.path as string) + (query ? `?${query.replace(/^\?/, "")}` : "");
+      const query =
+        overrides.query !== undefined
+          ? overrides.query
+          : (orig.query as string | null);
+      const url =
+        netOrigin +
+        (orig.path as string) +
+        (query ? `?${query.replace(/^\?/, "")}` : "");
       let headers = { ...(orig.requestHeaders as Record<string, string>) };
       for (const name of overrides.removedHeaders ?? []) {
         const lower = name.toLowerCase();
-        headers = Object.fromEntries(Object.entries(headers).filter(([key]) => key.toLowerCase() !== lower));
+        headers = Object.fromEntries(
+          Object.entries(headers).filter(
+            ([key]) => key.toLowerCase() !== lower,
+          ),
+        );
       }
       headers = { ...headers, ...(overrides.headers ?? {}) };
       const bodyText =
@@ -435,7 +640,11 @@ export function startFakeRuntime(options: {
         .prepare("INSERT INTO visits (status, pdv) VALUES ('pending', ?)")
         .run(pdvs[Math.floor(Math.random() * pdvs.length)] ?? "Assaí");
       // simula o hook nativo do expo-sqlite disparando
-      sqlite.notifyNativeChange("proline.db", "visits", Number(insert.lastInsertRowid));
+      sqlite.notifyNativeChange(
+        "proline.db",
+        "visits",
+        Number(insert.lastInsertRowid),
+      );
     }, 9000),
 
     // Network: burst inicial (após o handshake) + tráfego contínuo determinístico

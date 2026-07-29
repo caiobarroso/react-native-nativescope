@@ -1,9 +1,15 @@
+import { useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { StreamLanguage, syntaxHighlighting, HighlightStyle } from "@codemirror/language";
+import {
+  StreamLanguage,
+  syntaxHighlighting,
+  HighlightStyle,
+} from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { Check, Copy } from "lucide-react";
 
 const graphQLLanguage = StreamLanguage.define({
   token(stream) {
@@ -102,24 +108,50 @@ export function GraphQLCodeEditor({
   minHeight?: string;
   maxHeight?: string;
 }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard indisponível: silencioso */
+    }
+  };
+
   return (
-    <CodeMirror
-      value={value}
-      onChange={onChange}
-      extensions={[
-        ...graphQLEditorExtensions,
-        readOnly ? EditorState.readOnly.of(true) : [],
-      ]}
-      basicSetup={{
-        foldGutter: true,
-        highlightActiveLine: !readOnly,
-        highlightActiveLineGutter: false,
-        lineNumbers: true,
-      }}
-      theme="none"
-      minHeight={minHeight}
-      maxHeight={maxHeight}
-      editable={!readOnly}
-    />
+    <div className="relative">
+      <CodeMirror
+        value={value}
+        onChange={onChange}
+        extensions={[
+          ...graphQLEditorExtensions,
+          readOnly ? EditorState.readOnly.of(true) : [],
+        ]}
+        basicSetup={{
+          foldGutter: true,
+          highlightActiveLine: !readOnly,
+          highlightActiveLineGutter: false,
+          lineNumbers: true,
+        }}
+        theme="none"
+        minHeight={minHeight}
+        maxHeight={maxHeight}
+        editable={!readOnly}
+      />
+      {/* Copiar o documento inteiro — flutua no canto, fixo mesmo com scroll. */}
+      <button
+        type="button"
+        onClick={copy}
+        title="Copy GraphQL document"
+        className="absolute right-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-md border border-border bg-surface-raised text-text-subtle shadow-sm hover:bg-surface-hover hover:text-text"
+      >
+        {copied ? (
+          <Check size={13} strokeWidth={1.5} />
+        ) : (
+          <Copy size={13} strokeWidth={1.5} />
+        )}
+      </button>
+    </div>
   );
 }

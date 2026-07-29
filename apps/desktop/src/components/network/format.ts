@@ -31,7 +31,9 @@ export function formatClock(ts: number): string {
 }
 
 /** Classe de cor do status: 2xx verde, 3xx laranja, 4xx/5xx vermelho. */
-export function statusColorClass(request: Pick<NetworkRequest, "status" | "ok">): string {
+export function statusColorClass(
+  request: Pick<NetworkRequest, "status" | "ok">,
+): string {
   const { status } = request;
   if (status === null) return "text-deleted";
   if (status >= 500) return "text-deleted";
@@ -42,9 +44,54 @@ export function statusColorClass(request: Pick<NetworkRequest, "status" | "ok">)
 }
 
 /** Rótulo curto do status para exibir na linha. */
-export function statusLabel(request: Pick<NetworkRequest, "status" | "error">): string {
+export function statusLabel(
+  request: Pick<NetworkRequest, "status" | "error">,
+): string {
   if (request.status !== null) return String(request.status);
   return request.error ? "ERR" : "—";
+}
+
+/** Reason phrases canônicas dos códigos mais comuns. */
+const STATUS_REASON: Record<number, string> = {
+  200: "OK",
+  201: "Created",
+  202: "Accepted",
+  204: "No Content",
+  301: "Moved Permanently",
+  302: "Found",
+  303: "See Other",
+  304: "Not Modified",
+  307: "Temporary Redirect",
+  308: "Permanent Redirect",
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  408: "Request Timeout",
+  409: "Conflict",
+  410: "Gone",
+  422: "Unprocessable Entity",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  501: "Not Implemented",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
+
+/** Reason phrase canônica do status — evita o `statusText` cru inconsistente do
+ *  device (ex.: Android manda "no error" num 200). Cai para o statusText do
+ *  device (title-cased) quando o código não está no mapa. */
+export function statusReason(
+  request: Pick<NetworkRequest, "status" | "statusText">,
+): string | null {
+  if (request.status === null) return null;
+  const canonical = STATUS_REASON[request.status];
+  if (canonical) return canonical;
+  const raw = request.statusText?.trim();
+  if (!raw) return null;
+  return raw.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 /** Cor do método — ajuda a escanear a lista por tipo de operação. */
@@ -72,7 +119,9 @@ export function methodColorClass(method: string): string {
 }
 
 /** Classe HTTP para filtros/agrupamento futuros. */
-export function statusClass(status: number | null): "2xx" | "3xx" | "4xx" | "5xx" | "err" {
+export function statusClass(
+  status: number | null,
+): "2xx" | "3xx" | "4xx" | "5xx" | "err" {
   if (status === null) return "err";
   if (status >= 500) return "5xx";
   if (status >= 400) return "4xx";

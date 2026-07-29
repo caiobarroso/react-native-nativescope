@@ -220,8 +220,8 @@ export default function NetworkModulePage() {
           <h2>GraphQL should not look like a wall of POST requests.</h2>
           <p>
             NativeScope recognizes GraphQL over HTTP automatically. Queries, mutations, persisted
-            operations and batches keep their operation names, variables and semantic errors
-            without another client adapter or schema upload.
+            operations and batches keep their operation names, variables and semantic errors without
+            another client adapter or schema upload.
           </p>
           <ul>
             <li>
@@ -312,6 +312,44 @@ export default function NetworkModulePage() {
             quality={95}
             alt="NativeScope structured request replay editor"
           />
+        </div>
+      </section>
+
+      <section data-network-insights>
+        <div data-network-insights-shot>
+          <Image
+            src="/screenshots/network-insights-light.png"
+            width={2880}
+            height={1800}
+            quality={95}
+            alt="NativeScope Network Insights showing request volume, failures, latency, transferred data and endpoint performance"
+          />
+        </div>
+        <div data-network-insights-copy>
+          <p data-section-kicker>Network Insights</p>
+          <h2>One request explains a call. The session explains the problem.</h2>
+          <p>
+            Step back from individual payloads without leaving the Studio. Insights turns the
+            current capture into a readable overview of volume, failures, p95 latency, transferred
+            data and endpoint behavior across HTTP and GraphQL.
+          </p>
+          <ul>
+            <li>
+              <Activity size={14} aria-hidden />
+              Read traffic and failures over time.
+            </li>
+            <li>
+              <BarChart3 size={14} aria-hidden />
+              Rank endpoints by calls, errors, latency or bytes.
+            </li>
+            <li>
+              <Filter size={14} aria-hidden />
+              Analyze every request or only the active filters.
+            </li>
+          </ul>
+          <Link href="/docs/network/insights">
+            Explore Network Insights <ArrowRight size={15} aria-hidden />
+          </Link>
         </div>
       </section>
 

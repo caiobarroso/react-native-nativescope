@@ -22,10 +22,10 @@ importers:
         version: 8.21.1
     devDependencies:
       '@rnsi/protocol':
-        specifier: workspace:*
+        specifier: 0.1.0
         version: link:../../packages/protocol
       '@rnsi/runtime':
-        specifier: workspace:*
+        specifier: 0.1.0
         version: link:../../packages/runtime
       '@types/node':
         specifier: ^22.15.0

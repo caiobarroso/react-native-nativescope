@@ -1,6 +1,6 @@
 {
   "name": "react-native-nativescope",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A local, plug-and-play debugging environment for React Native apps.",
   "license": "MIT",
   "author": "Caio Barroso",
@@ -20,9 +20,12 @@
     "developer-tools",
     "expo",
     "storage-inspector",
+    "network-inspector",
     "async-storage",
     "mmkv",
     "sqlite",
+    "http",
+    "graphql",
     "debugging"
   ],
   "type": "module",
@@ -58,8 +61,8 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@rnsi/protocol": "workspace:*",
-    "@rnsi/runtime": "workspace:*",
+    "@rnsi/protocol": "0.1.0",
+    "@rnsi/runtime": "0.1.0",
     "@types/node": "^22.15.0",
     "@types/ws": "^8.18.0",
     "esbuild": "^0.25.0",

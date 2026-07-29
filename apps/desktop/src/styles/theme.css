@@ -203,3 +203,15 @@ body {
     animation-duration: 1ms;
   }
 }
+
+/* O Recharts marca o wrapper E o <svg> surface com tabindex, então o browser
+   desenha um outline azul ao clicar/focar o gráfico — os "2 outlines". Como os
+   gráficos são read-only (sem interação por teclado), removemos ambos. */
+.recharts-wrapper,
+.recharts-wrapper:focus,
+.recharts-wrapper:focus-visible,
+.recharts-surface,
+.recharts-surface:focus,
+.recharts-surface:focus-visible {
+  outline: none !important;
+}

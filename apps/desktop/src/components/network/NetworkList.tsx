@@ -301,6 +301,14 @@ function RequestRow({
 }) {
   const request = row.request;
   const graphQLErrors = getGraphQLResponseInfo(request)?.errors.length ?? 0;
+  // GraphQL erra com HTTP 200 (a falha "silenciosa"): na lista só sinalizamos
+  // quando o status ESCONDE isso — status 2xx. Em 3xx/4xx/5xx a coluna Status
+  // já grita, então o badge seria só redundância/ruído (fica no detalhe).
+  const hasSilentGraphQLFailure =
+    graphQLErrors > 0 &&
+    request.status !== null &&
+    request.status >= 200 &&
+    request.status < 300;
   return (
     <button
       onClick={onSelect}
@@ -321,17 +329,17 @@ function RequestRow({
       >
         {endpointLabel(request)}
       </span>
-      {graphQLErrors > 0 ? (
+      {hasSilentGraphQLFailure ? (
         <span
-          className="inline-flex shrink-0 items-center rounded bg-deleted-wash px-1.5 py-0.5 font-mono text-[9px] font-semibold text-deleted"
-          title={`${graphQLErrors} GraphQL ${graphQLErrors === 1 ? "error" : "errors"} in an HTTP ${request.status ?? "error"} response`}
+          className="inline-flex shrink-0 items-center rounded border border-deleted/50 bg-deleted-wash px-1.5 py-0.5 font-mono text-[9px] font-semibold text-deleted"
+          title={`${graphQLErrors} GraphQL ${graphQLErrors === 1 ? "error" : "errors"} in an HTTP ${request.status} response — the status looks OK but the response failed`}
         >
           GQL {graphQLErrors}
         </span>
       ) : null}
       {request.replayOf ? (
         <span
-          className="inline-flex shrink-0 items-center gap-1 rounded bg-accent-wash px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-accent"
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-accent/40 bg-accent-wash px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-accent"
           title={`Replay of ${request.replayOf}`}
         >
           <RefreshCw size={9} strokeWidth={2} />

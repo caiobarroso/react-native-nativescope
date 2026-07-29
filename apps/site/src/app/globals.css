@@ -345,6 +345,7 @@ summary {
 [data-platform-config] h2,
 [data-network-protocol] h2,
 [data-network-flow] h2,
+[data-network-insights] h2,
 [data-network-config] h2,
 [data-network-safety] h2 {
   margin: 0;
@@ -903,6 +904,69 @@ summary {
   border-radius: 7px;
   box-shadow: var(--shadow-soft);
 }
+[data-network-insights] {
+  padding: 112px 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.28fr) minmax(350px, 0.72fr);
+  align-items: center;
+  gap: 70px;
+}
+[data-network-insights-shot] {
+  min-width: 0;
+  padding: 30px;
+  border: 1px solid var(--border);
+  background-color: var(--surface-sunken);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+[data-network-insights-shot] img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  box-shadow: var(--shadow-soft);
+}
+[data-network-insights-copy] > p:not([data-section-kicker]) {
+  margin: 23px 0 26px;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.76;
+}
+[data-network-insights-copy] ul {
+  margin: 0 0 30px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+[data-network-insights-copy] li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+[data-network-insights-copy] li svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+[data-network-insights-copy] > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 620;
+}
+[data-network-insights-copy] > a svg {
+  transition: transform 180ms ease;
+}
+[data-network-insights-copy] > a:hover svg {
+  transform: translateX(3px);
+}
 [data-network-code] > footer {
   min-height: 44px;
   padding: 0 16px;
@@ -1133,6 +1197,7 @@ summary {
   [data-platform-config] h2,
   [data-network-protocol] h2,
   [data-network-flow] h2,
+  [data-network-insights] h2,
   [data-network-config] h2,
   [data-network-safety] h2 {
     font-size: 36px;
@@ -1140,10 +1205,14 @@ summary {
   [data-module-feature],
   [data-network-protocol],
   [data-network-flow],
+  [data-network-insights],
   [data-network-safety] {
     grid-template-columns: 1fr;
   }
   [data-network-protocol-copy] {
+    order: -1;
+  }
+  [data-network-insights-copy] {
     order: -1;
   }
   [data-module-feature="network"] [data-module-copy] {
@@ -1169,6 +1238,7 @@ summary {
   [data-network-config],
   [data-network-protocol],
   [data-network-flow],
+  [data-network-insights],
   [data-network-safety] {
     padding: 80px 0;
     gap: 42px;
@@ -1187,6 +1257,9 @@ summary {
     font-size: 34px;
   }
   [data-network-replay-shot] {
+    padding: 16px;
+  }
+  [data-network-insights-shot] {
     padding: 16px;
   }
   [data-header-menu-cluster] {

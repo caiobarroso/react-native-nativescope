@@ -191,6 +191,7 @@ const needsPlain = [
   "snapshot-diff-light",
   "network-inspector-light",
   "network-replay-light",
+  "network-insights-light",
 ].some(want);
 
 if (needsPlain) {
@@ -210,7 +211,11 @@ if (needsPlain) {
       await shot("json-visual-light");
     }
 
-    if (want("network-inspector-light") || want("network-replay-light")) {
+    if (
+      want("network-inspector-light") ||
+      want("network-replay-light") ||
+      want("network-insights-light")
+    ) {
       await freshStudio();
       await page.setViewportSize({ width: 1440, height: 900 });
       const requestsButton = page.getByRole("button", { name: /Requests/ });
@@ -220,20 +225,26 @@ if (needsPlain) {
         .getByPlaceholder(/Search url, headers, body/i)
         .waitFor({ timeout: 30_000 });
       await page.waitForTimeout(7000);
-      const profileRows = page
-        .locator("button")
-        .filter({ hasText: "/profile" });
-      if ((await profileRows.count()) === 1) {
-        await profileRows.first().click();
-        await page.waitForTimeout(250);
-      }
-      await profileRows.last().click();
-      await page.waitForTimeout(1800);
 
-      if (want("network-inspector-light"))
+      if (want("network-inspector-light")) {
+        await page
+          .getByRole("button", { name: /GetViewer/ })
+          .last()
+          .click();
+        await page
+          .getByRole("button", { name: "Request", exact: true })
+          .click();
+        await page.getByText("GraphQL operation", { exact: true }).waitFor();
+        await page.waitForTimeout(1200);
         await shot("network-inspector-light");
+      }
 
       if (want("network-replay-light")) {
+        await page
+          .getByRole("button", { name: /UpdateNotificationSettings/ })
+          .last()
+          .click();
+        await page.waitForTimeout(700);
         await page
           .getByRole("button", { name: /Replay/i })
           .first()
@@ -241,9 +252,19 @@ if (needsPlain) {
         await page
           .getByRole("heading", { name: "Replay request" })
           .waitFor({ timeout: 15_000 });
-        await page.getByRole("button", { name: /Headers/ }).click();
         await page.waitForTimeout(900);
         await shot("network-replay-light");
+        await page.getByRole("button", { name: "Close replay" }).click();
+        await page.waitForTimeout(500);
+      }
+
+      if (want("network-insights-light")) {
+        await page.getByRole("button", { name: "Insights" }).click();
+        await page.getByRole("heading", { name: "Insights" }).waitFor({
+          timeout: 15_000,
+        });
+        await page.waitForTimeout(1800);
+        await shot("network-insights-light");
       }
 
       await page.setViewportSize({ width: 1280, height: 720 });

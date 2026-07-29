@@ -8,7 +8,10 @@
 
 NativeScope is a plug-and-play debug environment for React Native apps. It is designed to grow as a local Studio with focused modules, simple configuration, and no hosted data path.
 
-The first module is **Storage**: automatic discovery and professional tooling for AsyncStorage, MMKV, and expo-sqlite while your app is running.
+Two modules ship today:
+
+- **Storage** automatically discovers AsyncStorage, MMKV, and expo-sqlite and adds professional inspection, editing, diff, restore, JSON, and SQL tooling.
+- **Network** captures HTTP and GraphQL operations in one timeline with structured replay, filters, capture sessions, performance insights, and automatic storage impact.
 
 No account. No cloud. No provider. No root wrapper. Your development data stays on your machine.
 
@@ -26,11 +29,12 @@ Open your app normally. NativeScope composes Metro in development, maintains the
 - Visual JSON navigation for nested objects, arrays, inline edits, and TypeScript shape export.
 - SQLite table tooling with tabs, sorting, selection, inline edits, inserts, and SQL execution.
 - Snapshots and diff to compare storage changes and restore safely.
+- HTTP and GraphQL inspection with structured replay, session insights, sound rules, and storage impact.
 - A local-first workflow over `127.0.0.1`, with no login, telemetry, or hosted data path.
 
-## Optional app reactivity
+## Optional modules and app reactivity
 
-Core Storage discovery does not require app code or a config file. Add this only when app screens should react immediately after Studio-originated storage edits:
+Core Storage discovery does not require app code or a config file. Add one root config file to enable Network or make app screens react immediately after Studio-originated storage edits:
 
 ```ts
 // nativescope.config.ts
@@ -38,6 +42,7 @@ import { defineNativeScopeConfig } from "react-native-nativescope/app";
 
 export default defineNativeScopeConfig({
   modules: {
+    network: true,
     storage: {
       reactQuery: true,
       indicator: true,
@@ -46,7 +51,7 @@ export default defineNativeScopeConfig({
 });
 ```
 
-`reactQuery: true` automatically finds QueryClient instances and invalidates them after Studio edits. `indicator: true` shows a small in-app confirmation when storage is updated from the Studio.
+`network: true` enables HTTP and GraphQL capture. `reactQuery: true` automatically finds QueryClient instances and invalidates them after Studio edits. `indicator: true` shows a small in-app confirmation when storage is updated from the Studio. Every option is development-only.
 
 ## Documentation
 
