@@ -16,6 +16,7 @@
 
 const path = require("node:path");
 const fs = require("node:fs");
+const { CONFIG_CANDIDATES, findConfigFile } = require("./module-config.cjs");
 
 const SHIM_DIR = path.join(__dirname, "shims");
 const APP_DIR = path.join(__dirname, "..", "app");
@@ -34,34 +35,20 @@ const SESSION_MODULE = "__rnsi_session__";
 /** módulo virtual que entrega a configuração plug-and-play do projeto */
 const CONFIG_MODULE = "__rnsi_config__";
 
-const CONFIG_CANDIDATES = [
-  "nativescope.config.ts",
-  "nativescope.config.tsx",
-  "nativescope.config.js",
-  "nativescope.config.cjs",
-  "storage-inspector.config.ts",
-  "storage-inspector.config.tsx",
-  "storage-inspector.config.js",
-  "storage-inspector.config.cjs",
-  "rnsi.config.ts",
-  "rnsi.config.tsx",
-  "rnsi.config.js",
-  "rnsi.config.cjs",
-];
+/**
+ * Módulo virtual do boot do runtime. Independente de storage: é o que permite
+ * módulos como network subirem sem nenhum import de lib de storage. O
+ * babel-transformer.cjs o torna dependência do InitializeCore (sempre no grafo,
+ * roda antes do main). Resolve para o boot real em dev e para um stub vazio em
+ * prod (no-op absoluto — runtime-bundle nunca entra no bundle de produção).
+ */
+const BOOT_MODULE = "__rnsi_boot__";
 
 /** módulos singleton que devem vir sempre do app consumidor */
 const APP_SINGLETONS = new Set(["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-native"]);
 
 function defaultSessionFile(projectRoot) {
   return path.join(projectRoot, "node_modules", ".cache", "rnsi", "session.js");
-}
-
-function findConfigFile(projectRoot) {
-  for (const candidate of CONFIG_CANDIDATES) {
-    const filePath = path.join(projectRoot, candidate);
-    if (fs.existsSync(filePath)) return filePath;
-  }
-  return null;
 }
 
 function withNativeScope(config, options = {}) {
@@ -89,9 +76,23 @@ function withNativeScope(config, options = {}) {
     });
   }
 
+  // Injeção do boot do runtime, independente de storage: um wrapper do
+  // babelTransformerPath torna "__rnsi_boot__" dependência do InitializeCore
+  // (sempre no grafo, roda antes do main). Ver babel-transformer.cjs. O caminho
+  // original é passado via env para o wrapper delegar exatamente a ele nos
+  // workers do Metro (forkados depois deste ponto, herdando o env).
+  const upstreamBabelTransformer = config.transformer?.babelTransformerPath;
+  if (upstreamBabelTransformer) {
+    process.env.RNSI_UPSTREAM_BABEL_TRANSFORMER = upstreamBabelTransformer;
+  }
+
   return {
     ...config,
     watchFolders: [...(config.watchFolders ?? []), packageRoot],
+    transformer: {
+      ...(config.transformer ?? {}),
+      babelTransformerPath: path.join(__dirname, "babel-transformer.cjs"),
+    },
     resolver: {
       ...resolver,
       nodeModulesPaths: [
@@ -110,7 +111,12 @@ function withNativeScope(config, options = {}) {
         const fromShim =
           typeof context.originModulePath === "string" &&
           context.originModulePath.startsWith(SHIM_DIR);
-        if (fromShim && moduleName !== SESSION_MODULE && moduleName !== CONFIG_MODULE) {
+        if (
+          fromShim &&
+          moduleName !== SESSION_MODULE &&
+          moduleName !== CONFIG_MODULE &&
+          moduleName !== BOOT_MODULE
+        ) {
           return fallback(context, moduleName, platform);
         }
 
@@ -155,6 +161,16 @@ function withNativeScope(config, options = {}) {
           };
         }
 
+        if (moduleName === BOOT_MODULE) {
+          // Dev → boot real; prod → stub vazio (mesmo no-op absoluto dos shims,
+          // garantindo que runtime-bundle nunca entre no bundle de produção).
+          return {
+            type: "sourceFile",
+            filePath:
+              context.dev === false ? configStubFile : path.join(SHIM_DIR, "_boot.js"),
+          };
+        }
+
         // Release build é no-op absoluto: em bundle de produção o módulo
         // real passa direto. (Cinto: o guard de CI varre o bundle.)
         if (context.dev === false) {
@@ -177,6 +193,7 @@ module.exports = {
   SHIM_TARGETS,
   SESSION_MODULE,
   CONFIG_MODULE,
+  BOOT_MODULE,
   CONFIG_CANDIDATES,
   SHIM_DIR,
   APP_DIR,

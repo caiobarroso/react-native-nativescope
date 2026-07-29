@@ -52,15 +52,15 @@ export const landing: LandingContent = {
     subtitle:
       "NativeScope is a plug-and-play studio for inspecting and editing AsyncStorage, MMKV and SQLite while your app runs. No provider, root component wrapper or instance registry.",
     install: "npx nativescope",
-    primaryCta: { label: "Get started", href: "/docs/quickstart" },
+    primaryCta: { label: "Get started", href: "/docs/storage/quickstart" },
     secondaryCta: { label: "View on GitHub", href: "https://github.com/caiobarroso/react-native-nativescope" },
   },
 
   features: [
     {
       icon: "Zap",
-      title: "Genuinely zero-config",
-      body: "A Metro resolver detects AsyncStorage, MMKV and expo-sqlite on its own and instruments them in dev. You do not import anything, mount anything, or wrap anything.",
+      title: "Declare modules, not instances",
+      body: "Enable Storage in one config line, then a Metro resolver detects AsyncStorage, MMKV and expo-sqlite on its own. You never import, mount, wrap or register a storage instance by hand.",
     },
     {
       icon: "ArrowLeftRight",
@@ -85,7 +85,7 @@ export const landing: LandingContent = {
     {
       icon: "RefreshCw",
       title: "Keeps your cache honest",
-      body: "If your screens render through React Query, one optional config file invalidates the right queries when the studio changes data, so the UI never lies.",
+      body: "If your screens render through React Query, one line in your config file invalidates the right queries when the studio changes data, so the UI never lies.",
     },
   ],
 
@@ -96,13 +96,20 @@ export const landing: LandingContent = {
       install: "react-native-nativescope",
     },
     {
-      title: "Run it instead of Metro",
-      body: "NativeScope starts Metro with its resolver attached, sets up the Android tunnel if a device is plugged in, and opens the studio.",
-      run: "nativescope",
+      title: "Declare the modules you want",
+      body: "Create nativescope.config.ts and turn each module on in a line. Storage instances are still discovered for you — you only name the module.",
+      code: `import { defineNativeScopeConfig } from "react-native-nativescope/app";
+
+export default defineNativeScopeConfig({
+  modules: {
+    storage: true,
+  },
+});`,
     },
     {
-      title: "Open your app",
-      body: "The moment the app connects, its storages appear in the sidebar. That is the complete setup for inspection and editing.",
+      title: "Run it, then open your app",
+      body: "NativeScope starts Metro with its resolver, opens the studio, and sets up the Android tunnel if a device is connected. Launch your app and the modules you enabled appear in the sidebar.",
+      run: "nativescope",
     },
   ],
 
@@ -110,7 +117,7 @@ export const landing: LandingContent = {
     {
       question: "Do I have to change my app code?",
       answer:
-        "Not for storage discovery, inspection or editing. The Metro resolver wires up AsyncStorage, MMKV and expo-sqlite in development. Add the optional root nativescope.config.ts only when you want app-side behavior such as the update indicator or automatic React Query cache invalidation.",
+        "You add one root nativescope.config.ts to declare which modules to enable, but never a provider, a root-component wrapper or an instance registry. Storage instances are still discovered automatically in development; that same file is also where app-side behavior lives, such as the update indicator or automatic React Query cache invalidation.",
     },
     {
       question: "Can this end up in a production build?",

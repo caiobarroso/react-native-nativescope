@@ -11,9 +11,11 @@ import { RowGrid } from "./components/RowGrid.tsx";
 import { ActivityStrip } from "./components/ActivityStrip.tsx";
 import { GlobalSearch } from "./components/GlobalSearch.tsx";
 import { StorageOverview } from "./components/StorageOverview.tsx";
+import { NetworkView } from "./components/network/NetworkView.tsx";
 
 export default function App() {
   const phase = useStudio((s) => s.phase);
+  const activeModule = useStudio((s) => s.activeModule);
   const selection = useStudio((s) => s.selection);
   const selectedDeviceId = useStudio((s) => s.selectedDeviceId);
   const [overviewOpen, setOverviewOpen] = useState(false);
@@ -40,7 +42,9 @@ export default function App() {
           <div className="flex min-h-0 flex-1">
             <Sidebar />
             <main className="relative flex min-w-0 flex-1 overflow-hidden">
-              {isDatabase ? (
+              {activeModule === "network" ? (
+                <NetworkView />
+              ) : isDatabase ? (
                 <>
                   <TableList />
                   <RowGrid />
@@ -58,8 +62,8 @@ export default function App() {
               )}
             </main>
           </div>
-          <ActivityStrip />
-          <GlobalSearch />
+          {activeModule === "storage" && <ActivityStrip />}
+          {activeModule === "storage" && <GlobalSearch />}
         </>
       ) : (
         <main className="min-h-0 flex-1">

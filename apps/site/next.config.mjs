@@ -12,6 +12,33 @@ const nextConfig = {
     // 95 para elas continuarem nítidas mesmo reencodadas.
     qualities: [75, 95],
   },
+  async redirects() {
+    // As docs de Storage foram movidas de /docs/* para /docs/storage/*, seguindo
+    // o mesmo namespacing do Network (/docs/network/*). Redirect permanente para
+    // não quebrar links antigos e transferir SEO.
+    const storageDocs = [
+      "introduction",
+      "quickstart",
+      "devices",
+      "storage-providers",
+      "configuration",
+      "react-query",
+      "large-datasets",
+      "cli",
+      "api",
+      "privacy",
+    ];
+    return [
+      ...storageDocs.map((slug) => ({
+        source: `/docs/${slug}`,
+        destination: `/docs/storage/${slug}`,
+        permanent: true,
+      })),
+      // A raiz de cada módulo cai na sua introdução.
+      { source: "/docs/storage", destination: "/docs/storage/introduction", permanent: false },
+      { source: "/docs/network", destination: "/docs/network/introduction", permanent: false },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -30,13 +30,17 @@ beforeEach(() => {
   for (const key of APP_DEVTOOLS_GLOBALS) delete root[key];
 });
 
-function command(partial: Pick<CommandMessage, "type" | "payload">): CommandMessage {
+// handleCommand só trata comandos de storage (module.command é roteado no
+// bootstrap). O helper reflete isso no tipo de retorno.
+type StorageCommand = Exclude<CommandMessage, { type: "module.command" }>;
+
+function command(partial: Pick<StorageCommand, "type" | "payload">): StorageCommand {
   return {
     kind: "command",
     protocolVersion: PROTOCOL_VERSION,
     requestId: "req-1",
     ...partial,
-  } as CommandMessage;
+  } as StorageCommand;
 }
 
 describe("memory adapter", () => {
@@ -835,5 +839,94 @@ describe("resync de providers no handshake", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("envelope de módulo (L3)", () => {
+  function connected(): { runtime: ReturnType<typeof startRuntime>; socket: FakeSocket } {
+    const sockets: FakeSocket[] = [];
+    const runtime = startRuntime({
+      url: "ws://test",
+      sessionToken: "token",
+      client: { name: "test-runtime", platform: "node" },
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const socket = sockets[0];
+    if (!socket) throw new Error("socket não criado");
+    socket.emit("open");
+    socket.emit("message", {
+      data: serializeMessage({ kind: "hello-ack", protocolVersion: PROTOCOL_VERSION, sessionId: "s1" }),
+    });
+    return { runtime, socket };
+  }
+
+  it("sendModuleEvent emite module.event no fio (mesma conexão do storage)", () => {
+    const { runtime, socket } = connected();
+    runtime.sendModuleEvent("network", "request", { url: "https://x", status: 200 });
+
+    const evt = socket.sent.map(decode).find((m) => m.kind === "event" && m.type === "module.event");
+    expect(evt).toBeDefined();
+    if (evt && evt.kind === "event" && evt.type === "module.event") {
+      expect(evt.payload.module).toBe("network");
+      expect(evt.payload.event).toBe("request");
+      expect(evt.payload.data).toEqual({ url: "https://x", status: 200 });
+    }
+    runtime.close();
+  });
+
+  it("onModuleCommand roteia o comando e responde command-result ok", async () => {
+    const { runtime, socket } = connected();
+    const received: Array<[string, unknown]> = [];
+    runtime.onModuleCommand("network", (command, data) => {
+      received.push([command, data]);
+      return { echoed: data };
+    });
+
+    socket.emit("message", {
+      data: serializeMessage({
+        kind: "command",
+        protocolVersion: PROTOCOL_VERSION,
+        requestId: "req-42",
+        type: "module.command",
+        payload: { module: "network", command: "replay", data: { id: 7 } },
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(received).toEqual([["replay", { id: 7 }]]);
+    const result = socket.sent.map(decode).find((m) => m.kind === "command-result");
+    expect(result).toBeDefined();
+    if (result && result.kind === "command-result") {
+      expect(result.requestId).toBe("req-42");
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.result).toEqual({ echoed: { id: 7 } });
+    }
+    runtime.close();
+  });
+
+  it("module.command sem handler → command-result ok:false (unsupported-capability)", async () => {
+    const { runtime, socket } = connected();
+    socket.emit("message", {
+      data: serializeMessage({
+        kind: "command",
+        protocolVersion: PROTOCOL_VERSION,
+        requestId: "req-99",
+        type: "module.command",
+        payload: { module: "ghost", command: "x" },
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const result = socket.sent.map(decode).find((m) => m.kind === "command-result");
+    expect(result?.kind).toBe("command-result");
+    if (result && result.kind === "command-result") {
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("unsupported-capability");
+    }
+    runtime.close();
   });
 });

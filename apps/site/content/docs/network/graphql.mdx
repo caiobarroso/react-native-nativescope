@@ -1,0 +1,83 @@
+---
+title: GraphQL
+description: Inspect and replay GraphQL operations beside ordinary HTTP traffic without another adapter or schema upload.
+---
+
+GraphQL travels through the same Network module as ordinary HTTP. NativeScope recognizes the
+protocol from the captured request and changes the interface only when GraphQL-specific context is
+available. An app can use REST and GraphQL at the same time; both remain in one timeline.
+
+<Callout title="No GraphQL setup">
+  `network: true` is the complete integration. NativeScope does not require an Apollo link, urql
+  exchange, schema upload or GraphQL-specific provider.
+</Callout>
+
+## What NativeScope recognizes
+
+Automatic detection covers:
+
+- standard JSON POST envelopes with `query`, `variables`, `operationName` and `extensions`;
+- GraphQL GET requests using URL parameters;
+- `application/graphql` request bodies;
+- persisted operations;
+- batched GraphQL payloads.
+
+WebSocket subscription frames are not captured yet. A subscription sent over ordinary HTTP can
+still be recognized, but the WebSocket exchange itself is outside the current capture surface.
+
+## An operation-aware timeline
+
+Instead of displaying every call as `POST /graphql`, the request list shows the operation type and
+name:
+
+- **QUERY** for queries;
+- **MUT** for mutations;
+- **SUB** for recognized subscriptions;
+- **BATCH** for batched payloads.
+
+Search includes operation names, documents and variables. When GraphQL traffic exists, the toolbar
+adds protocol and operation filters so HTTP, queries and mutations can be isolated independently.
+Grouping follows the operation name rather than merging unrelated operations under one endpoint.
+
+## Inspect the request
+
+The Request surface formats the GraphQL document and keeps it separate from:
+
+- variables;
+- extensions;
+- transport headers.
+
+Persisted operations remain identifiable even when the full document is not part of the wire
+payload.
+
+## Inspect the response
+
+The Response surface separates:
+
+1. **Data**
+2. **Errors**
+3. **Extensions**
+4. **Raw**
+
+GraphQL errors are semantic failures even when the server returns HTTP 200. NativeScope preserves
+the real HTTP status, adds an explicit GraphQL error marker and includes the request when the `err`
+filter is active.
+
+Large responses follow the same bounded-preview model as HTTP. Load the complete retained body only
+when it is needed.
+
+## Replay GraphQL
+
+For a standard POST envelope, Replay opens dedicated **Operation** and **Variables** editors:
+
+- GraphQL syntax is highlighted, formatted and validated;
+- variables are formatted and validated as JSON;
+- the operation name can be changed explicitly;
+- captured headers and extensions are preserved;
+- untouched sections remain byte-for-byte equivalent to the captured request shape.
+
+GraphQL GET requests, raw `application/graphql` bodies and batches remain available through the
+generic URL and body editors when direct control over their wire format is more useful.
+
+Continue with [Replay & compare](/docs/network/replay) for credentials, side effects and request
+comparison.

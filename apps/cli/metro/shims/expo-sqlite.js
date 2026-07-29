@@ -16,9 +16,10 @@
 
 // Resolvido pelo anti-loop para o módulo REAL:
 const real = require("expo-sqlite");
-const { getRuntime, rnsi } = require("./_bootstrap.js");
+const { getRuntime, rnsi, isModuleEnabled } = require("./_bootstrap.js");
 
-const runtime = getRuntime();
+// Opt-in: storage desligado no config → passthrough sem instrumentar.
+const runtime = isModuleEnabled("storage") ? getRuntime() : null;
 
 let exported = real;
 

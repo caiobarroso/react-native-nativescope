@@ -6,21 +6,29 @@ export function SiteFooter() {
     <footer data-site-footer>
       <div data-footer-inner>
         <div data-footer-brand>
-          <div data-footer-wordmark><BrandLogo /></div>
+          <div data-footer-wordmark>
+            <BrandLogo />
+          </div>
           <p>Open source. Fully local. Your app data never leaves your machine.</p>
         </div>
         <div data-footer-columns>
+          <nav aria-label="Modules">
+            <span>Modules</span>
+            <Link href="/modules/storage">Storage</Link>
+            <Link href="/modules/network">Network</Link>
+          </nav>
           <nav aria-label="Product">
             <span>Product</span>
             <Link href="/docs">Documentation</Link>
-            <Link href="/docs/quickstart">Quickstart</Link>
+            <Link href="/docs/storage/quickstart">Quickstart</Link>
             <Link href="/our-goal">Our Goal</Link>
-            <Link href="/compare/rozenite">Compare</Link>
+            <Link href="/compare/rozenite">Storage comparison</Link>
+            <Link href="/compare/reactotron">Network comparison</Link>
           </nav>
           <nav aria-label="Resources">
             <span>Resources</span>
             <Link href="/journal">Journal</Link>
-            <Link href="/docs/privacy">Privacy</Link>
+            <Link href="/docs/storage/privacy">Privacy</Link>
             <a
               href="https://github.com/caiobarroso/react-native-nativescope"
               target="_blank"

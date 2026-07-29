@@ -22,9 +22,10 @@ import {
   searchKeys,
   setValue,
 } from "../lib/studio-client.ts";
-import { generateTypeScript } from "./ValueEditor.tsx";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { generateTypeScript } from "../lib/typescript-gen.ts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useArrowNav, type ArrowNavItem } from "../lib/use-arrow-nav.ts";
 
 const TYPE_LABEL: Record<string, string> = {
   string: "str",
@@ -175,6 +176,23 @@ export function KeyList({ onOpenOverview }: { onOpenOverview?: () => void }) {
     if (filtered && lastVisibleIndex >= filtered.length - 10) loadMore();
   }, [lastVisibleIndex, filtered, keysMeta?.nextAfterKey, keyFilter, loadingMore, loadMore]);
 
+  // ↑/↓ navegam entre as chaves exibidas (a mesma lista filtrada/paginada).
+  const navItems = useMemo<ArrowNavItem[]>(
+    () => (filtered ?? []).map((entry, index) => ({ id: entry.key, index })),
+    [filtered],
+  );
+  useArrowNav({
+    enabled:
+      !collapsed && !creating && deleteCandidate === null && openMenu === null,
+    items: navItems,
+    selectedId: selectedKey,
+    onSelect: (key) => {
+      setOpenMenu(null);
+      selectKey(key);
+    },
+    scrollToIndex: (index) => virtualizer.scrollToIndex(index),
+  });
+
   if (!selection) return null;
 
   if (collapsed) {
@@ -316,7 +334,7 @@ export function KeyList({ onOpenOverview }: { onOpenOverview?: () => void }) {
                 setOpenMenu(null);
                 selectKey(entry.key);
               }}
-              className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left"
+              className="rnsi-list-row flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left"
             >
               <span className="min-w-0 flex-1 truncate font-mono text-[12px]">
                 {entry.key}

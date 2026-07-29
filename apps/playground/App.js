@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  Alert,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -9,766 +8,1145 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MMKV } from "react-native-mmkv";
 import * as SQLite from "expo-sqlite";
 import {
-  installNativeScopeDevtools,
-  useNativeScopeSignal,
-} from "react-native-nativescope/app";
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { installNativeScopeDevtools } from "react-native-nativescope/app";
 
-if (typeof __DEV__ === "undefined" || __DEV__) {
-  installNativeScopeDevtools();
+/*
+ * Playground do NativeScope — feito para a demo.
+ *
+ * Três abas, cada uma cobrindo um storage, com uma interface que qualquer
+ * pessoa entende em três segundos. TODO texto de UI é em inglês de propósito
+ * (é o que vai no vídeo). Os comentários seguem em português, como o resto do
+ * repo.
+ *
+ * O ponto alto: tudo passa por React Query. Editar um valor no Studio (no
+ * navegador) dispara um evento "source: studio", a ponte abaixo invalida as
+ * queries, e o telefone se atualiza sozinho — realtime de verdade, ao vivo.
+ */
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 0, retry: false } },
+});
+
+// A ponte Studio -> app: qualquer mudança feita no Studio invalida as queries
+// e a UI recarrega. Escritas do próprio app invalidam na mão (nas mutations),
+// então não há loop.
+installNativeScopeDevtools({
+  modules: { storage: { reactQuery: { queryClient } } },
+});
+
+// -------------------------------------------------------------- storages
+
+const zoo = new MMKV({ id: "zoo" });
+const ZOO_KEY = "cages";
+const DB_NAME = "playground.db";
+// Storage da aba API (network): recebe as escritas que acontecem logo depois
+// das respostas, alimentando o painel "Storage impact".
+const session = new MMKV({ id: "session" });
+
+let dbPromise = null;
+async function getDb() {
+  if (!dbPromise) {
+    dbPromise = (async () => {
+      const db = await SQLite.openDatabaseAsync(DB_NAME);
+      await db.execAsync(`
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE IF NOT EXISTS players (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          emoji TEXT NOT NULL,
+          score INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+      return db;
+    })();
+  }
+  return dbPromise;
 }
 
-const settings = new MMKV({ id: "settings" });
-const secure = new MMKV({ id: "secure", encryptionKey: "playground-key" });
-const cache = new MMKV({ id: "cache" });
-const flags = new MMKV({ id: "feature-flags" });
+// ------------------------------------------------------------- conteúdo
 
-const DB_NAME = "rnsi-playground.db";
-const KNOWN_ASYNC_PREFIXES = [
-  "auth.",
-  "user.",
-  "session.",
-  "sync.",
-  "prefs.",
-  "draft.",
-  "rnsi.bulk.",
-  "rnsi.edge.",
+const CAGE_TEMPLATE = [
+  { name: "Jungle", emoji: "🌴" },
+  { name: "Ocean", emoji: "🌊" },
+  { name: "Farm", emoji: "🚜" },
+  { name: "Arctic", emoji: "❄️" },
 ];
-
-const names = [
-  "Ana",
-  "Bruno",
-  "Caio",
-  "Duda",
-  "Elisa",
-  "Fernanda",
-  "Gabi",
-  "Hugo",
-  "Igor",
-  "Julia",
+const ANIMALS = [
+  "🦁", "🐯", "🐘", "🦒", "🐵", "🐼", "🦊", "🐨", "🐸", "🐧",
+  "🐬", "🐙", "🦈", "🐴", "🐮", "🐷", "🐰", "🦓", "🦩", "🦦",
 ];
-const tiers = ["free", "starter", "pro", "enterprise"];
-const eventKinds = ["login", "purchase", "sync", "logout", "error", "background-refresh"];
-
-function nowIso() {
-  return new Date().toISOString();
-}
+const ANIMAL_NAMES = ["Leo", "Milo", "Coco", "Nala", "Zuri", "Bibi", "Rex", "Pip", "Ziggy", "Momo"];
+const TRICKS = ["roar", "jump", "spin", "sleep", "dance", "wave"];
+const TOY_EMOJIS = ["🧸", "🚗", "🪀", "🎈", "🧩", "🪁", "⚽", "🎨", "🤖", "🦖"];
+const PLAYER_NAMES = ["Alex", "Sam", "Kai", "Nova", "Max", "Luna", "Finn", "Ivy", "Theo", "Mia", "Ezra", "Remy"];
 
 function randomFrom(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
-
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
-
-function compactError(error) {
-  return error instanceof Error ? error.message : String(error);
+function sample(list, count) {
+  return [...list].sort(() => Math.random() - 0.5).slice(0, count);
 }
 
-function sqlValue(value) {
-  if (value === undefined) return null;
-  return value;
-}
+// ================================================================ App
 
 export default function App() {
-  const [status, setStatus] = useState("Inicializando playground");
-  const [db, setDb] = useState(null);
-  const [snapshot, setSnapshot] = useState({
-    asyncKeys: 0,
-    settingsKeys: 0,
-    secureKeys: 0,
-    cacheKeys: 0,
-    flagsKeys: 0,
-    customers: 0,
-    orders: 0,
-    events: 0,
-  });
-  const [customProvider, setCustomProvider] = useState("async");
-  const [customKey, setCustomKey] = useState("draft.note");
-  const [customValue, setCustomValue] = useState("valor editavel");
-  const [sqlRows, setSqlRows] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const studioSignal = useNativeScopeSignal({ source: "studio" });
-
-  const ready = Boolean(db);
-  const databaseSummary = useMemo(
-    () => `${snapshot.customers} clientes / ${snapshot.orders} pedidos / ${snapshot.events} eventos`,
-    [snapshot],
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Shell />
+    </QueryClientProvider>
   );
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    async function boot() {
-      try {
-        const opened = await SQLite.openDatabaseAsync(DB_NAME);
-        if (cancelled) return;
-        await opened.execAsync(`
-          PRAGMA journal_mode = WAL;
-          CREATE TABLE IF NOT EXISTS customers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL UNIQUE,
-            tier TEXT NOT NULL,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            metadata TEXT,
-            created_at TEXT NOT NULL
-          );
-          CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_id INTEGER NOT NULL,
-            total_cents INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            note TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (customer_id) REFERENCES customers(id)
-          );
-          CREATE TABLE IF NOT EXISTS app_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kind TEXT NOT NULL,
-            payload TEXT,
-            created_at TEXT NOT NULL
-          );
-        `);
-        setDb(opened);
-        setStatus("Playground pronto");
-        await refreshSnapshot(opened);
-      } catch (error) {
-        setStatus(`SQLite falhou: ${compactError(error)}`);
-      }
-    }
-    void boot();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+const TABS = [
+  { key: "zoo", label: "Zoo", icon: "🦁" },
+  { key: "toys", label: "Toys", icon: "🧸" },
+  { key: "scores", label: "Scores", icon: "🏆" },
+  { key: "api", label: "Request", icon: "🌐" },
+];
 
-  useEffect(() => {
-    if (studioSignal === 0) return;
-    void refreshSnapshot(db);
-    void refreshSqlRows();
-    setStatus("Alteracao do Studio refletida no app");
-  }, [studioSignal, db]);
-
-  async function run(label, task) {
-    setBusy(true);
-    try {
-      await task();
-      setStatus(label);
-      await refreshSnapshot(db);
-    } catch (error) {
-      const message = compactError(error);
-      setStatus(`Erro: ${message}`);
-      Alert.alert("Playground", message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function refreshSnapshot(database = db) {
-    const asyncKeys = await AsyncStorage.getAllKeys();
-    const counts = {
-      asyncKeys: asyncKeys.length,
-      settingsKeys: settings.getAllKeys().length,
-      secureKeys: secure.getAllKeys().length,
-      cacheKeys: cache.getAllKeys().length,
-      flagsKeys: flags.getAllKeys().length,
-      customers: 0,
-      orders: 0,
-      events: 0,
-    };
-    if (database) {
-      const [customersCount] = await database.getAllAsync("SELECT COUNT(*) AS n FROM customers");
-      const [ordersCount] = await database.getAllAsync("SELECT COUNT(*) AS n FROM orders");
-      const [eventsCount] = await database.getAllAsync("SELECT COUNT(*) AS n FROM app_events");
-      counts.customers = Number(customersCount?.n ?? 0);
-      counts.orders = Number(ordersCount?.n ?? 0);
-      counts.events = Number(eventsCount?.n ?? 0);
-    }
-    setSnapshot(counts);
-  }
-
-  async function seedSession() {
-    const queue = Array.from({ length: 4 }, (_, index) => ({
-      id: Date.now() + index,
-      kind: randomFrom(eventKinds),
-      attempts: index,
-    }));
-    await AsyncStorage.multiSet([
-      ["auth.token", `tok-${Date.now()}`],
-      ["auth.refreshToken", `refresh-${Date.now()}`],
-      ["user.profile", JSON.stringify({ id: 42, name: "Caio", premium: true })],
-      ["session.startedAt", nowIso()],
-      ["prefs.theme", "system"],
-      ["prefs.notifications", JSON.stringify({ push: true, email: false })],
-      ["sync.queue", JSON.stringify(queue)],
-      ["rnsi.edge.emptyString", ""],
-      ["rnsi.edge.nullLiteral", "null"],
-    ]);
-  }
-
-  async function addBulkAsync() {
-    const entries = Array.from({ length: 30 }, (_, index) => [
-      `rnsi.bulk.${String(index + 1).padStart(2, "0")}`,
-      JSON.stringify({
-        index: index + 1,
-        score: randomInt(1, 1000),
-        active: index % 2 === 0,
-        updatedAt: nowIso(),
-      }),
-    ]);
-    await AsyncStorage.multiSet(entries);
-  }
-
-  async function pushQueueItem() {
-    const raw = (await AsyncStorage.getItem("sync.queue")) ?? "[]";
-    const queue = JSON.parse(raw);
-    queue.push({ id: Date.now(), kind: randomFrom(eventKinds), attempts: 0 });
-    await AsyncStorage.setItem("sync.queue", JSON.stringify(queue));
-  }
-
-  async function popQueueItem() {
-    const raw = (await AsyncStorage.getItem("sync.queue")) ?? "[]";
-    const queue = JSON.parse(raw);
-    queue.shift();
-    await AsyncStorage.setItem("sync.queue", JSON.stringify(queue));
-  }
-
-  async function clearAsyncPlayground() {
-    const keys = await AsyncStorage.getAllKeys();
-    const scoped = keys.filter((key) => KNOWN_ASYNC_PREFIXES.some((prefix) => key.startsWith(prefix)));
-    await AsyncStorage.multiRemove(scoped);
-  }
-
-  function seedMmkv() {
-    settings.set("app.lastLogin", nowIso());
-    settings.set("app.launchCount", (settings.getNumber("app.launchCount") ?? 0) + 1);
-    settings.set("ui.scale", randomFrom(["compact", "comfortable", "spacious"]));
-    settings.set("onboarding.done", true);
-    secure.set("secure.pin", String(randomInt(1000, 9999)));
-    secure.set("secure.accessToken", `mmkv-secure-${Date.now()}`);
-    cache.set("cache.feed", JSON.stringify(makeFeed(8)));
-    cache.set("cache.lastFetchMs", Date.now());
-    flags.set("flag.paywall", Math.random() > 0.5);
-    flags.set("flag.checkoutVariant", randomFrom(["control", "one-click", "bundled"]));
-  }
-
-  function mutateMmkv() {
-    settings.set("app.launchCount", (settings.getNumber("app.launchCount") ?? 0) + 1);
-    settings.set("app.lastSeenScreen", randomFrom(["Home", "Cart", "Profile", "Debug"]));
-    cache.set(`cache.item.${Date.now()}`, JSON.stringify({ ttl: randomInt(30, 600), at: nowIso() }));
-    flags.set("flag.paywall", !flags.getBoolean("flag.paywall"));
-  }
-
-  function deleteMmkvSample() {
-    settings.delete("app.lastSeenScreen");
-    secure.delete("secure.pin");
-    const cacheKeys = cache.getAllKeys().filter((key) => key.startsWith("cache.item."));
-    if (cacheKeys[0]) cache.delete(cacheKeys[0]);
-  }
-
-  function clearMmkv() {
-    for (const storage of [settings, secure, cache, flags]) {
-      for (const key of storage.getAllKeys()) storage.delete(key);
-    }
-  }
-
-  function makeFeed(size) {
-    return Array.from({ length: size }, (_, index) => ({
-      id: `feed-${Date.now()}-${index}`,
-      title: `Item ${index + 1}`,
-      unread: index % 3 === 0,
-    }));
-  }
-
-  async function seedDatabase(size = 12) {
-    if (!db) return;
-    for (let index = 0; index < size; index += 1) {
-      const name = randomFrom(names);
-      const createdAt = nowIso();
-      const result = await db.runAsync(
-        `INSERT OR IGNORE INTO customers (name, email, tier, is_active, metadata, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          `${name} ${randomInt(100, 999)}`,
-          `user.${Date.now()}.${index}@example.test`,
-          randomFrom(tiers),
-          index % 5 === 0 ? 0 : 1,
-          JSON.stringify({ source: "seed", cohort: randomFrom(["A", "B", "C"]) }),
-          createdAt,
-        ],
-      );
-      const customerId = result.lastInsertRowId;
-      await db.runAsync(
-        `INSERT INTO orders (customer_id, total_cents, status, note, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [customerId, randomInt(1500, 95000), randomFrom(["draft", "paid", "refunded"]), "seed", createdAt],
-      );
-      await db.runAsync(
-        "INSERT INTO app_events (kind, payload, created_at) VALUES (?, ?, ?)",
-        [randomFrom(eventKinds), JSON.stringify({ customerId, source: "seed" }), createdAt],
-      );
-    }
-    await refreshSqlRows();
-  }
-
-  async function addDatabaseRow() {
-    if (!db) return;
-    const result = await db.runAsync(
-      `INSERT INTO customers (name, email, tier, is_active, metadata, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        `${randomFrom(names)} ${randomInt(100, 999)}`,
-        `manual.${Date.now()}@example.test`,
-        randomFrom(tiers),
-        1,
-        JSON.stringify({ source: "manual-add", edited: false }),
-        nowIso(),
-      ],
-    );
-    await db.runAsync(
-      `INSERT INTO app_events (kind, payload, created_at) VALUES (?, ?, ?)`,
-      ["customer.created", JSON.stringify({ customerId: result.lastInsertRowId }), nowIso()],
-    );
-    await refreshSqlRows();
-  }
-
-  async function updateDatabaseRows() {
-    if (!db) return;
-    await db.runAsync(
-      `UPDATE customers
-       SET tier = ?, metadata = ?, is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END
-       WHERE id IN (SELECT id FROM customers ORDER BY id DESC LIMIT 3)`,
-      [randomFrom(tiers), JSON.stringify({ source: "bulk-update", updatedAt: nowIso() })],
-    );
-    await db.runAsync(
-      "INSERT INTO app_events (kind, payload, created_at) VALUES (?, ?, ?)",
-      ["customers.bulk_update", JSON.stringify({ rows: 3 }), nowIso()],
-    );
-    await refreshSqlRows();
-  }
-
-  async function deleteDatabaseRows() {
-    if (!db) return;
-    await db.runAsync(
-      "DELETE FROM orders WHERE id IN (SELECT id FROM orders ORDER BY id ASC LIMIT 2)",
-    );
-    await db.runAsync(
-      "DELETE FROM customers WHERE id IN (SELECT id FROM customers ORDER BY id ASC LIMIT 2)",
-    );
-    await db.runAsync(
-      "INSERT INTO app_events (kind, payload, created_at) VALUES (?, ?, ?)",
-      ["cleanup.deleted_rows", JSON.stringify({ customers: 2, orders: 2 }), nowIso()],
-    );
-    await refreshSqlRows();
-  }
-
-  async function resetDatabase() {
-    if (!db) return;
-    await db.execAsync(`
-      DELETE FROM orders;
-      DELETE FROM customers;
-      DELETE FROM app_events;
-      DELETE FROM sqlite_sequence WHERE name IN ('orders', 'customers', 'app_events');
-    `);
-    setSqlRows([]);
-  }
-
-  async function refreshSqlRows() {
-    if (!db) return;
-    const rows = await db.getAllAsync(
-      `SELECT
-        c.id,
-        c.name,
-        c.tier,
-        c.is_active AS active,
-        COUNT(o.id) AS orders,
-        COALESCE(SUM(o.total_cents), 0) AS total_cents
-       FROM customers c
-       LEFT JOIN orders o ON o.customer_id = c.id
-       GROUP BY c.id
-       ORDER BY c.id DESC
-       LIMIT 8`,
-    );
-    setSqlRows(rows);
-  }
-
-  async function applyCustomValue() {
-    if (customProvider === "async") {
-      await AsyncStorage.setItem(customKey, customValue);
-      return;
-    }
-    const target =
-      customProvider === "settings"
-        ? settings
-        : customProvider === "secure"
-          ? secure
-          : customProvider === "flags"
-            ? flags
-            : cache;
-    target.set(customKey, customValue);
-  }
-
-  async function deleteCustomValue() {
-    if (customProvider === "async") {
-      await AsyncStorage.removeItem(customKey);
-      return;
-    }
-    const target =
-      customProvider === "settings"
-        ? settings
-        : customProvider === "secure"
-          ? secure
-          : customProvider === "flags"
-            ? flags
-            : cache;
-    target.delete(customKey);
-  }
-
+function Shell() {
+  const [tab, setTab] = useState("zoo");
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.kicker}>NativeScope</Text>
-            <Text style={styles.title}>Playground completo</Text>
-          </View>
-          <StatusBadge busy={busy} ready={ready} />
-        </View>
-
-        <Text style={styles.status}>{status}</Text>
-
-        <View style={styles.metrics}>
-          <Metric label="AsyncStorage" value={`${snapshot.asyncKeys} chaves`} />
-          <Metric label="MMKV" value={`${snapshot.settingsKeys + snapshot.secureKeys + snapshot.cacheKeys + snapshot.flagsKeys} chaves`} />
-          <Metric label="SQLite" value={databaseSummary} />
-        </View>
-
-        <Section title="AsyncStorage" caption="Listagens, filas, edicoes, massa de chaves e remocoes.">
-          <ActionGrid>
-            <ActionButton title="Seed sessao" onPress={() => run("AsyncStorage: sessao criada", seedSession)} />
-            <ActionButton title="Gerar 30 chaves" onPress={() => run("AsyncStorage: lote criado", addBulkAsync)} />
-            <ActionButton title="Push fila" onPress={() => run("AsyncStorage: item entrou na fila", pushQueueItem)} />
-            <ActionButton title="Pop fila" onPress={() => run("AsyncStorage: item removido da fila", popQueueItem)} />
-            <ActionButton title="Limpar escopo" tone="danger" onPress={() => run("AsyncStorage: escopo limpo", clearAsyncPlayground)} />
-          </ActionGrid>
-        </Section>
-
-        <Section title="MMKV" caption="Quatro instancias: settings, secure criptografada, cache e feature-flags.">
-          <ActionGrid>
-            <ActionButton title="Seed MMKV" onPress={() => run("MMKV: dados criados", () => seedMmkv())} />
-            <ActionButton title="Mutar valores" onPress={() => run("MMKV: valores alterados", () => mutateMmkv())} />
-            <ActionButton title="Deletar amostra" onPress={() => run("MMKV: amostra removida", () => deleteMmkvSample())} />
-            <ActionButton title="Limpar MMKV" tone="danger" onPress={() => run("MMKV: instancias limpas", () => clearMmkv())} />
-          </ActionGrid>
-        </Section>
-
-        <Section title="SQLite" caption="Banco com customers, orders e app_events para testar schema, grid, update, insert, delete e console SQL.">
-          <ActionGrid>
-            <ActionButton title="Seed 12 linhas" disabled={!ready} onPress={() => run("SQLite: seed inserido", () => seedDatabase(12))} />
-            <ActionButton title="Inserir cliente" disabled={!ready} onPress={() => run("SQLite: cliente inserido", addDatabaseRow)} />
-            <ActionButton title="Alterar 3 ultimos" disabled={!ready} onPress={() => run("SQLite: linhas alteradas", updateDatabaseRows)} />
-            <ActionButton title="Deletar antigos" disabled={!ready} tone="danger" onPress={() => run("SQLite: linhas antigas removidas", deleteDatabaseRows)} />
-            <ActionButton title="Reset DB" disabled={!ready} tone="danger" onPress={() => run("SQLite: banco zerado", resetDatabase)} />
-            <ActionButton title="Reconsultar" disabled={!ready} onPress={() => run("SQLite: snapshot atualizado", refreshSqlRows)} />
-          </ActionGrid>
-          <View style={styles.table}>
-            {sqlRows.length === 0 ? (
-              <Text style={styles.muted}>Sem linhas no snapshot local. Use Seed 12 linhas.</Text>
-            ) : (
-              sqlRows.map((row) => (
-                <View key={row.id} style={styles.row}>
-                  <Text style={styles.rowTitle}>#{row.id} {row.name}</Text>
-                  <Text style={styles.rowMeta}>
-                    {row.tier} · {row.active ? "ativo" : "inativo"} · {row.orders} pedidos · R$ {(Number(row.total_cents) / 100).toFixed(2)}
-                  </Text>
-                </View>
-              ))
-            )}
-          </View>
-        </Section>
-
-        <Section title="Editor rapido" caption="Escreva, altere ou remova uma chave especifica sem sair do app.">
-          <View style={styles.segmented}>
-            {["async", "settings", "secure", "cache", "flags"].map((provider) => (
-              <Pressable
-                key={provider}
-                onPress={() => setCustomProvider(provider)}
-                style={[styles.segment, customProvider === provider && styles.segmentActive]}
-              >
-                <Text style={[styles.segmentText, customProvider === provider && styles.segmentTextActive]}>
-                  {provider}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-          <TextInput
-            value={customKey}
-            onChangeText={setCustomKey}
-            placeholder="chave"
-            autoCapitalize="none"
-            style={styles.input}
-          />
-          <TextInput
-            value={customValue}
-            onChangeText={setCustomValue}
-            placeholder="valor"
-            multiline
-            style={[styles.input, styles.textarea]}
-          />
-          <ActionGrid>
-            <ActionButton title="Salvar valor" onPress={() => run("Editor: valor salvo", applyCustomValue)} />
-            <ActionButton title="Deletar chave" tone="danger" onPress={() => run("Editor: chave deletada", deleteCustomValue)} />
-            <ActionButton title="Atualizar contadores" onPress={() => run("Snapshot atualizado", () => refreshSnapshot(db))} />
-          </ActionGrid>
-        </Section>
-      </ScrollView>
+      <StatusBar style="dark" />
+      <View style={styles.screen}>
+        {tab === "zoo" && <ZooScreen />}
+        {tab === "toys" && <ToysScreen />}
+        {tab === "scores" && <ScoresScreen />}
+        {tab === "api" && <ApiScreen />}
+      </View>
+      <View style={styles.tabBar}>
+        {TABS.map((t) => {
+          const active = tab === t.key;
+          return (
+            <Pressable key={t.key} style={styles.tab} onPress={() => setTab(t.key)}>
+              <Text style={[styles.tabIcon, active && styles.tabIconActive]}>{t.icon}</Text>
+              <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{t.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </SafeAreaView>
   );
 }
 
-function Section({ title, caption, children }) {
+// ============================================================ Zoo (MMKV)
+// Arrays aninhados num único valor: cages -> animals -> tricks. Ótimo para
+// mostrar o inspector abrindo estrutura complexa e um valor grande.
+
+function readZoo() {
+  const raw = zoo.getString(ZOO_KEY);
+  if (!raw) return CAGE_TEMPLATE.map((c) => ({ ...c, animals: [] }));
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return CAGE_TEMPLATE.map((c) => ({ ...c, animals: [] }));
+  }
+}
+function writeZoo(cages) {
+  zoo.set(ZOO_KEY, JSON.stringify(cages));
+}
+function makeAnimal() {
+  return {
+    emoji: randomFrom(ANIMALS),
+    name: randomFrom(ANIMAL_NAMES),
+    tricks: sample(TRICKS, randomInt(1, 3)),
+  };
+}
+function addAnimals(count) {
+  const cages = readZoo();
+  for (let i = 0; i < count; i += 1) {
+    cages[randomInt(0, cages.length - 1)].animals.push(makeAnimal());
+  }
+  writeZoo(cages);
+}
+
+function ZooScreen() {
+  const qc = useQueryClient();
+  const { data: cages = [] } = useQuery({ queryKey: ["zoo"], queryFn: readZoo });
+
+  const total = useMemo(
+    () => cages.reduce((sum, cage) => sum + cage.animals.length, 0),
+    [cages],
+  );
+
+  const mutate = useMutation({
+    mutationFn: async (count) => addAnimals(count),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["zoo"] }),
+  });
+  const clear = useMutation({
+    mutationFn: async () => writeZoo(CAGE_TEMPLATE.map((c) => ({ ...c, animals: [] }))),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["zoo"] }),
+  });
+
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <Text style={styles.caption}>{caption}</Text>
-      {children}
+    <ScrollView contentContainerStyle={styles.content}>
+      <Header emoji="🦁" title="My Zoo" subtitle="Tap to add animals to the cages" />
+      <BigCount value={total} unit={total === 1 ? "animal" : "animals"} />
+
+      <View style={styles.buttonRow}>
+        <BigButton label="Add one" emoji="➕" onPress={() => mutate.mutate(1)} />
+        <BigButton label="Add 1,000" emoji="✨" onPress={() => mutate.mutate(1000)} />
+      </View>
+
+      {cages.map((cage) => (
+        <View key={cage.name} style={styles.card}>
+          <Text style={styles.cardTitle}>
+            {cage.emoji}  {cage.name}
+            <Text style={styles.cardCount}>   {cage.animals.length.toLocaleString()}</Text>
+          </Text>
+          {cage.animals.length === 0 ? (
+            <Text style={styles.empty}>empty — add some!</Text>
+          ) : (
+            <Text style={styles.emojiWrap}>
+              {cage.animals.slice(0, 40).map((a) => a.emoji).join(" ")}
+              {cage.animals.length > 40 ? `  +${(cage.animals.length - 40).toLocaleString()} more` : ""}
+            </Text>
+          )}
+        </View>
+      ))}
+
+      <GhostButton label="Clear the zoo" onPress={() => clear.mutate()} />
+      <LiveHint />
+    </ScrollView>
+  );
+}
+
+// ==================================================== Toys (AsyncStorage)
+// O mini CRUD: create, read, update (rename + favorite), delete.
+
+const TOYS_KEY = "toys";
+
+async function readToys() {
+  const raw = await AsyncStorage.getItem(TOYS_KEY);
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+async function writeToys(toys) {
+  await AsyncStorage.setItem(TOYS_KEY, JSON.stringify(toys));
+}
+
+function ToysScreen() {
+  const qc = useQueryClient();
+  const { data: toys = [] } = useQuery({ queryKey: ["toys"], queryFn: readToys });
+
+  const [name, setName] = useState("");
+  const [emoji, setEmoji] = useState(TOY_EMOJIS[0]);
+  const [editingId, setEditingId] = useState(null);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const label = name.trim();
+      if (!label) return;
+      const current = await readToys();
+      if (editingId) {
+        await writeToys(
+          current.map((t) => (t.id === editingId ? { ...t, name: label, emoji } : t)),
+        );
+      } else {
+        await writeToys([{ id: Date.now(), name: label, emoji, favorite: false }, ...current]);
+      }
+    },
+    onSuccess: () => {
+      setName("");
+      setEditingId(null);
+      qc.invalidateQueries({ queryKey: ["toys"] });
+    },
+  });
+
+  const toggleFavorite = useMutation({
+    mutationFn: async (id) => {
+      const current = await readToys();
+      await writeToys(current.map((t) => (t.id === id ? { ...t, favorite: !t.favorite } : t)));
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["toys"] }),
+  });
+
+  const remove = useMutation({
+    mutationFn: async (id) => {
+      const current = await readToys();
+      await writeToys(current.filter((t) => t.id !== id));
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["toys"] }),
+  });
+
+  function startEdit(toy) {
+    setEditingId(toy.id);
+    setName(toy.name);
+    setEmoji(toy.emoji);
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <Header emoji="🧸" title="My Toy Box" subtitle="Add, rename, star and remove your toys" />
+
+      <View style={styles.emojiPicker}>
+        {TOY_EMOJIS.map((e) => (
+          <Pressable key={e} onPress={() => setEmoji(e)} style={[styles.emojiChoice, emoji === e && styles.emojiChoiceOn]}>
+            <Text style={styles.emojiChoiceText}>{e}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.inputRow}>
+        <TextInput
+          value={name}
+          onChangeText={setName}
+          placeholder="Name your toy"
+          placeholderTextColor="#a8a29a"
+          style={styles.input}
+          onSubmitEditing={() => save.mutate()}
+        />
+        <Pressable style={styles.addButton} onPress={() => save.mutate()}>
+          <Text style={styles.addButtonText}>{editingId ? "Save" : "Add"}</Text>
+        </Pressable>
+      </View>
+
+      <BigCount value={toys.length} unit={toys.length === 1 ? "toy" : "toys"} />
+
+      {toys.length === 0 ? (
+        <Text style={styles.emptyBig}>No toys yet.{"\n"}Add your first one above! 👆</Text>
+      ) : (
+        toys.map((toy) => (
+          <View key={toy.id} style={styles.toyRow}>
+            <Text style={styles.toyEmoji}>{toy.emoji}</Text>
+            <Pressable style={styles.toyNameWrap} onPress={() => startEdit(toy)}>
+              <Text style={styles.toyName}>{toy.name}</Text>
+              <Text style={styles.toyHint}>tap to rename</Text>
+            </Pressable>
+            <Pressable style={styles.iconButton} onPress={() => toggleFavorite.mutate(toy.id)}>
+              <Text style={styles.iconText}>{toy.favorite ? "⭐" : "☆"}</Text>
+            </Pressable>
+            <Pressable style={styles.iconButton} onPress={() => remove.mutate(toy.id)}>
+              <Text style={styles.iconText}>🗑️</Text>
+            </Pressable>
+          </View>
+        ))
+      )}
+      <LiveHint />
+    </ScrollView>
+  );
+}
+
+// ==================================================== Scores (SQLite)
+// Tabela simples, feita para volume: um clique adiciona 10.000 jogadores.
+
+async function readScores() {
+  const db = await getDb();
+  const [countRow] = await db.getAllAsync("SELECT COUNT(*) AS n FROM players");
+  const top = await db.getAllAsync(
+    "SELECT id, name, emoji, score FROM players ORDER BY score DESC, id ASC LIMIT 10",
+  );
+  return { total: Number(countRow?.n ?? 0), top };
+}
+
+async function insertPlayers(count) {
+  const db = await getDb();
+  const createdAt = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    const stmt = await db.prepareAsync(
+      "INSERT INTO players (name, emoji, score, created_at) VALUES (?, ?, ?, ?)",
+    );
+    try {
+      for (let i = 0; i < count; i += 1) {
+        await stmt.executeAsync([
+          randomFrom(PLAYER_NAMES),
+          randomFrom(ANIMALS),
+          randomInt(0, 1_000_000),
+          createdAt,
+        ]);
+      }
+    } finally {
+      await stmt.finalizeAsync();
+    }
+  });
+}
+
+async function clearScores() {
+  const db = await getDb();
+  await db.execAsync("DELETE FROM players; DELETE FROM sqlite_sequence WHERE name = 'players';");
+}
+
+// Botão secreto (long-press no troféu): zera 100% do storage que este app usa —
+// MMKV, AsyncStorage e todas as tabelas do SQLite. Serve para resetar entre
+// tomadas da demo sem reinstalar o app.
+async function wipeEverything() {
+  // MMKV
+  try {
+    zoo.clearAll();
+    session.clearAll();
+  } catch {
+    for (const key of zoo.getAllKeys()) zoo.delete(key);
+    for (const key of session.getAllKeys()) session.delete(key);
+  }
+  // AsyncStorage
+  await AsyncStorage.clear();
+  // SQLite — esvazia toda tabela de usuário e reseta os AUTOINCREMENT.
+  const db = await getDb();
+  const tables = await db.getAllAsync(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+  );
+  for (const { name } of tables) {
+    await db.execAsync(`DELETE FROM "${name}"`);
+  }
+  try {
+    await db.execAsync("DELETE FROM sqlite_sequence");
+  } catch {
+    /* sqlite_sequence só existe depois do 1º insert com AUTOINCREMENT */
+  }
+}
+
+function ScoresScreen() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["scores"], queryFn: readScores });
+  const total = data?.total ?? 0;
+  const top = data?.top ?? [];
+  const [wiped, setWiped] = useState(false);
+
+  const add = useMutation({
+    mutationFn: async (count) => insertPlayers(count),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scores"] }),
+  });
+  const clear = useMutation({
+    mutationFn: clearScores,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scores"] }),
+  });
+  // O gatilho secreto: apaga tudo e atualiza as três abas de uma vez.
+  const wipe = useMutation({
+    mutationFn: wipeEverything,
+    onSuccess: () => {
+      qc.invalidateQueries();
+      setWiped(true);
+      setTimeout(() => setWiped(false), 1800);
+    },
+  });
+
+  const busy = add.isPending;
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <Header
+        emoji="🏆"
+        title="High Scores"
+        subtitle={wiped ? "✨ Everything wiped!" : "A leaderboard that loves big numbers"}
+        onSecretPress={() => wipe.mutate()}
+      />
+      <BigCount value={total} unit={total === 1 ? "player" : "players"} />
+
+      <View style={styles.buttonRow}>
+        <BigButton label="Add one" emoji="➕" onPress={() => add.mutate(1)} />
+        <BigButton label={busy ? "Adding…" : "Add 10,000"} emoji="🚀" onPress={() => add.mutate(10000)} disabled={busy} />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Top 10</Text>
+        {top.length === 0 ? (
+          <Text style={styles.empty}>No players yet — add some!</Text>
+        ) : (
+          top.map((p, index) => (
+            <View key={p.id} style={styles.scoreRow}>
+              <Text style={styles.rank}>{index + 1}</Text>
+              <Text style={styles.scoreEmoji}>{p.emoji}</Text>
+              <Text style={styles.scoreName}>{p.name}</Text>
+              <Text style={styles.scoreValue}>{p.score.toLocaleString()}</Text>
+            </View>
+          ))
+        )}
+      </View>
+
+      <GhostButton label="Clear the board" onPress={() => clear.mutate()} />
+      <LiveHint />
+    </ScrollView>
+  );
+}
+
+// ==================================================== API (Network)
+// Esta aba existe para exercitar o módulo de Network. Faz requests HTTP reais
+// (dummyjson.com — público, HTTPS, sem setup) e, de propósito, GRAVA no storage
+// logo depois de algumas respostas: é isso que faz o painel "Storage impact"
+// acender (correlação temporal honesta, "este request mexeu nestas chaves").
+
+const API = "https://dummyjson.com";
+const TOKEN_KEY = "auth.token";
+
+// POST com body + login real: a resposta traz um token, gravado na hora.
+// -> Storage impact no request de login (AsyncStorage auth.token + MMKV user).
+async function apiSignIn() {
+  const res = await fetch(`${API}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "emilys", password: "emilyspass", expiresInMins: 30 }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  await AsyncStorage.setItem(TOKEN_KEY, data.accessToken ?? data.token ?? "");
+  session.set(
+    "user",
+    JSON.stringify({
+      id: data.id,
+      username: data.username,
+      email: data.email,
+      firstName: data.firstName,
+      lastName: data.lastName,
+    }),
+  );
+  return data;
+}
+
+// GET autenticado: manda o token no header Authorization (aparece no viewer do
+// request) e grava o perfil logo depois. -> Storage impact (MMKV profile).
+async function apiLoadProfile() {
+  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const res = await fetch(`${API}/auth/me`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  session.set("profile", JSON.stringify(data));
+  return data;
+}
+
+// Três GETs de uma vez no MESMO path -> agrupam como "GET .../products (3)".
+async function apiBrowse() {
+  const responses = await Promise.all([
+    fetch(`${API}/products?limit=10&skip=0`),
+    fetch(`${API}/products?limit=10&skip=10`),
+    fetch(`${API}/products?limit=10&skip=20`),
+  ]);
+  const pages = await Promise.all(responses.map((r) => r.json()));
+  return pages.flatMap((p) => p.products ?? []);
+}
+
+// 404 de propósito: exercita o filtro por status e a cor de erro na lista.
+async function apiTriggerError() {
+  const res = await fetch(`${API}/products/999999`);
+  return res.status;
+}
+
+// Resposta NÃO-JSON (text/plain): um IP cru, uma string simples de verdade.
+// Valida o viewer de string do Network — o corpo aparece INTEIRO, com quebra de
+// linha, em vez da tela "invalid JSON" que o viewer de JSON mostraria.
+async function apiPlainText() {
+  const res = await fetch("https://api.ipify.org?format=text");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.text();
+}
+
+const GRAPHQL_API = "https://graphqlzero.almansi.me/api";
+
+async function graphQLRequest(query, variables, operationName) {
+  const res = await fetch(GRAPHQL_API, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Playground-Client": "NativeScope",
+    },
+    body: JSON.stringify({ query, variables, operationName }),
+  });
+  const payload = await res.json();
+  return { status: res.status, payload };
+}
+
+async function graphQLLoadUser() {
+  const result = await graphQLRequest(
+    `query GetUser($id: ID!) {
+      user(id: $id) {
+        id
+        name
+        username
+        email
+        company { name }
+      }
+    }`,
+    { id: "1" },
+    "GetUser",
+  );
+  if (result.payload.data?.user) {
+    session.set("graphql.user", JSON.stringify(result.payload.data.user));
+  }
+  return result;
+}
+
+async function graphQLLoadPosts() {
+  return graphQLRequest(
+    `query GetPosts($options: PageQueryOptions) {
+      posts(options: $options) {
+        data { id title body }
+        meta { totalCount }
+      }
+    }`,
+    { options: { paginate: { page: 1, limit: 5 } } },
+    "GetPosts",
+  );
+}
+
+async function graphQLCreatePost() {
+  const result = await graphQLRequest(
+    `mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        id
+        title
+        body
+      }
+    }`,
+    {
+      input: {
+        title: `NativeScope replay ${Date.now()}`,
+        body: "Created from the NativeScope playground",
+      },
+    },
+    "CreatePost",
+  );
+  if (result.payload.data?.createPost) {
+    session.set(
+      "graphql.lastMutation",
+      JSON.stringify(result.payload.data.createPost),
+    );
+  }
+  return result;
+}
+
+async function graphQLTriggerError() {
+  return graphQLRequest(
+    `query BrokenProduct {
+      post(id: 1) {
+        id
+        fieldThatDoesNotExist
+      }
+    }`,
+    {},
+    "BrokenProduct",
+  );
+}
+
+async function readSession() {
+  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const raw = session.getString("user");
+  let user = null;
+  if (raw) {
+    try {
+      user = JSON.parse(raw);
+    } catch {
+      user = null;
+    }
+  }
+  return { token, user };
+}
+
+function ApiScreen() {
+  const qc = useQueryClient();
+  const { data: sess } = useQuery({ queryKey: ["session"], queryFn: readSession });
+  const [products, setProducts] = useState([]);
+  const [note, setNote] = useState(null);
+  const [requestMode, setRequestMode] = useState("http");
+  const [graphQLResult, setGraphQLResult] = useState(null);
+
+  const signIn = useMutation({
+    mutationFn: apiSignIn,
+    onSuccess: () => {
+      setNote("Signed in — token saved to AsyncStorage, user to MMKV");
+      qc.invalidateQueries({ queryKey: ["session"] });
+    },
+    onError: (e) => setNote(`Sign in failed: ${e.message}`),
+  });
+  const profile = useMutation({
+    mutationFn: apiLoadProfile,
+    onSuccess: () => {
+      setNote("Profile loaded — saved to MMKV");
+      qc.invalidateQueries({ queryKey: ["session"] });
+    },
+    onError: (e) => setNote(`Profile failed: ${e.message} — sign in first`),
+  });
+  const browse = useMutation({
+    mutationFn: apiBrowse,
+    onSuccess: (list) => {
+      setProducts(list);
+      setNote(`Loaded ${list.length} products in 3 requests`);
+    },
+    onError: (e) => setNote(`Browse failed: ${e.message}`),
+  });
+  const boom = useMutation({
+    mutationFn: apiTriggerError,
+    onSuccess: (status) => setNote(`Server said HTTP ${status} — on purpose`),
+    onError: (e) => setNote(`Request failed: ${e.message}`),
+  });
+  const plain = useMutation({
+    mutationFn: apiPlainText,
+    onSuccess: (ip) => setNote(`Plain-text response “${ip}” — open it in the Network tab`),
+    onError: (e) => setNote(`Plain text failed: ${e.message}`),
+  });
+  const gqlUser = useMutation({
+    mutationFn: graphQLLoadUser,
+    onSuccess: ({ status, payload }) => {
+      setGraphQLResult(payload);
+      setNote(
+        payload.errors?.length
+          ? `GraphQL returned ${payload.errors.length} error(s) over HTTP ${status}`
+          : "GetUser completed — the user was also saved to MMKV",
+      );
+    },
+    onError: (e) => setNote(`GraphQL query failed: ${e.message}`),
+  });
+  const gqlPosts = useMutation({
+    mutationFn: graphQLLoadPosts,
+    onSuccess: ({ status, payload }) => {
+      setGraphQLResult(payload);
+      setNote(
+        payload.errors?.length
+          ? `GraphQL returned ${payload.errors.length} error(s) over HTTP ${status}`
+          : `GetPosts completed over HTTP ${status}`,
+      );
+    },
+    onError: (e) => setNote(`GraphQL query failed: ${e.message}`),
+  });
+  const gqlMutation = useMutation({
+    mutationFn: graphQLCreatePost,
+    onSuccess: ({ status, payload }) => {
+      setGraphQLResult(payload);
+      setNote(
+        payload.errors?.length
+          ? `GraphQL returned ${payload.errors.length} error(s) over HTTP ${status}`
+          : "CreatePost completed — its result was saved to MMKV",
+      );
+    },
+    onError: (e) => setNote(`GraphQL mutation failed: ${e.message}`),
+  });
+  const gqlError = useMutation({
+    mutationFn: graphQLTriggerError,
+    onSuccess: ({ status, payload }) => {
+      setGraphQLResult(payload);
+      setNote(
+        `Intentional GraphQL failure: ${payload.errors?.length ?? 0} error(s), HTTP ${status}`,
+      );
+    },
+    onError: (e) => setNote(`GraphQL request failed: ${e.message}`),
+  });
+
+  const signedIn = Boolean(sess?.user);
+  const busy =
+    signIn.isPending ||
+    profile.isPending ||
+    browse.isPending ||
+    boom.isPending ||
+    plain.isPending ||
+    gqlUser.isPending ||
+    gqlPosts.isPending ||
+    gqlMutation.isPending ||
+    gqlError.isPending;
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <Header
+        emoji="🌐"
+        title="Request Playground"
+        subtitle="HTTP and GraphQL in the same Network timeline"
+      />
+
+      <View style={styles.requestModeSwitch}>
+        {[
+          { key: "http", label: "HTTP", hint: "REST-style requests" },
+          { key: "graphql", label: "GraphQL", hint: "Queries and mutations" },
+        ].map((mode) => {
+          const active = requestMode === mode.key;
+          return (
+            <Pressable
+              key={mode.key}
+              onPress={() => {
+                setRequestMode(mode.key);
+                setNote(null);
+              }}
+              style={[
+                styles.requestModeButton,
+                active && styles.requestModeButtonActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.requestModeLabel,
+                  active && styles.requestModeLabelActive,
+                ]}
+              >
+                {mode.label}
+              </Text>
+              <Text
+                style={[
+                  styles.requestModeHint,
+                  active && styles.requestModeHintActive,
+                ]}
+              >
+                {mode.hint}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {requestMode === "http" ? (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>
+              {signedIn ? `👤  ${sess.user.firstName} ${sess.user.lastName}` : "🔒  Not signed in"}
+            </Text>
+            <Text style={styles.empty}>
+              {signedIn ? `@${sess.user.username} · token in AsyncStorage` : "Sign in to store an auth token"}
+            </Text>
+          </View>
+
+          <View style={styles.buttonRow}>
+            <BigButton label={signIn.isPending ? "Signing in…" : "Sign in"} emoji="🔑" onPress={() => signIn.mutate()} disabled={busy} />
+            <BigButton label={profile.isPending ? "Loading…" : "Load profile"} emoji="🪪" onPress={() => profile.mutate()} disabled={busy} />
+          </View>
+          <View style={styles.buttonRow}>
+            <BigButton label={browse.isPending ? "Fetching…" : "Browse ×3"} emoji="🛍️" onPress={() => browse.mutate()} disabled={busy} />
+            <BigButton label="Trigger 404" emoji="💥" onPress={() => boom.mutate()} disabled={busy} />
+          </View>
+          <View style={styles.buttonRow}>
+            <BigButton label={plain.isPending ? "Fetching…" : "Plain text"} emoji="🧾" onPress={() => plain.mutate()} disabled={busy} />
+          </View>
+        </>
+      ) : (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>GraphQLZero</Text>
+            <Text style={styles.empty}>
+              Named operations, variables, mutations and semantic errors.
+            </Text>
+          </View>
+          <View style={styles.buttonRow}>
+            <BigButton
+              label={gqlUser.isPending ? "Querying…" : "Get user"}
+              emoji="👤"
+              onPress={() => gqlUser.mutate()}
+              disabled={busy}
+            />
+            <BigButton
+              label={gqlPosts.isPending ? "Querying…" : "Get posts"}
+              emoji="📚"
+              onPress={() => gqlPosts.mutate()}
+              disabled={busy}
+            />
+          </View>
+          <View style={styles.buttonRow}>
+            <BigButton
+              label={gqlMutation.isPending ? "Mutating…" : "Create post"}
+              emoji="✍️"
+              onPress={() => gqlMutation.mutate()}
+              disabled={busy}
+            />
+            <BigButton
+              label={gqlError.isPending ? "Querying…" : "GraphQL error"}
+              emoji="⚠️"
+              onPress={() => gqlError.mutate()}
+              disabled={busy}
+            />
+          </View>
+        </>
+      )}
+
+      {note ? <Text style={styles.apiNote}>{note}</Text> : null}
+
+      {requestMode === "http" && products.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>
+            Latest products<Text style={styles.cardCount}>   {products.length}</Text>
+          </Text>
+          {products.slice(0, 8).map((p) => (
+            <View key={p.id} style={styles.scoreRow}>
+              <Text style={styles.scoreName} numberOfLines={1}>{p.title}</Text>
+              <Text style={styles.scoreValue}>${p.price}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {requestMode === "graphql" && graphQLResult ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>
+            Latest GraphQL result
+            <Text style={styles.cardCount}>
+              {graphQLResult.errors?.length
+                ? `   ${graphQLResult.errors.length} error(s)`
+                : "   data"}
+            </Text>
+          </Text>
+          <Text style={styles.graphQLPreview} numberOfLines={10}>
+            {JSON.stringify(graphQLResult, null, 2)}
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={styles.impactHint}>
+        <Text style={styles.impactHintText}>
+          💡 HTTP and GraphQL share one timeline. GraphQL operations are detected
+          automatically and show their query, variables, data and errors. “Get
+          user” and “Create post” also write to MMKV, so Storage impact lights up.
+        </Text>
+      </View>
+      <LiveHint />
+    </ScrollView>
+  );
+}
+
+// ============================================================ UI compartilhada
+
+function Header({ emoji, title, subtitle, onSecretPress }) {
+  const emojiNode = <Text style={styles.headerEmoji}>{emoji}</Text>;
+  return (
+    <View style={styles.header}>
+      {onSecretPress ? (
+        // Gatilho secreto: só o long-press dispara — um toque não faz nada,
+        // para o reset destrutivo nunca acontecer por acidente na demo.
+        <Pressable onLongPress={onSecretPress} delayLongPress={600}>
+          {emojiNode}
+        </Pressable>
+      ) : (
+        emojiNode
+      )}
+      <Text style={styles.headerTitle}>{title}</Text>
+      <Text style={styles.headerSubtitle}>{subtitle}</Text>
     </View>
   );
 }
 
-function Metric({ label, value }) {
+function BigCount({ value, unit }) {
   return (
-    <View style={styles.metric}>
-      <Text style={styles.metricValue}>{value}</Text>
-      <Text style={styles.metricLabel}>{label}</Text>
+    <View style={styles.bigCount}>
+      <Text style={styles.bigCountValue}>{value.toLocaleString()}</Text>
+      <Text style={styles.bigCountUnit}>{unit}</Text>
     </View>
   );
 }
 
-function StatusBadge({ busy, ready }) {
-  const label = busy ? "rodando" : ready ? "pronto" : "sqlite...";
-  return (
-    <View style={[styles.badge, busy && styles.badgeBusy]}>
-      <Text style={styles.badgeText}>{label}</Text>
-    </View>
-  );
-}
-
-function ActionGrid({ children }) {
-  return <View style={styles.actions}>{children}</View>;
-}
-
-function ActionButton({ title, onPress, tone = "default", disabled = false }) {
+function BigButton({ label, emoji, onPress, disabled }) {
   return (
     <Pressable
-      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.action,
-        tone === "danger" && styles.actionDanger,
-        pressed && !disabled && styles.actionPressed,
-        disabled && styles.actionDisabled,
-      ]}
+      disabled={disabled}
+      style={({ pressed }) => [styles.bigButton, pressed && styles.pressed, disabled && styles.disabled]}
     >
-      <Text style={[styles.actionText, tone === "danger" && styles.actionTextDanger]}>
-        {title}
-      </Text>
+      <Text style={styles.bigButtonEmoji}>{emoji}</Text>
+      <Text style={styles.bigButtonLabel}>{label}</Text>
     </Pressable>
   );
 }
 
+function GhostButton({ label, onPress }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}>
+      <Text style={styles.ghostButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function LiveHint() {
+  return (
+    <View style={styles.liveHint}>
+      <View style={styles.liveDot} />
+      <Text style={styles.liveText}>Live — edit it in NativeScope and watch it change here</Text>
+    </View>
+  );
+}
+
+// ================================================================ estilos
+
+const CORAL = "#d97757";
+const INK = "#1f1e1d";
+const PAPER = "#faf9f5";
+const CARD = "#ffffff";
+const BORDER = "#e6e2d9";
+const MUTED = "#78736b";
+
 const styles = StyleSheet.create({
-  safe: {
+  safe: { flex: 1, backgroundColor: PAPER },
+  screen: { flex: 1 },
+  content: { padding: 20, paddingBottom: 40, gap: 16 },
+
+  header: { alignItems: "center", gap: 4, marginTop: 8 },
+  headerEmoji: { fontSize: 52 },
+  headerTitle: { fontSize: 30, fontWeight: "900", color: INK },
+  headerSubtitle: { fontSize: 15, color: MUTED, textAlign: "center" },
+
+  bigCount: {
+    alignItems: "center",
+    backgroundColor: CARD,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: BORDER,
+    paddingVertical: 18,
+  },
+  bigCountValue: { fontSize: 46, fontWeight: "900", color: CORAL },
+  bigCountUnit: { fontSize: 16, fontWeight: "700", color: MUTED, marginTop: -4 },
+
+  buttonRow: { flexDirection: "row", gap: 12 },
+  bigButton: {
     flex: 1,
-    backgroundColor: "#f5f3ef",
+    alignItems: "center",
+    backgroundColor: CORAL,
+    borderRadius: 18,
+    paddingVertical: 18,
+    gap: 4,
   },
-  content: {
-    padding: 18,
-    gap: 14,
+  bigButtonEmoji: { fontSize: 26 },
+  bigButtonLabel: { color: "#fff", fontSize: 16, fontWeight: "800" },
+  pressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
+  disabled: { opacity: 0.5 },
+
+  card: {
+    backgroundColor: CARD,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: BORDER,
+    padding: 16,
+    gap: 8,
   },
-  header: {
-    alignItems: "flex-start",
+  cardTitle: { fontSize: 18, fontWeight: "800", color: INK },
+  cardCount: { fontSize: 15, fontWeight: "800", color: CORAL },
+  emojiWrap: { fontSize: 22, lineHeight: 30 },
+  empty: { color: MUTED, fontSize: 15, fontStyle: "italic" },
+  emptyBig: { color: MUTED, fontSize: 17, textAlign: "center", lineHeight: 26, marginVertical: 12 },
+
+  // Toys / CRUD
+  emojiPicker: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center" },
+  emojiChoice: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: BORDER,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: CARD,
+  },
+  emojiChoiceOn: { borderColor: CORAL, backgroundColor: "#f7ede8" },
+  emojiChoiceText: { fontSize: 24 },
+  inputRow: { flexDirection: "row", gap: 10 },
+  input: {
+    flex: 1,
+    backgroundColor: CARD,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: BORDER,
+    paddingHorizontal: 16,
+    fontSize: 17,
+    color: INK,
+    height: 52,
+  },
+  addButton: {
+    backgroundColor: CORAL,
+    borderRadius: 14,
+    paddingHorizontal: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addButtonText: { color: "#fff", fontSize: 16, fontWeight: "800" },
+  toyRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: CARD,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: BORDER,
+    padding: 12,
     gap: 12,
   },
-  kicker: {
-    color: "#6f6a61",
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-  },
-  title: {
-    color: "#171513",
-    fontSize: 28,
-    fontWeight: "800",
-    marginTop: 2,
-  },
-  status: {
-    backgroundColor: "#24211d",
-    borderRadius: 8,
-    color: "#fffaf1",
-    fontSize: 13,
-    overflow: "hidden",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  badge: {
-    backgroundColor: "#d9efe0",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  badgeBusy: {
-    backgroundColor: "#f4dfb8",
-  },
-  badgeText: {
-    color: "#14351f",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  metrics: {
+  toyEmoji: { fontSize: 30 },
+  toyNameWrap: { flex: 1 },
+  toyName: { fontSize: 18, fontWeight: "700", color: INK },
+  toyHint: { fontSize: 12, color: "#b0aba2" },
+  iconButton: { padding: 6 },
+  iconText: { fontSize: 22 },
+
+  // Scores
+  scoreRow: {
     flexDirection: "row",
-    gap: 8,
-  },
-  metric: {
-    backgroundColor: "#ffffff",
-    borderColor: "#e1ded8",
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    padding: 10,
-  },
-  metricValue: {
-    color: "#171513",
-    fontSize: 15,
-    fontWeight: "800",
-  },
-  metricLabel: {
-    color: "#756f66",
-    fontSize: 11,
-    marginTop: 3,
-  },
-  section: {
-    backgroundColor: "#ffffff",
-    borderColor: "#ded9d0",
-    borderRadius: 8,
-    borderWidth: 1,
-    padding: 14,
-    gap: 10,
-  },
-  sectionTitle: {
-    color: "#171513",
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  caption: {
-    color: "#6d665d",
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  actions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  action: {
     alignItems: "center",
-    backgroundColor: "#ece7df",
-    borderColor: "#d8d0c5",
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 42,
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  actionDanger: {
-    backgroundColor: "#fae8e5",
-    borderColor: "#efc7c0",
-  },
-  actionPressed: {
-    opacity: 0.72,
-    transform: [{ scale: 0.99 }],
-  },
-  actionDisabled: {
-    opacity: 0.45,
-  },
-  actionText: {
-    color: "#29241f",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  actionTextDanger: {
-    color: "#942316",
-  },
-  table: {
-    borderColor: "#e6e1da",
-    borderRadius: 8,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
-  row: {
-    borderBottomColor: "#eee9e2",
-    borderBottomWidth: 1,
-    paddingHorizontal: 10,
+    gap: 12,
     paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#f0ece4",
   },
-  rowTitle: {
-    color: "#1e1b18",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  rowMeta: {
-    color: "#6b645b",
-    fontSize: 12,
-    marginTop: 2,
-  },
-  muted: {
-    color: "#777168",
-    fontSize: 13,
-    padding: 10,
-  },
-  segmented: {
-    backgroundColor: "#eee9e1",
-    borderRadius: 8,
+  rank: { fontSize: 15, fontWeight: "900", color: MUTED, width: 22 },
+  scoreEmoji: { fontSize: 24 },
+  scoreName: { flex: 1, fontSize: 17, fontWeight: "700", color: INK },
+  scoreValue: { fontSize: 16, fontWeight: "800", color: CORAL },
+
+  ghostButton: { alignItems: "center", paddingVertical: 14 },
+  ghostButtonText: { color: MUTED, fontSize: 15, fontWeight: "700" },
+
+  liveHint: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 },
+  liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#3f9a63" },
+  liveText: { color: MUTED, fontSize: 13 },
+
+  // API / network
+  apiNote: { color: MUTED, fontSize: 14, fontWeight: "600", textAlign: "center" },
+  requestModeSwitch: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    padding: 6,
+    gap: 8,
+    padding: 5,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: BORDER,
+    backgroundColor: CARD,
   },
-  segment: {
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  segmentActive: {
-    backgroundColor: "#22201d",
-  },
-  segmentText: {
-    color: "#5e574f",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  segmentTextActive: {
-    color: "#fffaf1",
-  },
-  input: {
-    backgroundColor: "#fbfaf7",
-    borderColor: "#d8d1c7",
-    borderRadius: 8,
-    borderWidth: 1,
-    color: "#171513",
-    fontSize: 14,
-    paddingHorizontal: 12,
+  requestModeButton: {
+    flex: 1,
+    alignItems: "center",
+    gap: 2,
+    borderRadius: 11,
     paddingVertical: 10,
   },
-  textarea: {
-    minHeight: 82,
-    textAlignVertical: "top",
+  requestModeButtonActive: { backgroundColor: CORAL },
+  requestModeLabel: { color: MUTED, fontSize: 15, fontWeight: "900" },
+  requestModeLabelActive: { color: "#fff" },
+  requestModeHint: { color: "#aaa49b", fontSize: 11 },
+  requestModeHintActive: { color: "#fbe8e0" },
+  graphQLPreview: {
+    color: INK,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "monospace",
   },
+  impactHint: {
+    backgroundColor: "#f7ede8",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#eaddd4",
+    padding: 14,
+  },
+  impactHintText: { color: "#8a5a44", fontSize: 13, lineHeight: 19 },
+
+  // Tab bar
+  tabBar: {
+    flexDirection: "row",
+    backgroundColor: CARD,
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  tab: { flex: 1, alignItems: "center", gap: 2 },
+  tabIcon: { fontSize: 24, opacity: 0.4 },
+  tabIconActive: { opacity: 1 },
+  tabLabel: { fontSize: 12, fontWeight: "700", color: "#b0aba2" },
+  tabLabelActive: { color: CORAL },
 });

@@ -88,8 +88,53 @@ export interface NativeScopeStorageModuleConfig {
   reactQuery?: ReactQueryBridgeOptions;
 }
 
+/**
+ * Módulo de Network (fetch / XHR). Instrumenta o `XMLHttpRequest` global em
+ * desenvolvimento e transmite cada request ao Studio. `network: true` liga com
+ * os padrões; um objeto abaixo ajusta o comportamento.
+ */
+export interface NativeScopeNetworkModuleConfig {
+  /**
+   * Capturar corpos de request/response (preview no Studio; corpo íntegro sob
+   * demanda). Default: true.
+   */
+  captureBody?: boolean;
+  /**
+   * Máximo de bytes do preview de corpo enviado por request. Corpos maiores são
+   * cortados (o íntegro vem sob demanda). Default: 32768.
+   */
+  maxBodyPreview?: number;
+  /**
+   * Acima deste tamanho (bytes) o corpo íntegro não é retido no device — só o
+   * preview. Limita memória. Default: 2 MB.
+   */
+  maxBodyStore?: number;
+  /**
+   * Quantas requests recentes manter em memória no device (buffer em anel).
+   * Default: 1000.
+   */
+  maxRequests?: number;
+  /**
+   * URLs a ignorar (match por substring), além do ruído de devtools já filtrado.
+   */
+  ignoreUrls?: string[];
+  /**
+   * Nomes de header a mascarar antes de enviar ao Studio (ex.: ["authorization"]).
+   */
+  redactHeaders?: string[];
+}
+
 export interface NativeScopeModulesConfig {
-  storage?: NativeScopeStorageModuleConfig;
+  /**
+   * Módulo de Storage (AsyncStorage, MMKV, expo-sqlite). `true` liga com os
+   * padrões; um objeto liga com opções (indicator, reactQuery).
+   */
+  storage?: boolean | NativeScopeStorageModuleConfig;
+  /**
+   * Módulo de Network (fetch/XHR/WebSocket) — opt-in, instalado separadamente.
+   * `true` liga o slot; as opções vêm com o módulo.
+   */
+  network?: boolean | NativeScopeNetworkModuleConfig;
 }
 
 export interface NativeScopeConfig {

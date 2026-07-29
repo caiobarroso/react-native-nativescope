@@ -11,7 +11,8 @@ export type PanelId =
   | "tableList"
   | "history"
   | "activity"
-  | "sqlConsole";
+  | "sqlConsole"
+  | "networkList";
 
 export interface PanelSpec {
   /** extensão padrão em px — largura para painéis laterais, altura para os dockados embaixo */
@@ -30,6 +31,7 @@ export const PANELS: Record<PanelId, PanelSpec> = {
   history: { size: 240, min: 180, max: 480 },
   activity: { size: 176, min: 96, max: 560 },
   sqlConsole: { size: 280, min: 200, max: 640, collapsed: true },
+  networkList: { size: 440, min: 320, max: 820 },
 };
 
 interface PanelState {

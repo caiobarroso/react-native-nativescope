@@ -1,0 +1,64 @@
+---
+title: Capture controls & sounds
+description: Focus on new traffic, pause capture, preserve earlier context and configure local request sounds.
+---
+
+Long sessions accumulate useful history and visual noise at the same time. Network capture controls
+let you focus the timeline without restarting the app or deleting context prematurely.
+
+## Start a focused capture
+
+Select **New capture** before exercising a new code path. NativeScope places a local marker at the
+current point and shows only requests that arrive after it.
+
+Earlier requests are not deleted. Use **Show earlier** on the marker to restore them whenever the
+previous context becomes useful. The marker also offers a deliberate action to clear only the
+traffic before it.
+
+This is useful after:
+
+- changing a component or hook;
+- reproducing one interaction in a noisy app;
+- starting a new test scenario;
+- isolating a retry, mutation or polling cycle.
+
+## Recent request feedback
+
+Every newly captured request receives a brief, subtle row highlight. It confirms that the action
+reached the Network module without turning the timeline into an animated log.
+
+## Pause and resume
+
+**Pause** stops new entries from being added to the Studio timeline. It does not pause, cancel or
+modify requests in the app. Select **Resume** to continue capture.
+
+Use the trash action to clear the complete Network history. NativeScope asks for confirmation
+before the destructive action.
+
+## Request sounds
+
+Sounds are off by default and remain a local Studio preference. Choose one mode:
+
+| Mode                 | Behavior                                                       |
+| -------------------- | -------------------------------------------------------------- |
+| Off                  | Keep capture silent.                                           |
+| All requests         | Play a subtle sound for every new request.                     |
+| Errors only          | Notify for network errors and HTTP 4xx/5xx responses.          |
+| Selected endpoints   | Notify only when a captured request matches an endpoint rule.  |
+
+Endpoint rules accept a path or a method and path, such as:
+
+```text
+/auth/*
+POST /checkout
+GET /api/sync/*
+```
+
+Select a captured endpoint from the suggestions or type a custom rule. Use the compact volume
+control and **Test** before relying on audio; browsers may require one interaction before allowing
+sound.
+
+<Callout title="Studio controls only">
+  Focus markers, pause state, sound preferences and timeline clearing affect the local debugging
+  interface. They never alter your app's networking behavior.
+</Callout>

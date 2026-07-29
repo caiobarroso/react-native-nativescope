@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronDown, Database, Menu, X } from "lucide-react";
+import { ChevronDown, Database, Globe2, Menu, X } from "lucide-react";
 import type { DocGroup } from "@content/docs/_meta";
 
 /**
@@ -16,7 +16,12 @@ import type { DocGroup } from "@content/docs/_meta";
 export function DocsSidebar({ groups }: { groups: DocGroup[] }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const current = groups.flatMap((group) => group.items).find((item) => pathname.endsWith(item.slug));
+  const activeModule = pathname.startsWith("/docs/network") ? "network" : "storage";
+  const visibleGroups = groups.filter((group) => group.module === activeModule);
+  const current = visibleGroups
+    .flatMap((group) => group.items)
+    .find((item) => pathname === `/docs/${item.slug}`);
+  const productName = activeModule === "network" ? "Network" : "Storage";
 
   useEffect(() => setOpen(false), [pathname]);
 
@@ -30,25 +35,65 @@ export function DocsSidebar({ groups }: { groups: DocGroup[] }) {
         aria-controls="docs-sidebar"
       >
         <Menu size={17} aria-hidden />
-        <span><small>Storage Engine</small>{current?.title ?? "Documentation"}</span>
+        <span>
+          <small>{productName}</small>
+          {current?.title ?? "Documentation"}
+        </span>
       </button>
 
-      {open ? <button type="button" data-docs-backdrop onClick={() => setOpen(false)} aria-label="Close documentation navigation" /> : null}
+      {open ? (
+        <button
+          type="button"
+          data-docs-backdrop
+          onClick={() => setOpen(false)}
+          aria-label="Close documentation navigation"
+        />
+      ) : null}
 
-      <nav id="docs-sidebar" data-docs-sidebar data-open={open ? "true" : "false"} aria-label="Documentation">
+      <nav
+        id="docs-sidebar"
+        data-docs-sidebar
+        data-open={open ? "true" : "false"}
+        aria-label="Documentation"
+      >
         <div data-sidebar-header>
           <span>Documentation</span>
-          <button type="button" onClick={() => setOpen(false)} aria-label="Close documentation navigation"><X size={17} aria-hidden /></button>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            aria-label="Close documentation navigation"
+          >
+            <X size={17} aria-hidden />
+          </button>
         </div>
 
-        <div data-sidebar-product>
-          <Database size={16} aria-hidden />
-          <span><small>Product</small>{groups[0]?.product ?? "Storage Engine"}</span>
+        <div data-docs-module-switcher aria-label="Documentation module">
+          <Link
+            href="/docs/storage/introduction"
+            data-active={activeModule === "storage" ? "true" : undefined}
+          >
+            <Database size={15} aria-hidden />
+            <span>
+              <small>Module</small>Storage
+            </span>
+          </Link>
+          <Link
+            href="/docs/network/introduction"
+            data-active={activeModule === "network" ? "true" : undefined}
+          >
+            <Globe2 size={15} aria-hidden />
+            <span>
+              <small>Module</small>Network
+            </span>
+          </Link>
         </div>
 
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <details key={group.title} open>
-            <summary data-sidebar-group>{group.title}<ChevronDown size={14} aria-hidden /></summary>
+            <summary data-sidebar-group>
+              {group.title}
+              <ChevronDown size={14} aria-hidden />
+            </summary>
             <ul>
               {group.items.map((item) => {
                 const href = `/docs/${item.slug}`;
@@ -66,8 +111,8 @@ export function DocsSidebar({ groups }: { groups: DocGroup[] }) {
         ))}
 
         <div data-sidebar-coming>
-          <small>Platform</small>
-          <span>More scopes, same studio.</span>
+          <small>NativeScope environment</small>
+          <span>Two modules. One local Studio.</span>
         </div>
       </nav>
     </>

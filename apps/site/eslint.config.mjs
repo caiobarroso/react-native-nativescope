@@ -14,6 +14,7 @@ const config = [
   {
     ignores: [
       ".next/**",
+      ".next-compare-check/**",
       "node_modules/**",
       "out/**",
       "next-env.d.ts",

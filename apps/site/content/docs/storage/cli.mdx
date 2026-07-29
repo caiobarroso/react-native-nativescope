@@ -19,14 +19,14 @@ NativeScope resolver, sets up the Android tunnel if needed, and opens the studio
 | `--token <string>` | random per session | Session token the app must present. Generated for you; set it only if you are scripting. |
 | `--no-metro` | off | Do not start Metro. Use when you run Metro yourself. |
 | `--no-open` | off | Do not open the browser. |
-| `--lan` | off | Bind the service to your local network so a physical iPhone — or an Android device over Wi-Fi — on the same network can connect. See [Devices & connection](/docs/devices). |
+| `--lan` | off | Bind the service to your local network so a physical iPhone — or an Android device over Wi-Fi — on the same network can connect. See [Devices & connection](/docs/storage/devices). |
 | `--fake` | off | Connect a simulated app that generates activity, with no device or simulator. |
 | `--fake-scale` | off | Make the simulated app large: thousands of keys, multi-megabyte values, a 100k-row table. |
 
 ## Running Metro yourself
 
 `--no-metro` starts the service without Metro, so you attach the resolver to your own config. See
-[Devices & connection](/docs/devices#bring-your-own-metro) for the setup, the `.cjs`/`.mjs`/`.ts`
+[Devices & connection](/docs/storage/devices#bring-your-own-metro) for the setup, the `.cjs`/`.mjs`/`.ts`
 caveat, and when to choose it over the all-in-one command.
 
 ## Android devices
@@ -48,7 +48,7 @@ network as your Mac, and reload the app:
 <InstallCommand run="nativescope --lan" />
 
 NativeScope reuses the dev-server host your app already loaded its bundle from, so there is no IP to
-type. See [Devices & connection](/docs/devices) for the full picture and the security note on
+type. See [Devices & connection](/docs/storage/devices) for the full picture and the security note on
 `--lan`.
 
 ## Developing without an app

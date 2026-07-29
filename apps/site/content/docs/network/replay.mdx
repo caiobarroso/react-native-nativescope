@@ -1,0 +1,54 @@
+---
+title: Replay & compare
+description: Replay captured requests with structured editing, current credentials and explicit side-effect boundaries.
+---
+
+## Open replay
+
+Select a request and choose **Replay**. The editor separates Query, Headers and Body so a large
+payload never becomes one unstructured text box.
+
+## Choose credentials
+
+**Original** keeps the captured headers. **Current session** replaces supported session credentials
+with the latest values known by the connected app. The choice is explicit because both behaviors
+are useful and they are not equivalent.
+
+## Edit query and headers
+
+Query parameters are rows, so names and values can wrap without disappearing. Header names support
+common suggestions such as `Authorization`, `Content-Type`, `Accept`, `Cache-Control` and
+`X-Request-ID`, while still accepting any custom name.
+
+Removing a captured header removes it from the replay. Empty parameter names are ignored.
+
+## Edit the body
+
+JSON bodies open in a formatted code editor with syntax highlighting and validation. NativeScope
+offers formatting and loads the complete retained body before editing when the list only had a
+preview.
+
+Untouched sections use the captured request exactly as it was.
+
+## Replay GraphQL
+
+Detected GraphQL requests replace the generic body workflow with **Operation** and **Variables**.
+The operation editor formats and validates GraphQL syntax; variables keep JSON highlighting and
+validation. NativeScope rebuilds the original GraphQL envelope when replaying, preserving captured
+extensions and headers.
+
+GraphQL GET calls, raw `application/graphql` bodies and batches remain available through the
+generic URL/body editors when their wire shape needs direct control.
+
+Read the [GraphQL guide](/docs/network/graphql) for automatic detection, operation-aware grouping
+and semantic errors returned with HTTP 200.
+
+## Compare executions
+
+A replay is tagged both in the list and in its detail header. Select calls from the same endpoint
+and choose **Compare** to isolate changes in request, response, status and timing.
+
+<Callout title="Replay is a real request">
+  NativeScope does not simulate side effects. Replaying a POST, PATCH or DELETE can modify the same
+  backend as the original request. Confirm the target URL and credentials before sending it.
+</Callout>

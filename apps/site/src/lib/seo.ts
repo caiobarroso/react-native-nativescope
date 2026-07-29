@@ -88,9 +88,7 @@ export function pageMetadata({
     title: socialTitle,
     description: socialDescription,
     images: [DEFAULT_OG_IMAGE],
-    ...(type === "article"
-      ? { publishedTime, modifiedTime, authors: [AUTHOR.name] }
-      : {}),
+    ...(type === "article" ? { publishedTime, modifiedTime, authors: [AUTHOR.name] } : {}),
   } satisfies Record<string, unknown>;
 
   return {
@@ -155,10 +153,10 @@ export function softwareApplicationSchema() {
     "@type": "SoftwareApplication",
     name: SITE_NAME,
     applicationCategory: "DeveloperApplication",
-    applicationSubCategory: "React Native storage debugging",
+    applicationSubCategory: "React Native debugging and developer tools",
     operatingSystem: "macOS, Windows, Linux",
     description:
-      "A plug-and-play, fully local debugging environment for React Native. Inspect, edit, diff and restore AsyncStorage, MMKV and SQLite while your app runs.",
+      "A plug-and-play, fully local debugging environment for React Native. Inspect storage, capture HTTP and GraphQL traffic, replay requests and keep debugging context in one Studio.",
     url: SITE_URL,
     downloadUrl: SOCIAL.repo,
     softwareVersion: "1.0.0",

@@ -211,15 +211,15 @@ export function OptionalConfigDiagram() {
     <DiagramFigure
       caption={<><strong>Fig. 5</strong> Configuration describes behavior NativeScope cannot infer. It never becomes an inventory of the app&apos;s storage.</>}
     >
-      <svg viewBox="0 0 720 280" role="img" aria-label="Storage providers, namespaces and database names are inferred automatically. An optional NativeScope config is reserved for behavior such as cache invalidation after dashboard edits.">
-        <text x="28" y="28" data-svg-eyebrow data-svg-muted-fill>AUTOMATIC · DEFAULT PATH</text>
+      <svg viewBox="0 0 720 280" role="img" aria-label="Storage providers, namespaces and database names are inferred automatically. The NativeScope config declares which modules to enable and behavior the tool cannot infer, such as cache invalidation after Studio edits.">
+        <text x="28" y="28" data-svg-eyebrow data-svg-muted-fill>DISCOVERED AUTOMATICALLY</text>
         <rect x="28" y="44" width="410" height="170" rx="10" data-svg-accent-wash />
         <ConfigRow y={62} label="providers" value="AsyncStorage · MMKV · SQLite" />
         <ConfigRow y={104} label="instances" value="observed when the app creates them" />
         <ConfigRow y={146} label="databases" value="registered when the app opens them" />
         <text x="233" y="198" textAnchor="middle" data-svg-accent-text>zero app-owned NativeScope code</text>
 
-        <text x="474" y="28" data-svg-eyebrow data-svg-muted-fill>OPTIONAL</text>
+        <text x="474" y="28" data-svg-eyebrow data-svg-muted-fill>IN CONFIG</text>
         <rect x="474" y="44" width="218" height="170" rx="10" data-svg-surface data-svg-stroke />
         <text x="492" y="74" data-svg-label>nativescope.config.ts</text>
         <line x1="492" y1="88" x2="674" y2="88" data-svg-divider />
@@ -229,7 +229,7 @@ export function OptionalConfigDiagram() {
         <text x="492" y="182" data-svg-faint>be inferred safely</text>
 
         <rect x="28" y="238" width="664" height="26" rx="5" data-svg-panel data-svg-stroke data-svg-dash />
-        <text x="360" y="256" textAnchor="middle" data-svg-faint>storage discovery works identically with or without this file</text>
+        <text x="360" y="256" textAnchor="middle" data-svg-faint>you declare the modules; the instances behind them discover themselves</text>
       </svg>
     </DiagramFigure>
   );

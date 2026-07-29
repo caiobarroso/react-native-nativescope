@@ -13,7 +13,10 @@ import {
   keyValueSearchResultSchema,
   databaseSearchResultSchema,
   exportResultSchema,
+  networkReplayResultSchema,
+  networkGetBodyResultSchema,
   type AnyMessage,
+  type NetworkBody,
   type CellValue,
   type CommandMessage,
   type ExecuteResult,
@@ -24,6 +27,7 @@ import {
 } from "@rnsi/protocol";
 import { createTransport, fnv1a32, type Transport } from "@rnsi/runtime";
 import { useStudio, keysId, type Device, type Selection } from "./store.ts";
+import { useNetwork } from "./network-store.ts";
 
 /**
  * Cliente do Studio. Único ponto da UI que toca o WebSocket — nenhum
@@ -389,6 +393,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       store.setPhase("connected");
       if (supersedesPrevious) {
         useStudio.getState().selectDevice(device.deviceId);
+        useNetwork.getState().reset(); // contexto JS novo do app: captura recomeça
       }
 
       // Continuidade de reload primeiro; senão, se este é o foco, busca providers.
@@ -483,6 +488,16 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       scheduleTableRefresh(event.payload.providerId, event.payload.instanceId);
       return;
     }
+
+    case "module.event": {
+      if (event.deviceId !== store.selectedDeviceId) return; // evento de outro device
+      // Envelope L3: cada módulo além de storage roteia por aqui. O storage
+      // segue nos seus próprios cases acima — este é o canal genérico.
+      if (event.payload.module === "network" && event.payload.event === "request") {
+        useNetwork.getState().addRequest(event.payload.data);
+      }
+      return;
+    }
   }
 }
 
@@ -513,6 +528,85 @@ function sendCommand(partial: Pick<CommandMessage, "type" | "payload">): Promise
 
 // ---------------------------------------------------------------- API da UI
 
+/**
+ * Envelope L3: envia um comando a um módulo (ex.: network) no runtime. Roteado
+ * pelo bridge como qualquer command, resolvido pelo onModuleCommand do módulo.
+ */
+export async function sendModuleCommand(
+  module: string,
+  command: string,
+  data?: unknown,
+): Promise<unknown> {
+  return sendCommand({
+    type: "module.command",
+    payload: { module, command, ...(data !== undefined ? { data } : {}) },
+  });
+}
+
+/** Rede: busca o corpo ÍNTEGRO de uma request capturada (quando o preview veio
+ * truncado). null quando o device já evictou a request do buffer. */
+export async function getNetworkBody(
+  id: string,
+  side: "request" | "response",
+): Promise<NetworkBody | null> {
+  const result = await sendModuleCommand("network", "get-body", { id, side });
+  const parsed = networkGetBodyResultSchema.safeParse(result);
+  if (!parsed.success || !parsed.data.available) return null;
+  return parsed.data.body;
+}
+
+/** Rede: reexecuta uma request no device. Devolve o id da nova request (ela
+ * também é capturada e chega por module.event), ou null se falhou. */
+export async function replayRequest(
+  id: string,
+  mode: "original" | "current-session",
+  overrides?: {
+    method?: string;
+    url?: string;
+    query?: string | null;
+    headers?: Record<string, string>;
+    removedHeaders?: string[];
+    body?: string | null;
+  },
+): Promise<string | null> {
+  const result = await sendModuleCommand("network", "replay", {
+    id,
+    mode,
+    ...(overrides ? { overrides } : {}),
+  });
+  const parsed = networkReplayResultSchema.safeParse(result);
+  return parsed.success ? parsed.data.id : null;
+}
+
+/**
+ * "Abrir no Storage" (integração Network↔Storage): troca para o módulo de
+ * storage e navega até a chave/tabela impactada, reusando o foco de atividade
+ * (mesmo realce do feed do storage).
+ */
+export function openInStorage(item: {
+  providerId: string;
+  instanceId: string;
+  providerLabel: string;
+  target: { kind: "key-value"; key: string } | { kind: "database"; table: string; rowId: number | null };
+}): void {
+  const store = useStudio.getState();
+  store.setActiveModule("storage");
+  store.focusActivity({
+    id: -1,
+    timestamp: Date.now(),
+    providerId: item.providerId,
+    providerLabel: item.providerLabel,
+    instanceId: item.instanceId,
+    key: item.target.kind === "key-value" ? item.target.key : item.target.table,
+    change: "updated",
+    source: "app",
+    preview: null,
+    target: item.target,
+  });
+  if (item.target.kind === "database") void loadTables(item.providerId, item.instanceId);
+  else void loadKeys(item.providerId, item.instanceId);
+}
+
 export async function refreshProviders(): Promise<void> {
   const result = await sendCommand({ type: "provider.list", payload: {} });
   const parsed = providerListResultSchema.safeParse(result);
@@ -532,6 +626,8 @@ export function switchDevice(deviceId: string): void {
   failInFlight("device switched");
   store.beginProviderSync();
   store.selectDevice(deviceId);
+  // Network é escopado ao device: a captura do device anterior não vale aqui.
+  useNetwork.getState().reset();
   void refreshProviders();
 }
 

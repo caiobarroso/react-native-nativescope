@@ -1,0 +1,62 @@
+---
+title: Network Insights
+description: Understand request volume, failures, latency, transferred data and endpoint behavior across the current session.
+---
+
+Individual requests explain one interaction. **Insights** explains the session around it.
+
+Open Insights from the Network toolbar after traffic has been captured. The overview is computed
+locally from the bounded request history and never sends metrics to a remote analytics service.
+
+## Session summary
+
+The top row shows:
+
+- total requests;
+- failed requests and failure rate;
+- p95 latency;
+- total transferred data, split into uploaded and downloaded bytes.
+
+GraphQL errors count as failures even when their transport status is HTTP 200.
+
+## Timeline
+
+The timeline groups traffic into time buckets and separates successful and failed requests. Use it
+to spot bursts, retry loops, error clusters and changes in request volume after an interaction.
+
+## Endpoint table
+
+Requests are grouped into useful endpoint identities:
+
+- numeric IDs, UUIDs and other obvious dynamic path segments are normalized;
+- GraphQL traffic groups by operation rather than `/graphql`;
+- repeated executions stay together.
+
+Sort endpoints by:
+
+- number of calls;
+- error rate;
+- p95 latency;
+- transferred bytes;
+- recency.
+
+This makes over-fetching, an unexpectedly slow route or one noisy mutation visible without reading
+the timeline row by row.
+
+## Drill into an endpoint
+
+Select an endpoint to inspect its metrics and recent executions. From there you can:
+
+- open an exact request;
+- return to the complete endpoint list;
+- carry the endpoint back to the request-list search.
+
+## Filtered and complete scope
+
+When the request list has active filters, Insights can summarize either:
+
+- **Filtered** — only requests matching the current search and filters;
+- **All** — the complete bounded Network history.
+
+This lets you answer both “what is happening in the app?” and “what is happening only to this
+endpoint or protocol?” without rebuilding the query manually.

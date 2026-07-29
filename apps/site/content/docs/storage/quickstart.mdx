@@ -9,6 +9,24 @@ Add it as a development dependency. It must never be a runtime dependency.
 
 <InstallCommand install="react-native-nativescope" />
 
+## Configure
+
+Create `nativescope.config.ts` at the root of your app and declare the modules you want. Storage
+instances are still discovered automatically — you only name the module.
+
+```ts
+import { defineNativeScopeConfig } from "react-native-nativescope/app";
+
+export default defineNativeScopeConfig({
+  modules: {
+    storage: true,
+  },
+});
+```
+
+Add `network: true` in the same object whenever you want the [Network](/docs/network/introduction)
+module too.
+
 ## Run
 
 Start your project through NativeScope instead of starting Metro directly.
@@ -31,15 +49,15 @@ storage modules directly. The generated file also includes exact rollback instru
 Now launch your app the way you normally would. The moment it connects, its storages appear in the
 sidebar.
 
-At this point, discovery, inspection and writes in both directions are working. No app file is
-required for that core workflow.
+At this point, discovery, inspection and writes in both directions are working across the modules
+you enabled.
 
 ## Keep cached screens in sync (optional)
 
 NativeScope writes the real storage value immediately, but if your screen renders that value
-through React Query, the cache can keep showing the old one until something invalidates it. A small,
-optional config file closes that gap — see the [React Query bridge](/docs/react-query). Neither it
-nor the in-app [indicator](/docs/configuration) is needed for storage discovery.
+through React Query, the cache can keep showing the old one until something invalidates it. One more
+line in your config file closes that gap — see the [React Query bridge](/docs/storage/react-query). Neither
+it nor the in-app [indicator](/docs/storage/configuration) is needed for storage discovery.
 
 ## Verify it worked
 
@@ -61,7 +79,7 @@ you expected is missing here, check the target project's `package.json` and the 
 ## Already running Metro?
 
 If you manage Metro yourself, run `nativescope --no-metro` and attach the wrapper to your own Metro
-config. [Devices & connection](/docs/devices#bring-your-own-metro) covers that setup, when to choose
+config. [Devices & connection](/docs/storage/devices#bring-your-own-metro) covers that setup, when to choose
 it, and how it compares to letting NativeScope start Metro for you.
 
 ## Common adjustments
@@ -78,9 +96,9 @@ Do not open the browser automatically:
 
 <InstallCommand run="nativescope --no-open" />
 
-The full list is in the [CLI reference](/docs/cli).
+The full list is in the [CLI reference](/docs/storage/cli).
 
 ## Next
 
-Read the [React Query bridge](/docs/react-query) for automatic discovery, custom QueryClient setup
+Read the [React Query bridge](/docs/storage/react-query) for automatic discovery, custom QueryClient setup
 and precise invalidation filters.

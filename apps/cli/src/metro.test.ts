@@ -5,13 +5,14 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { withNativeScope, SHIM_DIR, SESSION_MODULE, CONFIG_MODULE, APP_DIR } =
+const { withNativeScope, SHIM_DIR, SESSION_MODULE, CONFIG_MODULE, BOOT_MODULE, APP_DIR } =
   require("../metro/withNativeScope.cjs") as {
     APP_DIR: string;
     withNativeScope: (
       config: Record<string, unknown>,
       options?: { sessionFile?: string; projectRoot?: string },
     ) => {
+      transformer?: { babelTransformerPath?: string };
       resolver: {
         resolveRequest: (
           context: Record<string, unknown>,
@@ -23,6 +24,7 @@ const { withNativeScope, SHIM_DIR, SESSION_MODULE, CONFIG_MODULE, APP_DIR } =
     SHIM_DIR: string;
     SESSION_MODULE: string;
     CONFIG_MODULE: string;
+    BOOT_MODULE: string;
   };
 
 const ASYNC_STORAGE = "@react-native-async-storage/async-storage";
@@ -189,5 +191,31 @@ describe("withNativeScope", () => {
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }
+  });
+
+  // Seam de injeção do runtime (independente de storage).
+  it("resolve __rnsi_boot__ para o boot real em dev", () => {
+    const wrapped = withNativeScope({});
+    const { context } = fakeContext();
+    const result = wrapped.resolver.resolveRequest(context, BOOT_MODULE, "ios");
+    expect(result.filePath).toBe(join(SHIM_DIR, "_boot.js"));
+  });
+
+  it("resolve __rnsi_boot__ para o stub vazio em produção (dev === false)", () => {
+    const wrapped = withNativeScope({});
+    const { context } = fakeContext({ dev: false });
+    const result = wrapped.resolver.resolveRequest(context, BOOT_MODULE, "ios");
+    expect(result.filePath).toBe(join(SHIM_DIR, "no-config.js"));
+  });
+
+  it("instala o wrapper do babelTransformerPath (injeta o boot no InitializeCore)", () => {
+    const wrapped = withNativeScope({
+      transformer: { babelTransformerPath: "/upstream/babel-transformer.js" },
+    });
+    expect(wrapped.transformer?.babelTransformerPath).toBe(
+      join(SHIM_DIR, "..", "babel-transformer.cjs"),
+    );
+    // O caminho original é preservado via env para o wrapper delegar.
+    expect(process.env.RNSI_UPSTREAM_BABEL_TRANSFORMER).toBe("/upstream/babel-transformer.js");
   });
 });

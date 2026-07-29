@@ -6,9 +6,11 @@ import { StorageRealtimeStatus } from "./StorageRealtimeStatus.tsx";
 
 export function Header() {
   const phase = useStudio((s) => s.phase);
+  const activeModule = useStudio((s) => s.activeModule);
   const devices = useStudio((s) => s.devices);
   const selectedDeviceId = useStudio((s) => s.selectedDeviceId);
   const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId) ?? null;
+  const isStorageModule = activeModule === "storage";
 
   return (
     <header className="flex h-11 items-center gap-3 border-b border-border bg-surface px-4">
@@ -27,25 +29,29 @@ export function Header() {
       </div>
 
       <div className="ml-auto flex min-w-0 items-center gap-2.5">
-        <div className="flex shrink-0 items-center gap-1.5" aria-label="Storage module actions">
-          <button
-            onClick={() => window.dispatchEvent(new Event("nativescope:open-global-search"))}
-            title="Search storage (Ctrl or Cmd K)"
-            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 text-[11px] text-text-muted transition-colors hover:bg-surface-hover hover:text-text"
-          >
-            <Search size={13} strokeWidth={1.5} />
-            <span>Search storage</span>
-            <kbd className="rounded border border-border bg-surface-sunken px-1 font-mono text-[9px] text-text-subtle">
-              Ctrl K
-            </kbd>
-          </button>
-          {phase === "connected" && (
-            <StorageRealtimeStatus enabled={selectedDevice?.storageReactQuerySync ?? null} />
-          )}
-          {phase === "connected" && <SnapshotTool />}
-        </div>
+        {isStorageModule && (
+          <>
+            <div className="flex shrink-0 items-center gap-1.5" aria-label="Storage module actions">
+              <button
+                onClick={() => window.dispatchEvent(new Event("nativescope:open-global-search"))}
+                title="Search storage (Ctrl or Cmd K)"
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-raised px-2 text-[11px] text-text-muted transition-colors hover:bg-surface-hover hover:text-text"
+              >
+                <Search size={13} strokeWidth={1.5} />
+                <span>Search storage</span>
+                <kbd className="rounded border border-border bg-surface-sunken px-1 font-mono text-[9px] text-text-subtle">
+                  Ctrl K
+                </kbd>
+              </button>
+              {phase === "connected" && (
+                <StorageRealtimeStatus enabled={selectedDevice?.storageReactQuerySync ?? null} />
+              )}
+              {phase === "connected" && <SnapshotTool />}
+            </div>
 
-        <div className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+            <div className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+          </>
+        )}
 
         <div className="flex min-w-0 items-center gap-2" aria-label="Device connection">
           {devices.length === 1 && (

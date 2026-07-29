@@ -225,6 +225,19 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("database.execute"),
     payload: z.object({ ...kvTarget, sql: z.string() }),
   }),
+  // Envelope genérico de módulo (L3): qualquer módulo além de storage (ex.:
+  // network) roteia comandos Studio→runtime por aqui, sobre a MESMA conexão,
+  // sem precisar adicionar um `type` próprio a esta união. O payload é do
+  // módulo — validado por ele, não aqui. Ver runtime onModuleCommand.
+  z.object({
+    ...commandBase,
+    type: z.literal("module.command"),
+    payload: z.object({
+      module: z.string().min(1),
+      command: z.string().min(1),
+      data: z.unknown().optional(),
+    }),
+  }),
 ]);
 
 export type CommandMessage = z.infer<typeof commandMessageSchema>;
@@ -391,6 +404,19 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
     payload: z.object({
       sessionId: z.string(),
       deviceId: z.string().optional(),
+    }),
+  }),
+  // Envelope genérico de módulo (L3): a contraparte do module.command para o
+  // caminho runtime→Studio. Um módulo (ex.: network) emite seus fatos por aqui,
+  // sobre a MESMA conexão, sem tocar no schema de storage. O bridge relaya como
+  // qualquer evento não-especial (carimba deviceId). Ver runtime sendModuleEvent.
+  z.object({
+    ...eventBase,
+    type: z.literal("module.event"),
+    payload: z.object({
+      module: z.string().min(1),
+      event: z.string().min(1),
+      data: z.unknown().optional(),
     }),
   }),
 ]);

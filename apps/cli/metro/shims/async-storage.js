@@ -14,10 +14,12 @@
 
 // Resolvido pelo anti-loop para o módulo REAL:
 const real = require("@react-native-async-storage/async-storage");
-const { getRuntime, rnsi } = require("./_bootstrap.js");
+const { getRuntime, rnsi, isModuleEnabled } = require("./_bootstrap.js");
 
 const AsyncStorage = real.default ?? real;
-const runtime = getRuntime();
+// Opt-in: só instrumenta se o módulo de storage estiver ligado no config (ou
+// no default legado, sem config). Desligado → passthrough transparente.
+const runtime = isModuleEnabled("storage") ? getRuntime() : null;
 
 if (runtime) {
   try {

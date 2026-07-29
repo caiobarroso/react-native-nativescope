@@ -1,0 +1,66 @@
+---
+title: Network
+description: Capture, inspect, analyze and replay HTTP and GraphQL traffic in the local NativeScope Studio.
+---
+
+The Network module records the `fetch` and `XMLHttpRequest` traffic your React Native app already
+makes. It adds no request client, proxy account or remote dashboard. The same local Studio that
+understands your app storage now understands the requests around it.
+
+<Callout title="The useful difference">
+  Network and Storage share context. When a response is followed by a storage change, NativeScope
+  can show the affected entry and open it directly in the Storage module.
+</Callout>
+
+## What you can do
+
+- Filter by URL, headers, body, method, status class and duration.
+- Read HTTP and GraphQL in one timeline; GraphQL operations are detected automatically.
+- Group repeated calls by endpoint.
+- Start a focused capture without deleting the requests already collected.
+- Inspect request data, response data and response headers separately.
+- Navigate JSON responses with the shared read-only visual viewer.
+- Replay a captured request with structured query, header and body editing.
+- Compare executions of the same endpoint.
+- Analyze volume, errors, p95 latency, transferred data and endpoint behavior in Insights.
+- Use optional sounds for every request, failures or selected endpoint rules.
+- Follow storage changes associated with a response.
+
+## How capture works
+
+NativeScope instruments the global `fetch` and `XMLHttpRequest` APIs during development. Your app
+keeps using its existing networking code. A guard prevents the classic React Native path from
+capturing a `fetch` twice when it is implemented through XHR.
+
+Capture is fail-open: instrumentation errors are contained and must never break the app request.
+Release builds resolve the original APIs without the NativeScope shim.
+
+## GraphQL, without another integration
+
+GraphQL over HTTP uses the same capture path. NativeScope recognizes standard POST envelopes,
+GraphQL GET parameters, persisted operations and batched payloads. Named queries and mutations are
+shown by operation instead of becoming a wall of identical `POST /graphql` rows.
+
+The request detail separates the document and variables. The response separates `data`, `errors`
+and `extensions`, including GraphQL errors returned with HTTP 200. No GraphQL client adapter,
+schema upload or extra config is required.
+
+WebSocket subscriptions are not captured yet; ordinary HTTP and GraphQL traffic can coexist in the
+same app and in the same Network timeline.
+
+## Start here
+
+Enable the module with one line in the root config:
+
+```ts
+modules: {
+  network: true,
+}
+```
+
+Continue to the [Quickstart](/docs/network/quickstart), then choose the workflow you need:
+
+- [Inspect HTTP and GraphQL requests](/docs/network/requests)
+- [Focus a capture and configure sounds](/docs/network/capture-controls)
+- [Understand the session with Network Insights](/docs/network/insights)
+- [Replay and compare requests](/docs/network/replay)

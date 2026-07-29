@@ -2,8 +2,6 @@ import type { LandingContent } from "@content/landing";
 import Image from "next/image";
 import { CheckCircle2, Github } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { HighlightedCode } from "@/components/ui/HighlightedCode";
-import { NpmLogo } from "@/components/ui/NpmLogo";
 
 /**
  * Primeira dobra. O comando de instalação é copiável de propósito — é a
@@ -31,22 +29,6 @@ export function Hero({ content }: { content: LandingContent["hero"] }) {
           >
             <Github size={16} aria-hidden /> {content.secondaryCta.label}
           </Button>
-        </div>
-
-        <div data-hero-install-row>
-          <div data-hero-install>
-            <span>$</span>
-            <HighlightedCode code={content.install} language="bash" />
-          </div>
-          <a
-            data-hero-npm
-            href="https://www.npmjs.com/package/react-native-nativescope"
-            target="_blank"
-            rel="noreferrer noopener"
-            aria-label="View react-native-nativescope on npm"
-          >
-            <NpmLogo size={17} /> npm
-          </a>
         </div>
 
         <ul data-hero-assurances>

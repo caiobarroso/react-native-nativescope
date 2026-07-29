@@ -71,11 +71,15 @@ function titleOf(slug: string): string {
 }
 
 export function getNeighbours(slug: string): DocNeighbours {
-  const index = docsOrder.indexOf(slug);
+  // Cada módulo tem seu próprio prev/next: os slugs são namespaced por módulo
+  // (storage/… e network/…), então o scopo é só o prefixo do slug atual.
+  const modulePrefix = slug.startsWith("network/") ? "network/" : "storage/";
+  const scopedOrder = docsOrder.filter((candidate) => candidate.startsWith(modulePrefix));
+  const index = scopedOrder.indexOf(slug);
   if (index === -1) return { previous: null, next: null };
 
-  const previousSlug = index > 0 ? docsOrder[index - 1] : undefined;
-  const nextSlug = index < docsOrder.length - 1 ? docsOrder[index + 1] : undefined;
+  const previousSlug = index > 0 ? scopedOrder[index - 1] : undefined;
+  const nextSlug = index < scopedOrder.length - 1 ? scopedOrder[index + 1] : undefined;
 
   return {
     previous: previousSlug ? { slug: previousSlug, title: titleOf(previousSlug) } : null,
@@ -90,8 +94,6 @@ export function getNeighbours(slug: string): DocNeighbours {
 export function assertContentIntegrity(): void {
   const missing = docsOrder.filter((slug) => !existsSync(join(DOCS_DIR, `${slug}.mdx`)));
   if (missing.length > 0) {
-    throw new Error(
-      `content: _meta.ts referencia páginas inexistentes: ${missing.join(", ")}`,
-    );
+    throw new Error(`content: _meta.ts referencia páginas inexistentes: ${missing.join(", ")}`);
   }
 }

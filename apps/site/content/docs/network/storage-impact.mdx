@@ -1,0 +1,31 @@
+---
+title: Storage impact
+description: Follow a response into the AsyncStorage, MMKV or SQLite data that changed immediately after it.
+---
+
+Network traffic is often only half the explanation. A successful response may populate a cache,
+replace a token or update a local queue. NativeScope correlates those nearby storage writes and
+shows them as **Storage impact**.
+
+## Open the changed value
+
+Select an impact chip to move directly to the exact provider, instance and key in the Storage
+module. SQLite impacts open the relevant database and table when that identity is available.
+
+The transition preserves your mental context: the request remains the origin of the investigation,
+and Storage becomes the next surface instead of a separate search.
+
+## What correlation means
+
+Impact is temporal evidence, not a distributed trace. NativeScope associates storage mutations that
+arrive in the short window after a response. It is intentionally described as “storage changes
+right after this response” rather than claiming causation the runtime cannot prove.
+
+## When no impact appears
+
+- The response may not write storage.
+- The write may occur outside the correlation window.
+- The provider may not be supported by the Storage module.
+- The request may have failed before the app handled its response.
+
+You can still search Storage directly or use a snapshot diff to inspect a wider change window.

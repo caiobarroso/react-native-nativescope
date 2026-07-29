@@ -1,8 +1,10 @@
 import { networkInterfaces } from "node:os";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { execFile, type ChildProcess } from "node:child_process";
 import { DEFAULT_PORT } from "@rnsi/protocol";
-import { detectProject } from "./detect.ts";
+import { detectProject, type DetectedProject } from "./detect.ts";
+import { runInit } from "./init.ts";
+import { MODULES, resolveEnabledModules } from "./modules-cli.ts";
 import { startLocalServer } from "./server.ts";
 import { startFakeRuntime } from "./fake-runtime.ts";
 import { ensureMetroConfig, spawnMetro } from "./metro-config.ts";
@@ -14,6 +16,7 @@ import {
 } from "./session-token.ts";
 import { createShutdown } from "./shutdown.ts";
 import { findUiDir } from "./ui-dir.ts";
+import { HELP_TEXT } from "./help.ts";
 
 const args = process.argv.slice(2);
 
@@ -28,7 +31,11 @@ function option(name: string): string | undefined {
 
 function openBrowser(url: string): void {
   const cmd =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "start"
+        : "xdg-open";
   execFile(cmd, [url], () => {
     /* se falhar, a URL já foi impressa */
   });
@@ -63,7 +70,63 @@ function watchAndroid(port: number): () => void {
   });
 }
 
+/**
+ * Estado de módulos no terminal. Foco: deixar EXTREMAMENTE claro o que o
+ * usuário deve fazer — sem quebrar quem já tem a lib e nunca criou config.
+ */
+function printModuleStatus(projectDir: string, project: DetectedProject): void {
+  const result = resolveEnabledModules(projectDir);
+  console.log("");
+
+  if (result.configPath) {
+    console.log(`Config: ${basename(result.configPath)}`);
+    if (result.unreadable) {
+      // .ts: a CLI não avalia; o gating real acontece em runtime.
+      console.log("Modules: resolved at runtime (TypeScript config).");
+      return;
+    }
+    const on = MODULES.filter((m) => result.enabled[m.key]);
+    if (on.length > 0) {
+      console.log("Modules enabled:");
+      for (const m of on) console.log(`  ✓ ${m.label}`);
+    } else {
+      console.log("No modules enabled in your config.");
+      console.log(
+        "  Turn some on: edit the config or run `npx nativescope init`.",
+      );
+    }
+    return;
+  }
+
+  // Sem config: comportamento de hoje preservado (storage on) + o que fazer.
+  if (project.providers.length > 0) {
+    console.log(
+      "⚠ No nativescope.config found — running with defaults (Storage on).",
+    );
+    console.log(
+      "  NativeScope is becoming modular and opt-in. To choose exactly",
+    );
+    console.log("  which modules you want (and silence this notice):");
+    console.log("");
+    console.log("      npx nativescope init");
+    console.log("");
+    console.log(
+      "  Nothing changes today. Explicit config will be required in a future major.",
+    );
+  } else {
+    console.log(
+      "No storage dependency detected and no nativescope.config found.",
+    );
+    console.log("  Get started:  npx nativescope init");
+  }
+}
+
 async function main(): Promise<void> {
+  if (flag("help") || args.includes("-h")) {
+    process.stdout.write(HELP_TEXT);
+    return;
+  }
+
   const port = Number(option("port") ?? DEFAULT_PORT);
   const projectDir = resolve(option("project") ?? process.cwd());
   // Estável por projeto: reiniciar a CLI não invalida a aba do Studio já aberta
@@ -87,7 +150,14 @@ async function main(): Promise<void> {
       ...(platform ? { platform } : {}),
       ...(deviceId ? { deviceId } : {}),
     });
-    console.log(`fake-runtime (${platform ?? "android"}) connecting to ws://127.0.0.1:${port}`);
+    console.log(
+      `fake-runtime (${platform ?? "android"}) connecting to ws://127.0.0.1:${port}`,
+    );
+    return;
+  }
+
+  if (args[0] === "init") {
+    await runInit(projectDir, { force: flag("force"), yes: flag("yes") });
     return;
   }
 
@@ -102,8 +172,12 @@ async function main(): Promise<void> {
     console.log("Detected in package.json:");
     for (const p of project.providers) console.log(`  ✓ ${p.label}`);
   } else {
-    console.log("No supported storage dependency found in package.json (MMKV, AsyncStorage, expo-sqlite).");
+    console.log(
+      "No supported storage dependency found in package.json (MMKV, AsyncStorage, expo-sqlite).",
+    );
   }
+
+  printModuleStatus(projectDir, project);
 
   const service = await startLocalServer({
     port,
@@ -114,7 +188,11 @@ async function main(): Promise<void> {
     host: lan ? "0.0.0.0" : "127.0.0.1",
   });
 
-  const session = writeSessionFile(projectDir, { port, token: sessionToken, lan });
+  const session = writeSessionFile(projectDir, {
+    port,
+    token: sessionToken,
+    lan,
+  });
   const stopAdbWatcher = watchAndroid(port);
 
   let metro: ChildProcess | null = null;
@@ -131,13 +209,16 @@ async function main(): Promise<void> {
       {
         name: "metro",
         run: () => {
-          if (metro && metro.exitCode === null && !metro.killed) metro.kill("SIGTERM");
+          if (metro && metro.exitCode === null && !metro.killed)
+            metro.kill("SIGTERM");
         },
       },
     ],
     exit: (code) => process.exit(code),
     onStepError: (name, error) =>
-      console.error(`shutdown: ${name} failed (${error instanceof Error ? error.message : String(error)})`),
+      console.error(
+        `shutdown: ${name} failed (${error instanceof Error ? error.message : String(error)})`,
+      ),
   });
 
   process.on("SIGINT", () => shutdown(0));
@@ -177,10 +258,16 @@ async function main(): Promise<void> {
   if (lan) {
     const ip = lanIp();
     console.log("");
-    console.log("LAN mode (--lan): a physical iPhone on the same Wi-Fi can connect.");
+    console.log(
+      "LAN mode (--lan): a physical iPhone on the same Wi-Fi can connect.",
+    );
     if (ip) console.log(`  The app reaches the service at ws://${ip}:${port}`);
-    console.log("  ⚠ Reachable on your local network, gated only by the session token — use on trusted networks only.");
-    console.log("  The token persists across runs (node_modules/.cache/rnsi/token); rotate it with --new-token.");
+    console.log(
+      "  ⚠ Reachable on your local network, gated only by the session token — use on trusted networks only.",
+    );
+    console.log(
+      "  The token persists across runs (node_modules/.cache/rnsi/token); rotate it with --new-token.",
+    );
     console.log("  (Android and the iOS Simulator keep using loopback.)");
   }
   console.log("");

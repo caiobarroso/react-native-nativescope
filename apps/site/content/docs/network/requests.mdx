@@ -1,0 +1,80 @@
+---
+title: Inspecting requests
+description: Search, group and inspect request, response and header data without losing the full payload.
+---
+
+## The request list
+
+The left pane is virtualized and newest-first. It stays responsive as the bounded session history
+grows. Use the toolbar to combine:
+
+- free-text search across URL, headers and body;
+- method filters: GET, POST, PUT, PATCH and DELETE;
+- status classes: 2xx, 3xx, 4xx and 5xx;
+- protocol and operation filters when GraphQL traffic is present;
+- duration ranges;
+- grouping by endpoint.
+
+Grouping is useful for polling, retries and repeated mutations. Expand an endpoint to inspect each
+execution independently.
+
+GraphQL calls stay in this same list. NativeScope replaces an unhelpful `POST /graphql` label with
+the operation name and a compact Query, Mutation or Batch type. Grouping follows the operation, so
+`GetViewer` and `UpdateViewer` never collapse into the same endpoint group.
+
+Read the [GraphQL guide](/docs/network/graphql) for detection, semantic errors and
+operation-aware replay.
+
+## Focus a new capture
+
+Select **New capture** before exercising a new code path. NativeScope keeps the existing history,
+hides it below a local marker and shows only the requests that arrive from that point forward.
+Nothing is deleted: use **Show earlier** on the marker whenever you need the previous context.
+
+The toolbar also lets you pause capture, clear the complete history and configure local request
+sounds. See [Capture controls & sounds](/docs/network/capture-controls) for the complete workflow.
+
+## Understand the session
+
+Open **Insights** when the question is larger than one request. It summarizes request volume,
+failures, p95 latency, transferred data and endpoint behavior across the complete history or only
+the current filters.
+
+Read [Network Insights](/docs/network/insights) for timeline analysis, endpoint normalization and
+drill-down.
+
+## Request detail
+
+The detail pane keeps four concerns separate:
+
+1. **Request** — URL, query, request headers and request body.
+2. **Response** — status, timing, size and the response body.
+3. **Response headers** — a dedicated key-value table for large header sets.
+4. **Storage impact** — storage changes correlated with this response, grouped by provider and
+   instance.
+
+JSON bodies use the NativeScope visual viewer in read-only mode. You can move through collections,
+search fields, filter structured values, switch to Tree or Raw, and copy data without exposing
+editing controls that cannot affect a captured response.
+
+For GraphQL, Request shows the formatted document and variables separately. Response offers
+dedicated Data, Errors, Extensions and Raw surfaces. A response with GraphQL errors remains HTTP
+200 when that is what the server returned, but receives an explicit semantic error marker and is
+included by the `err` filter.
+
+## Large bodies
+
+The list receives a bounded preview first. By default that preview is 32 KB. The runtime can retain
+the complete body up to 2 MB and sends it only when the selected view asks for it.
+
+This distinction keeps request capture proportional to what you inspect instead of the total volume
+of the session.
+
+## Storage impact
+
+When storage changes immediately after a response, the request summary shows a live **Storage
+impact** count. Open it to inspect the affected entries in a dedicated surface without reducing the
+space available to request and response bodies. Select an entry to open that exact provider,
+instance and key in Storage.
+
+Read [Storage impact](/docs/network/storage-impact) for the timing model and its limits.

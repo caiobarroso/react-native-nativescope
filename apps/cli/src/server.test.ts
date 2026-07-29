@@ -158,6 +158,76 @@ describe("local server", () => {
     runtime.close();
   });
 
+  it("relaya module.event (envelope L3) do runtime para o studio, carimbando o device", async () => {
+    await startServer();
+
+    const studio = await connect();
+    studio.send(serializeMessage(hello("studio")));
+    await nextMessage(studio); // ack
+
+    const runtime = await connect();
+    runtime.send(serializeMessage(hello("runtime", TOKEN, "dev-net")));
+    await nextMessage(runtime); // ack
+    await nextMessage(studio); // session.connected
+
+    const moduleEvent: AnyMessage = {
+      kind: "event",
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp: Date.now(),
+      type: "module.event",
+      payload: { module: "network", event: "request", data: { url: "https://x" } },
+    };
+    const received = nextMessage(studio);
+    runtime.send(serializeMessage(moduleEvent));
+    const relayed = await received;
+
+    expect(relayed.kind).toBe("event");
+    if (relayed.kind === "event" && relayed.type === "module.event") {
+      expect(relayed.payload.module).toBe("network");
+      expect(relayed.payload.event).toBe("request");
+      expect(relayed.deviceId).toBe("dev-net"); // carimbado no relay, como qualquer evento
+    }
+
+    studio.close();
+    runtime.close();
+  });
+
+  it("roteia module.command (envelope L3) studio→runtime pelo bridge", async () => {
+    await startServer();
+
+    const studio = await connect();
+    studio.send(serializeMessage(hello("studio")));
+    await nextMessage(studio); // ack
+
+    const runtime = await connect();
+    runtime.send(serializeMessage(hello("runtime", TOKEN, "dev-net")));
+    await nextMessage(runtime); // ack
+    await nextMessage(studio); // session.connected
+
+    const cmd: AnyMessage = {
+      kind: "command",
+      protocolVersion: PROTOCOL_VERSION,
+      requestId: "m1",
+      deviceId: "dev-net",
+      type: "module.command",
+      payload: { module: "network", command: "replay", data: { id: 3 } },
+    };
+    const receivedByRuntime = nextMessage(runtime);
+    studio.send(serializeMessage(cmd));
+    const forwarded = await receivedByRuntime;
+
+    expect(forwarded).toMatchObject({
+      type: "module.command",
+      requestId: expect.stringMatching(/^bridge-/),
+    });
+    if (forwarded.kind === "command" && forwarded.type === "module.command") {
+      expect(forwarded.payload).toEqual({ module: "network", command: "replay", data: { id: 3 } });
+    }
+
+    studio.close();
+    runtime.close();
+  });
+
   it("mantém múltiplos studios conectados e roteia respostas para a aba correta", async () => {
     await startServer();
 

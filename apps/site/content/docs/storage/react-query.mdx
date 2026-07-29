@@ -89,11 +89,11 @@ round trip.
 If automatic discovery cannot reach your `QueryClient` — because it lives somewhere the shim cannot
 find it — install the bridge imperatively with `installNativeScopeDevtools`, passing the client
 directly and guarding it with `__DEV__`. The full example is in
-[`installNativeScopeDevtools`](/docs/api#installing-imperatively).
+[`installNativeScopeDevtools`](/docs/storage/api#installing-imperatively).
 
 ## Other cache layers
 
 The bridge ships with a React Query integration because it is the most common case, but the
 underlying primitive is generic. `subscribeNativeScope` gives you every change with a filter, which
 is enough to invalidate a Zustand store, an Apollo cache, or anything else. See the
-[App API](/docs/api).
+[App API](/docs/storage/api).
