@@ -104,9 +104,23 @@ async function startSession(extraArgs) {
 
 const stopSession = (child) =>
   new Promise((done) => {
-    child.once("exit", done);
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      done();
+    };
+    child.once("exit", finish);
     child.kill();
-    setTimeout(done, 3000);
+    // SIGTERM às vezes fica preso no shutdown do CLI (ele fecha o WS enquanto o
+    // browser ainda está conectado). Se não morreu em 3s, mata de vez — senão o
+    // handle do filho segura o event loop do pai e o processo nunca sai.
+    setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+      finish();
+    }, 3000);
   });
 
 const SITE = "http://127.0.0.1:4783";
@@ -225,6 +239,15 @@ if (needsPlain) {
         .getByPlaceholder(/Search url, headers, body/i)
         .waitFor({ timeout: 30_000 });
       await page.waitForTimeout(7000);
+
+      // As telas de network saem SEM a sidebar de módulos — o foco é o inspetor,
+      // não a navegação. Oculto o <aside> (a sidebar é o único, logo antes do
+      // <main>) só aqui; o page.goto dos próximos shots (storage/SQL) recarrega o
+      // documento e a traz de volta, então o escopo é automático. Injeto DEPOIS
+      // de clicar em "Requests" porque esse botão mora dentro da própria sidebar.
+      await page.addStyleTag({
+        content: "aside:has(+ main){display:none !important}",
+      });
 
       if (want("network-inspector-light")) {
         await page
@@ -405,6 +428,9 @@ if (want("cli-boot-light")) {
 
 await browser.close();
 console.log(`\ndone — ${OUT}`);
+// Encerramento explícito: mesmo com stopSession, um handle solto (browser/child)
+// pode segurar o event loop. Como aqui todo o trabalho já terminou, saímos.
+process.exit(0);
 
 // -------------------------------------------------------------------------
 
