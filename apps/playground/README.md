@@ -4,12 +4,13 @@ A tiny Expo app that exercises the real NativeScope stack end to end — the
 Metro resolver, the injection seam, the shims, and the live Studio. Use it to
 verify changes on a real device (not the `--fake` simulated runtime).
 
-It has three bottom tabs, all wired with React Query so edits from the Studio
-show up live on screen:
+It has four bottom tabs. The storage screens are wired with React Query so
+edits from the Studio show up live on screen:
 
 - 🦁 **Zoo** — MMKV (nested arrays, high volume)
 - 🧸 **Toys** — AsyncStorage (a small CRUD)
 - 🏆 **Scores** — SQLite (a leaderboard, high volume)
+- 🌐 **Request** — Network, divided into HTTP and GraphQL scenarios
 
 The playground is intentionally **excluded from the pnpm workspace** and installs
 its own `node_modules` with `react-native-nativescope` linked as `file:../cli`.
@@ -68,13 +69,53 @@ http://127.0.0.1:4782/?token=<printed-token>
   Config: nativescope.config.js
   Modules enabled:
     ✓ Storage inspector
+    ✓ Network inspector
   ```
 
-- The app boots with the three tabs.
+- The app boots with the four tabs.
 - The Studio shows all three storages (MMKV, AsyncStorage, SQLite) — ideally
   together, not one-at-a-time.
+- The Studio shows **Network → Requests** and records both HTTP and GraphQL in
+  the same timeline.
 - Edit a value in the Studio → the app flashes the "Storage updated" toast and
   the affected screen refreshes (React Query invalidation).
+
+## Test the Network module
+
+Open the **Request** tab in the app. Its segmented control keeps HTTP and
+GraphQL scenarios separate in the playground while NativeScope displays both
+protocols in one Network timeline.
+
+### HTTP
+
+The HTTP side uses public HTTPS endpoints and covers:
+
+| Action           | What it validates                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| **Sign in**      | POST body, JSON response and Storage impact on AsyncStorage `auth.token` and MMKV `user` |
+| **Load profile** | Authorization header, authenticated GET and Storage impact on MMKV `profile`             |
+| **Browse ×3**    | Three concurrent requests to the same endpoint and request grouping                      |
+| **Trigger 404**  | HTTP error status, status filters and error styling                                      |
+| **Plain text**   | A complete non-JSON response with safe line wrapping                                     |
+
+Run **Sign in** before **Load profile** so the authenticated request has a
+current token.
+
+### GraphQL
+
+The GraphQL side uses GraphQLZero and covers:
+
+| Action            | What it validates                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| **Get user**      | Named query, variables, nested data and Storage impact on MMKV `graphql.user`         |
+| **Get posts**     | Named query with nested input variables and collection data                           |
+| **Create post**   | Mutation, variables, replay editing and Storage impact on MMKV `graphql.lastMutation` |
+| **GraphQL error** | A semantic GraphQL error returned over HTTP 200                                       |
+
+In the Studio, verify that GraphQL rows use operation names instead of becoming
+identical `POST /graphql` entries. Open a request to inspect the formatted
+operation, variables, data and errors separately. HTTP and GraphQL requests
+should also appear together in Network Insights.
 
 ## Quick check without a native build
 
@@ -91,6 +132,21 @@ use the real simulator flow above.
 
 ## Config
 
-`nativescope.config.js` enables the in-app indicator (the coral "Storage
-updated" toast). The React Query bridge is installed in `App.js` via
-`installNativeScopeDevtools`. Both are development-only.
+`nativescope.config.js` enables both modules:
+
+```js
+module.exports = {
+  modules: {
+    storage: {
+      indicator: true,
+      reactQuery: true,
+    },
+    network: true,
+  },
+};
+```
+
+Storage uses the in-app indicator (the coral "Storage updated" toast) and the
+React Query bridge installed by `installNativeScopeDevtools` in `App.js`.
+Network instruments the global development `fetch` and `XMLHttpRequest`
+surfaces. All of this is development-only.
