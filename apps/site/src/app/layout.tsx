@@ -44,7 +44,7 @@ export const metadata: Metadata = {
     url: "/",
     images: [
       {
-        url: "/og.png",
+        url: "/og",
         width: 1200,
         height: 630,
         alt: "NativeScope local React Native debugging Studio",
@@ -56,7 +56,7 @@ export const metadata: Metadata = {
     title: "NativeScope — a local debugging environment for React Native",
     description:
       "One local Studio for React Native debugging. Storage and HTTP + GraphQL Network modules are live now.",
-    images: ["/og.png"],
+    images: ["/og"],
   },
 };
 
