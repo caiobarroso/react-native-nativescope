@@ -38,6 +38,14 @@ import { useNetwork } from "./network-store.ts";
  */
 
 const COMMAND_TIMEOUT_MS = 4000;
+/**
+ * Operações destrutivas em lote são iniciadas pelo usuário e legitimamente
+ * levam mais que os 4s do caso comum: esvaziar uma tabela de milhões de linhas
+ * é rápido no SQLite, mas não instantâneo num telefone. Morrer por timeout aqui
+ * seria pior que esperar — o DELETE já foi enviado e vai completar de qualquer
+ * forma, e o Studio ficaria mostrando dado que não existe mais.
+ */
+const BULK_COMMAND_TIMEOUT_MS = 60_000;
 
 type Pending = {
   resolve: (result: unknown) => void;
@@ -501,7 +509,10 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
   }
 }
 
-function sendCommand(partial: Pick<CommandMessage, "type" | "payload">): Promise<unknown> {
+function sendCommand(
+  partial: Pick<CommandMessage, "type" | "payload">,
+  options?: { timeoutMs?: number },
+): Promise<unknown> {
   if (!transport?.isConnected()) {
     return Promise.reject(new Error("the local service is not connected"));
   }
@@ -510,7 +521,9 @@ function sendCommand(partial: Pick<CommandMessage, "type" | "payload">): Promise
     const timer = setTimeout(() => {
       pending.delete(requestId);
       reject(new Error("the app did not respond in time"));
-    }, COMMAND_TIMEOUT_MS);
+      // Operações em lote levam legitimamente mais que os 4s do caso comum —
+      // esvaziar uma tabela de milhões de linhas é rápido, mas não instantâneo.
+    }, options?.timeoutMs ?? COMMAND_TIMEOUT_MS);
     pending.set(requestId, { resolve, reject, timer });
     // Roteamento stateless: todo comando carrega o device em foco. Capturado no
     // disparo (não na resolução) — trocar de device no meio não desvia o
@@ -1098,15 +1111,60 @@ export async function deleteRow(
   });
 }
 
+/**
+ * Exclusão em lote das linhas selecionadas: UM comando, transacionado no
+ * device. Antes era um comando por linha — 20ms cada, com o timeout individual
+ * de cada um e nenhum rollback se falhasse no meio.
+ */
+export async function deleteRows(
+  providerId: string,
+  instanceId: string,
+  table: string,
+  refs: RowRef[],
+): Promise<{ rowsAffected: number }> {
+  if (refs.length === 0) return { rowsAffected: 0 };
+  const result = await sendCommand(
+    {
+      type: "database.deleteRows",
+      payload: { providerId, instanceId, table, refs },
+    },
+    { timeoutMs: BULK_COMMAND_TIMEOUT_MS },
+  );
+  return result as { rowsAffected: number };
+}
+
+/**
+ * Esvazia a tabela inteira com um único DELETE no device. Irreversível — não
+ * existe snapshot de milhões de linhas para desfazer.
+ */
+export async function deleteAllRows(
+  providerId: string,
+  instanceId: string,
+  table: string,
+): Promise<{ rowsAffected: number }> {
+  const result = await sendCommand(
+    {
+      type: "database.deleteAll",
+      payload: { providerId, instanceId, table },
+    },
+    { timeoutMs: BULK_COMMAND_TIMEOUT_MS },
+  );
+  return result as { rowsAffected: number };
+}
+
 export async function executeSql(
   providerId: string,
   instanceId: string,
   sql: string,
 ): Promise<ExecuteResult> {
-  const result = await sendCommand({
-    type: "database.execute",
-    payload: { providerId, instanceId, sql },
-  });
+  // SQL arbitrário do usuário: um DELETE ou um scan grande passa dos 4s comuns.
+  const result = await sendCommand(
+    {
+      type: "database.execute",
+      payload: { providerId, instanceId, sql },
+    },
+    { timeoutMs: BULK_COMMAND_TIMEOUT_MS },
+  );
   const parsed = databaseExecuteResultSchema.safeParse(result);
   if (!parsed.success) throw new Error("invalid runtime response");
   return parsed.data.result;

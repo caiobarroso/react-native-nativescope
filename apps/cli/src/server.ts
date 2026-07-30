@@ -61,6 +61,21 @@ interface Session {
 }
 
 const COMMAND_ROUTE_TTL_MS = 10_000;
+/**
+ * Comandos que legitimamente demoram: esvaziar uma tabela de milhões de linhas,
+ * apagar um lote grande, ou qualquer SQL que o usuário digite no console. Com o
+ * TTL comum, o bridge descartava a rota antes da resposta chegar e o Studio
+ * culpava o app por "não responder" — quando a operação tinha completado.
+ *
+ * Precisa ser MAIOR que o timeout do lado do Studio, para que quem desista
+ * primeiro seja ele, com a mensagem dele.
+ */
+const SLOW_COMMAND_ROUTE_TTL_MS = 70_000;
+const SLOW_COMMAND_TYPES = new Set([
+  "database.deleteRows",
+  "database.deleteAll",
+  "database.execute",
+]);
 const STREAM_ROUTE_TTL_MS = 10 * 60_000;
 /**
  * Intervalo do ping de liveness. Socket sem pong nem tráfego entre dois ticks
@@ -449,7 +464,12 @@ export function startLocalServer(options: LocalServerOptions) {
           studio: session,
           studioRequestId: message.requestId,
           deviceId: target.deviceId,
-          timer: setTimeout(() => deleteCommandRoute(bridgeRequestId), COMMAND_ROUTE_TTL_MS),
+          timer: setTimeout(
+            () => deleteCommandRoute(bridgeRequestId),
+            SLOW_COMMAND_TYPES.has(message.type)
+              ? SLOW_COMMAND_ROUTE_TTL_MS
+              : COMMAND_ROUTE_TTL_MS,
+          ),
         });
         sendTo(target, { ...outbound, requestId: bridgeRequestId });
       } else if (role === "runtime" && message.kind === "command-result") {

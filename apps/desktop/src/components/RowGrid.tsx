@@ -6,6 +6,7 @@ import {
   ArrowUpDown,
   Braces,
   Download,
+  Eraser,
   Plus,
   RefreshCw,
   Table2,
@@ -38,7 +39,9 @@ import {
 import type { CellValue, Row, RowRef, TableSchema } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
 import {
+  deleteAllRows,
   deleteRow,
+  deleteRows,
   exportInstance,
   getFullCell,
   insertRow,
@@ -51,6 +54,12 @@ import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { JsonWorkspace } from "./ValueEditor.tsx";
 
 const PAGE = 50;
+/**
+ * Teto do undo de exclusão. O undo re-insere linha a linha e guarda as células
+ * em memória — acima disso ele custaria mais que a própria exclusão, então é
+ * mais honesto oferecer nada do que oferecer algo que trava a UI.
+ */
+const UNDO_ROW_LIMIT = 200;
 const EMPTY_TABS: string[] = [];
 const SqlConsole = lazy(() =>
   import("./SqlConsole.tsx").then((module) => ({ default: module.SqlConsole })),
@@ -444,6 +453,8 @@ export function RowGrid() {
   const [loading, setLoading] = useState(false);
   const [deletingRows, setDeletingRows] = useState(false);
   const [deleteRowsConfirmOpen, setDeleteRowsConfirmOpen] = useState(false);
+  /** Confirmação forte do "empty table": guarda o que o usuário digitou. */
+  const [deleteAllConfirm, setDeleteAllConfirm] = useState<{ typed: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ ref: RowRef; column: string; draft: string } | null>(
     null,
@@ -1131,27 +1142,37 @@ export function RowGrid() {
 
   async function deleteSelectedRows(): Promise<void> {
     if (!selection || !selectedTable || selectedVisibleRows.length === 0) return;
+    const refs = selectedVisibleRows.map((row) => row.ref).filter((ref): ref is RowRef => !!ref);
+    if (refs.length === 0) return;
     const deletedRows = selectedVisibleRows.map((row) => ({ cells: row.cells }));
-    // Linhas com células truncadas: o undo re-inseriria dados cortados.
-    const undoSafe = selectedVisibleRows.every(
-      (row) => (row.truncatedColumns?.length ?? 0) === 0,
-    );
+    // O undo re-insere linha a linha, então só faz sentido em seleções pequenas.
+    // Em milhares de linhas ele levaria mais que a própria exclusão e ainda
+    // guardaria tudo em memória. Células truncadas também matam o undo: ele
+    // re-inseriria dados cortados.
+    const undoSafe =
+      deletedRows.length <= UNDO_ROW_LIMIT &&
+      selectedVisibleRows.every((row) => (row.truncatedColumns?.length ?? 0) === 0);
     beginLoad();
     setDeletingRows(true);
     setError(null);
     try {
-      for (const row of selectedVisibleRows) {
-        if (row.ref) {
-          await deleteRow(selection.providerId, selection.instanceId, selectedTable, row.ref);
-        }
-      }
+      // UM comando, transacionado no device — não um round-trip por linha.
+      const { rowsAffected } = await deleteRows(
+        selection.providerId,
+        selection.instanceId,
+        selectedTable,
+        refs,
+      );
       setSelectedRows(new Set());
       setDeleteRowsConfirmOpen(false);
       await refreshVisibleWindow();
+      const undoNote = undoSafe
+        ? ""
+        : deletedRows.length > UNDO_ROW_LIMIT
+          ? " (undo unavailable: too many rows)"
+          : " (undo unavailable: large cell was truncated)";
       showToast({
-        message: `${selectedTable}: ${deletedRows.length} row${deletedRows.length > 1 ? "s" : ""} deleted${
-          undoSafe ? "" : " (undo unavailable: large cell was truncated)"
-        }`,
+        message: `${selectedTable}: ${rowsAffected} row${rowsAffected === 1 ? "" : "s"} deleted${undoNote}`,
         undo: undoSafe
           ? async () => {
               for (const row of deletedRows) {
@@ -1160,6 +1181,39 @@ export function RowGrid() {
               await refreshVisibleWindow();
             }
           : undefined,
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setDeletingRows(false);
+      endLoad();
+    }
+  }
+
+  /**
+   * Esvazia a tabela inteira: um `DELETE FROM` no device, que é o caminho da
+   * truncate optimization do SQLite. É a diferença entre milissegundos e horas
+   * numa tabela de milhões de linhas — e é irreversível, porque não existe
+   * snapshot de milhões de linhas para desfazer.
+   */
+  async function deleteEntireTable(): Promise<void> {
+    if (!selection || !selectedTable) return;
+    beginLoad();
+    setDeletingRows(true);
+    setError(null);
+    try {
+      const { rowsAffected } = await deleteAllRows(
+        selection.providerId,
+        selection.instanceId,
+        selectedTable,
+      );
+      setSelectedRows(new Set());
+      setDeleteAllConfirm(null);
+      await refreshVisibleWindow();
+      showToast({
+        message: `${selectedTable}: emptied (${rowsAffected.toLocaleString()} row${
+          rowsAffected === 1 ? "" : "s"
+        } deleted, cannot be undone)`,
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -1347,6 +1401,20 @@ export function RowGrid() {
         >
           <RefreshCw size={14} strokeWidth={1.5} />
         </button>
+        {!readOnly && (
+          <button
+            onClick={() => setDeleteAllConfirm({ typed: "" })}
+            disabled={loading || total === 0}
+            title={
+              total === 0
+                ? "Table is already empty"
+                : "Empty this table with a single on-device DELETE"
+            }
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-deleted-wash hover:text-deleted disabled:opacity-40"
+          >
+            <Eraser size={14} strokeWidth={1.5} />
+          </button>
+        )}
         <button
           onClick={() => void exportTable()}
           disabled={exporting !== null}
@@ -1556,14 +1624,71 @@ export function RowGrid() {
             onCancel={() => setDeleteRowsConfirmOpen(false)}
             onConfirm={() => void deleteSelectedRows()}
             detail={
-              <div className="rounded-md border border-border bg-surface-sunken px-2.5 py-2 text-[12px] text-text">
-                <span className="font-mono font-semibold">{selectedTable}</span>
-                <span className="text-text-muted">
-                  {" "}
-                  · {selectedVisibleRows.length} row
-                  {selectedVisibleRows.length > 1 ? "s" : ""}
-                </span>
-              </div>
+              <>
+                <div className="rounded-md border border-border bg-surface-sunken px-2.5 py-2 text-[12px] text-text">
+                  <span className="font-mono font-semibold">{selectedTable}</span>
+                  <span className="text-text-muted">
+                    {" "}
+                    · {selectedVisibleRows.length} row
+                    {selectedVisibleRows.length > 1 ? "s" : ""}
+                  </span>
+                </div>
+                {/* A seleção só alcança as linhas carregadas na janela. Sem
+                    dizer isso, "select all" numa tabela grande passa a
+                    impressão de ter limpado tudo. */}
+                {total > selectedVisibleRows.length && (
+                  <p className="text-[12px] leading-5 text-text-muted">
+                    Only the selected rows are affected. This table has{" "}
+                    <span className="font-mono">{total.toLocaleString()}</span> rows in total — use
+                    the eraser button in the toolbar to empty it in one operation.
+                  </p>
+                )}
+              </>
+            }
+          />
+        )}
+        {deleteAllConfirm && selectedTable && (
+          <ConfirmDialog
+            title="Empty this table?"
+            description="Every row is deleted with a single statement on the device. This cannot be undone — there is no snapshot to restore."
+            loading={deletingRows}
+            confirmLabel="Empty table"
+            loadingLabel="Emptying..."
+            confirmDisabled={deleteAllConfirm.typed.trim() !== selectedTable}
+            onCancel={() => setDeleteAllConfirm(null)}
+            onConfirm={() => void deleteEntireTable()}
+            detail={
+              <>
+                <div className="rounded-md border border-deleted/30 bg-deleted-wash px-2.5 py-2 text-[12px] text-text">
+                  <span className="font-mono font-semibold">{selectedTable}</span>
+                  <span className="text-text-muted">
+                    {" "}
+                    · {totalIsEstimate ? "≈ " : ""}
+                    {total.toLocaleString()} row{total === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <label className="block text-[12px] text-text-muted">
+                  Type <span className="font-mono text-text">{selectedTable}</span> to confirm:
+                  <input
+                    autoFocus
+                    value={deleteAllConfirm.typed}
+                    onChange={(event) => setDeleteAllConfirm({ typed: event.target.value })}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === "Enter" &&
+                        deleteAllConfirm.typed.trim() === selectedTable &&
+                        !deletingRows
+                      ) {
+                        void deleteEntireTable();
+                      }
+                    }}
+                    placeholder={selectedTable}
+                    spellCheck={false}
+                    autoComplete="off"
+                    className="mt-1.5 h-8 w-full rounded-md border border-border bg-surface px-2.5 font-mono text-[12px] outline-none placeholder:text-text-subtle focus:border-deleted"
+                  />
+                </label>
+              </>
             }
           />
         )}

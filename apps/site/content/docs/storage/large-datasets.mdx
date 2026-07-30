@@ -54,6 +54,30 @@ Bursts of writes are coalesced with a leading-and-trailing window, so a loop wri
 thousand times a second produces a steady trickle of events carrying counts, not a thousand
 renders. If the pending queue ever hits its cap, it flushes immediately rather than growing.
 
+## Deleting at scale
+
+Deletion never costs one round-trip per row.
+
+**Selected rows** go out as a single command and run inside a transaction on the device, chunked to
+stay under SQLite's variable limit. Deleting 1,200 selected rows is 3 statements, not 1,200 commands.
+Because it is one transaction, a failure part-way through rolls back — you never end up with half a
+deletion.
+
+**Emptying a table** is a single `DELETE FROM` with no `WHERE`, which is the form where SQLite applies
+its *truncate optimization* and discards pages instead of walking rows. In the synthetic dataset,
+100,001 rows are removed in under a second, and the cost barely moves with row count. The eraser
+button in the table toolbar does this; it asks you to type the table name first, and it cannot be
+undone — there is no snapshot of a million rows to restore.
+
+<Callout kind="note">
+Selecting rows only ever selects the rows loaded in the current window, never the whole table. When a
+table holds more rows than are loaded, the delete confirmation says so and points at the eraser
+button — so "select all" can never be mistaken for "empty the table".
+</Callout>
+
+Undo is offered for deletions up to 200 rows. Above that it would re-insert row by row and hold every
+cell in memory, so it is declined explicitly rather than offered and then stalling.
+
 ## The guarantee about completeness
 
 Nothing above hides data from you. Every truncation is announced, sized, and has a path to the

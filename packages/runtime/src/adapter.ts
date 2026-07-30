@@ -129,6 +129,17 @@ export interface DatabaseAdapter extends ProviderAdapter {
     values: Record<string, CellValue>,
   ): Promise<{ ref: RowRef | null }>;
   delete(instanceId: string, table: string, ref: RowRef): Promise<void>;
+  /**
+   * Exclusão em lote, atômica. Um round-trip (ou poucos, se o número de refs
+   * passar do limite de variáveis do SQLite) em vez de um por linha, e tudo
+   * dentro de uma transação — ou apaga todas, ou nenhuma.
+   */
+  deleteRows(instanceId: string, table: string, refs: RowRef[]): Promise<{ rowsAffected: number }>;
+  /**
+   * Esvazia a tabela com um único `DELETE FROM`, pegando a truncate
+   * optimization do SQLite. Irreversível.
+   */
+  deleteAll(instanceId: string, table: string): Promise<{ rowsAffected: number }>;
   execute(instanceId: string, sql: string): Promise<ExecuteResult>;
   subscribe(instanceId: string, listener: (change: DatabaseChange) => void): () => void;
 }

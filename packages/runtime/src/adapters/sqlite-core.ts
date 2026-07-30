@@ -349,6 +349,122 @@ export function createSqliteAdapter(identity: {
     else t.countCache.delete(table);
   }
 
+  /**
+   * Cala os eventos do hook nativo desta tabela por um tempo.
+   *
+   * Necessário para lote: apagar N linhas dispara N eventos no hook, e o eco de
+   * uso único (`pendingStudioWrites`) atribuiria só o PRIMEIRO ao studio — os
+   * outros N-1 chegariam como se o app tivesse mexido. A chave `table:*` é a
+   * mesma que o emitOnce já consulta, então registrar aqui suprime a tabela
+   * inteira na janela e nós emitimos UM evento autoritativo no lugar.
+   */
+  function suppressTableEvents(t: Tracked, table: string, ms: number): void {
+    t.recentEvents.set(`${table}:*`, Date.now() + ms);
+  }
+
+  function releaseTableEvents(t: Tracked, table: string): void {
+    t.recentEvents.delete(`${table}:*`);
+  }
+
+  /**
+   * Teto conservador de variáveis por statement. O SQLITE_MAX_VARIABLE_NUMBER
+   * é 999 nas builds antigas e 32766 desde a 3.32 — 500 passa em qualquer uma
+   * sem precisar detectar versão.
+   */
+  const MAX_BULK_PARAMS = 500;
+
+  interface BulkStatement {
+    sql: string;
+    params: Array<string | number | null>;
+  }
+
+  /**
+   * Roda os statements do lote numa transação NOSSA quando possível: ou apaga
+   * todas as linhas, ou nenhuma. Sem isso, um erro no meio (ou um timeout)
+   * deixaria a exclusão pela metade — que é exatamente o que acontecia quando o
+   * Studio apagava linha a linha.
+   */
+  async function runInTransaction(t: Tracked, statements: BulkStatement[]): Promise<number> {
+    let owned = false;
+    try {
+      await t.db.runAsync("BEGIN IMMEDIATE");
+      owned = true;
+    } catch {
+      // Já estamos dentro de uma transação (do app, ou de um ORM): seguimos sem
+      // abrir a nossa, e a atomicidade fica sendo a de quem abriu.
+    }
+    let affected = 0;
+    try {
+      for (const statement of statements) {
+        const result = await t.db.runAsync(statement.sql, statement.params);
+        affected += Number(result.changes ?? 0);
+      }
+      if (owned) await t.db.runAsync("COMMIT");
+    } catch (error) {
+      if (owned) {
+        try {
+          await t.db.runAsync("ROLLBACK");
+        } catch {
+          /* o driver pode já ter revertido sozinho */
+        }
+      }
+      throw error;
+    }
+    return affected;
+  }
+
+  /** `DELETE ... WHERE rowid IN (…)`, em blocos que respeitam o teto de variáveis. */
+  function rowidStatements(table: string, rowids: number[]): BulkStatement[] {
+    const statements: BulkStatement[] = [];
+    for (let i = 0; i < rowids.length; i += MAX_BULK_PARAMS) {
+      const chunk = rowids.slice(i, i + MAX_BULK_PARAMS);
+      statements.push({
+        sql: `DELETE FROM ${quoteIdent(table)} WHERE rowid IN (${chunk.map(() => "?").join(", ")})`,
+        params: chunk,
+      });
+    }
+    return statements;
+  }
+
+  /**
+   * `DELETE ... WHERE (a, b) IN ((?,?), (?,?))` — row values, suportados pelo
+   * SQLite desde a 3.15. A ordem das colunas vem do schema, não das chaves do
+   * objeto, senão dois refs poderiam gerar tuplas em ordens diferentes.
+   */
+  function pkStatements(
+    table: string,
+    pkColumns: string[],
+    refs: Array<Record<string, CellValue>>,
+  ): BulkStatement[] {
+    if (pkColumns.length === 0) {
+      throw new Error(`table ${table} has no primary key to delete by`);
+    }
+    const perRef = pkColumns.length;
+    const maxRefs = Math.max(1, Math.floor(MAX_BULK_PARAMS / perRef));
+    const columnList = pkColumns.map(quoteIdent).join(", ");
+    const tuple = `(${pkColumns.map(() => "?").join(", ")})`;
+    const statements: BulkStatement[] = [];
+    for (let i = 0; i < refs.length; i += maxRefs) {
+      const chunk = refs.slice(i, i + maxRefs);
+      const params: Array<string | number | null> = [];
+      for (const pk of chunk) {
+        for (const column of pkColumns) {
+          if (!(column in pk)) {
+            throw new Error(`primary-key reference is missing column "${column}"`);
+          }
+          params.push(toParam(pk[column] ?? null));
+        }
+      }
+      statements.push({
+        sql:
+          `DELETE FROM ${quoteIdent(table)} WHERE (${columnList}) IN ` +
+          `(${chunk.map(() => tuple).join(", ")})`,
+        params,
+      });
+    }
+    return statements;
+  }
+
   function refToWhere(ref: RowRef): { clause: string; params: Array<string | number | null> } {
     if ("rowid" in ref) return { clause: "rowid = ?", params: [ref.rowid] };
     const columns = Object.keys(ref.pk);
@@ -699,6 +815,63 @@ export function createSqliteAdapter(identity: {
         t.pendingStudioWrites.delete(table);
         throw error;
       }
+    },
+
+    async deleteRows(instanceId, table, refs) {
+      const t = get(instanceId);
+      if (refs.length === 0) return { rowsAffected: 0 };
+
+      const rowids: number[] = [];
+      const pks: Array<Record<string, CellValue>> = [];
+      for (const ref of refs) {
+        if ("rowid" in ref) rowids.push(ref.rowid);
+        else pks.push(ref.pk);
+      }
+
+      const statements: BulkStatement[] = rowidStatements(table, rowids);
+      if (pks.length > 0) {
+        const { pkColumns } = await tableInfo(t, table);
+        statements.push(...pkStatements(table, pkColumns, pks));
+      }
+
+      invalidateCount(t, table);
+      // Antes de rodar: o hook nativo vai disparar uma vez por linha.
+      suppressTableEvents(t, table, ECHO_TTL_MS);
+      let rowsAffected: number;
+      try {
+        rowsAffected = await runInTransaction(t, statements);
+      } catch (error) {
+        // Falhou e reverteu: não engolir os eventos legítimos do app.
+        releaseTableEvents(t, table);
+        throw error;
+      }
+      // Renova a janela para os eventos que o hook ainda entregar em atraso.
+      suppressTableEvents(t, table, RECENT_EVENT_TTL_MS);
+      // `emit` direto, não `emitOnce`: este é o evento autoritativo do lote e
+      // não deve ser suprimido pela chave que nós mesmos acabamos de registrar.
+      emit(t, { table, rowId: null, operation: "delete", source: "studio" });
+      return { rowsAffected };
+    },
+
+    async deleteAll(instanceId, table) {
+      const t = get(instanceId);
+      // Um único DELETE sem WHERE: é o caminho da truncate optimization, em que
+      // o SQLite descarta as páginas da tabela em vez de percorrer linha a
+      // linha. Também é o caminho em que o hook nativo NÃO dispara — por isso o
+      // evento abaixo é obrigatório, não decorativo.
+      invalidateCount(t, table);
+      suppressTableEvents(t, table, ECHO_TTL_MS);
+      let rowsAffected: number;
+      try {
+        const result = await t.db.runAsync(`DELETE FROM ${quoteIdent(table)}`);
+        rowsAffected = Number(result.changes ?? 0);
+      } catch (error) {
+        releaseTableEvents(t, table);
+        throw error;
+      }
+      suppressTableEvents(t, table, RECENT_EVENT_TTL_MS);
+      emit(t, { table, rowId: null, operation: "delete", source: "studio" });
+      return { rowsAffected };
     },
 
     async execute(instanceId, sql) {
