@@ -137,7 +137,12 @@ export function startRuntime(options: RuntimeOptions): Runtime {
         kind: "command-result",
         requestId: message.requestId,
         ok: false,
-        error: protocolError("unsupported-capability", `nenhum handler para o módulo "${module}"`),
+        // Chega até a UI do Studio como o erro do comando: inglês, como todo
+        // texto que o usuário lê.
+        error: protocolError(
+          "unsupported-capability",
+          `no handler registered for module "${module}"`,
+        ),
       };
     }
     try {
