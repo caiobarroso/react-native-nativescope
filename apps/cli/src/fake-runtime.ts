@@ -4,6 +4,7 @@ import {
   startRuntime,
   createMemoryAdapter,
   createExpoSqliteAdapter,
+  createOpSqliteAdapter,
 } from "@rnsi/runtime";
 import type { WebSocketLike, SQLiteDatabaseLike } from "@rnsi/runtime";
 
@@ -94,6 +95,46 @@ function createFakeDatabase(): { db: SQLiteDatabaseLike; raw: DatabaseSync } {
 }
 
 /**
+ * Segundo banco, com coluna BLOB, para o Studio poder ser validado com DOIS
+ * providers de banco ao mesmo tempo sem precisar de device — inclusive o
+ * caminho de blob, que nenhum outro fixture exercita.
+ */
+function createFakePhotos(): { db: SQLiteDatabaseLike; raw: DatabaseSync } {
+  const raw = new DatabaseSync(":memory:");
+  raw.exec(`
+    CREATE TABLE photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      thumb BLOB,
+      likes INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  const insert = raw.prepare("INSERT INTO photos (title, thumb, likes) VALUES (?, ?, ?)");
+  const thumb = (seed: number, size: number): Uint8Array =>
+    new Uint8Array(Array.from({ length: size }, (_, i) => (i * seed + 7) % 256));
+  insert.run("praia", thumb(3, 96), 12);
+  insert.run("serra", thumb(5, 8_000), 4); // grande: trunca no preview
+  insert.run("sem thumb", null, 0);
+
+  const db: SQLiteDatabaseLike = {
+    async getAllAsync(sql, params = []) {
+      return raw
+        .prepare(sql)
+        .all(...(params as Array<string | number | null>))
+        .map((row) => ({ ...(row as Record<string, unknown>) }));
+    },
+    async runAsync(sql, params = []) {
+      const result = raw.prepare(sql).run(...(params as Array<string | number | null>));
+      return {
+        changes: Number(result.changes),
+        lastInsertRowId: Number(result.lastInsertRowid),
+      };
+    },
+  };
+  return { db, raw };
+}
+
+/**
  * Runtime falso para desenvolvimento e E2E da UI sem device.
  *
  * Sobe o runtime real (mesmo código que roda no app) com um adapter de
@@ -164,6 +205,12 @@ export function startFakeRuntime(options: {
   const sqlite = createExpoSqliteAdapter();
   sqlite.registerDatabase("proline.db", db);
 
+  // Segundo provider de banco: prova que o Studio lida com N SQLites e permite
+  // validar a UI multi-provider (e o caminho de BLOB) sem device.
+  const { db: photosDb, raw: photosRaw } = createFakePhotos();
+  const opSqlite = createOpSqliteAdapter();
+  opSqlite.registerDatabase("photos.db", photosDb, { hasChangeListener: true });
+
   if (options.scale) seedScale(raw, adapter);
 
   const runtime = startRuntime({
@@ -186,6 +233,7 @@ export function startFakeRuntime(options: {
   runtime.registry.register(adapter);
   runtime.registry.register(mmkv);
   runtime.registry.register(sqlite);
+  runtime.registry.register(opSqlite);
 
   // Network simulado (envelope L3) — popula a aba Network do Studio sem device.
   type NetSpec = {
@@ -639,13 +687,37 @@ export function startFakeRuntime(options: {
       const insert = raw
         .prepare("INSERT INTO visits (status, pdv) VALUES ('pending', ?)")
         .run(pdvs[Math.floor(Math.random() * pdvs.length)] ?? "Assaí");
-      // simula o hook nativo do expo-sqlite disparando
+      // simula o hook nativo do expo-sqlite disparando — sem a operação, que é
+      // o que aquele hook realmente entrega
       sqlite.notifyNativeChange(
         "proline.db",
         "visits",
         Number(insert.lastInsertRowid),
       );
     }, 9000),
+
+    // OP-SQLite: o "app" curte e publica fotos. Ao contrário do expo, o
+    // updateHook do op-sqlite informa a operação, então a timeline mostra
+    // INSERT/UPDATE de verdade em vez de "unknown".
+    setInterval(() => {
+      const rows = photosRaw.prepare("SELECT id FROM photos ORDER BY id").all();
+      if (rows.length > 0 && Math.random() > 0.4) {
+        const target = rows[Math.floor(Math.random() * rows.length)] as { id: number };
+        photosRaw.prepare("UPDATE photos SET likes = likes + 1 WHERE id = ?").run(target.id);
+        opSqlite.notifyNativeChange("photos.db", "photos", target.id, "UPDATE");
+        return;
+      }
+      const titles = ["pôr do sol", "trilha", "centro", "cachoeira"];
+      const inserted = photosRaw
+        .prepare("INSERT INTO photos (title, likes) VALUES (?, 0)")
+        .run(titles[Math.floor(Math.random() * titles.length)] ?? "foto");
+      opSqlite.notifyNativeChange(
+        "photos.db",
+        "photos",
+        Number(inserted.lastInsertRowid),
+        "INSERT",
+      );
+    }, 7000),
 
     // Network: burst inicial (após o handshake) + tráfego contínuo determinístico
     // (round-robin) — cada reload do Studio reenche rápido e previsível.

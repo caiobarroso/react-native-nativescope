@@ -288,6 +288,59 @@ function useInspectedSqlite(db, query, params = [], options = {}) {
   return { rows, loading, error, reload };
 }
 
+/**
+ * Igual ao useInspectedSqlite, para @op-engineering/op-sqlite.
+ *
+ * Hook separado porque as duas coisas que ele faz diferem por provider: filtra
+ * eventos por `providerId` e lê as linhas do banco. O op-sqlite devolve
+ * `{ rows }` de `execute()`, não `getAllAsync()`.
+ */
+function useInspectedOpSqlite(db, query, params = [], options = {}) {
+  const React = require("react");
+  const [rows, setRows] = React.useState([]);
+  const [loading, setLoading] = React.useState(Boolean(db));
+  const [error, setError] = React.useState(null);
+  const signal = useNativeScopeSignal({
+    kind: "database",
+    providerId: "op-sqlite",
+    instanceId: options.instanceId,
+    table: options.table,
+    source: options.source,
+  });
+  const paramsKey = JSON.stringify(params);
+
+  const reload = React.useCallback(async () => {
+    if (!db) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await db.execute(query, params);
+      // Array simples desde a v9/v10; `_array` é apólice para as antigas.
+      const next = Array.isArray(result?.rows)
+        ? result.rows
+        : Array.isArray(result?.rows?._array)
+          ? result.rows._array
+          : [];
+      setRows(next);
+      setError(null);
+    } catch (cause) {
+      setError(cause);
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, query, paramsKey]);
+
+  React.useEffect(() => {
+    void reload();
+  }, [reload, signal]);
+
+  return { rows, loading, error, reload };
+}
+
 function defineNativeScopeConfig(config = {}) {
   return config;
 }
@@ -303,4 +356,5 @@ module.exports = {
   useInspectedAsyncStorage,
   useInspectedMMKV,
   useInspectedSqlite,
+  useInspectedOpSqlite,
 };

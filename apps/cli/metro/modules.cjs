@@ -20,7 +20,7 @@ const MODULES = [
   {
     key: "storage",
     label: "Storage inspector",
-    description: "AsyncStorage, MMKV, expo-sqlite",
+    description: "AsyncStorage, MMKV, expo-sqlite, op-sqlite",
     // Storage se auto-instala nos próprios shims quando a lib é importada, então
     // não precisa do boot antecipado. Ver _bootstrap.js.
     earlyBoot: false,

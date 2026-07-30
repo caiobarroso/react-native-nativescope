@@ -217,3 +217,20 @@ export function useInspectedSqlite<T = unknown>(
   error: unknown;
   reload(): Promise<void>;
 };
+
+/** Igual ao `useInspectedSqlite`, para `@op-engineering/op-sqlite`. */
+export function useInspectedOpSqlite<T = unknown>(
+  db: unknown,
+  query: string,
+  params?: unknown[],
+  options?: {
+    instanceId?: string;
+    table?: string;
+    source?: NativeScopeChangeSource;
+  },
+): {
+  rows: T[];
+  loading: boolean;
+  error: unknown;
+  reload(): Promise<void>;
+};
