@@ -17,6 +17,7 @@ import { ChevronDown, ChevronUp, Play, Sparkles, Table2, Wand2 } from "lucide-re
 import type { ExecuteResult, TableSchema } from "@rnsi/protocol";
 import { useStudio, keysId } from "../lib/store.ts";
 import { useLayout } from "../lib/layout.ts";
+import { blobLabel, isBlobCell } from "../lib/cell-format.ts";
 import { executeSql } from "../lib/studio-client.ts";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 
@@ -669,8 +670,8 @@ export function SqlConsole() {
                           <td key={column} className="max-w-48 truncate px-2 py-1">
                             {value === null ? (
                               <span className="text-text-subtle">NULL</span>
-                            ) : typeof value === "object" ? (
-                              "(blob)"
+                            ) : isBlobCell(value) ? (
+                              <span className="text-text-muted">{blobLabel(value)}</span>
                             ) : (
                               String(value)
                             )}

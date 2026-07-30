@@ -10,7 +10,7 @@ NativeScope is being built as a plug-and-play debug environment for React Native
 
 Two modules ship today:
 
-- **Storage** discovers AsyncStorage, MMKV, and expo-sqlite while the app is running, then gives you a professional interface to inspect, edit, diff, restore, and reason about real app data.
+- **Storage** discovers AsyncStorage, MMKV, expo-sqlite, and op-sqlite while the app is running, then gives you a professional interface to inspect, edit, diff, restore, and reason about real app data.
 - **Network** captures HTTP and GraphQL operations in one timeline, with structured payload inspection, filters, capture sessions, replay, performance insights, and automatic links to the storage changed by each response.
 
 No account. No cloud. No provider. No root wrapper. Your development data stays on your machine.
@@ -25,10 +25,10 @@ NativeScope composes your Metro config in development, opens the local Studio, a
 ## Why NativeScope
 
 - **One environment, growing by modules**: Storage and Network share the same local Studio, transport, and configuration.
-- **Zero-friction storage discovery** for AsyncStorage, MMKV, and expo-sqlite.
+- **Zero-friction storage discovery** for AsyncStorage, MMKV, expo-sqlite, and op-sqlite.
 - **Bidirectional editing** so Studio changes can update the running app.
 - **Visual JSON navigation** for nested objects, arrays, inline edits, and TypeScript shape export.
-- **SQLite table tooling** with tabs, sorting, selection, inline edits, inserts, and SQL execution.
+- **SQLite table tooling** with tabs, sorting, selection, inline edits, inserts, bulk delete, and SQL execution.
 - **Snapshots and diff** to freeze storage, compare later, highlight changes, and restore safely.
 - **HTTP and GraphQL inspection** with structured replay, session insights, sound rules, and storage impact.
 - **Local-first by design** over `127.0.0.1`, with no login, telemetry, or hosted data path.

@@ -1,6 +1,6 @@
 ---
 title: Storage providers
-description: How AsyncStorage, MMKV and expo-sqlite are detected, and what the studio can do with each.
+description: How AsyncStorage, MMKV, expo-sqlite and op-sqlite are detected, and what the studio can do with each.
 ---
 
 NativeScope groups everything it can read into **providers**. Each provider exposes one or more
@@ -31,15 +31,40 @@ Writing buffer values is not supported yet. Reading and inspecting them is.
 
 ## SQLite
 
-Detected from `expo-sqlite`. Every database your app opens becomes an instance.
+Two SQLite drivers are supported, and they can be used **at the same time** in one app — each shows
+up as its own provider in the sidebar:
 
-For each database you get the table list with row counts, a schema view, an editable row grid, and
-a SQL console that runs arbitrary statements against the live database on the device.
+| Provider | Package | Label in the studio |
+| --- | --- | --- |
+| expo-sqlite | `expo-sqlite` | **SQLite** |
+| op-sqlite | `@op-engineering/op-sqlite` | **OP-SQLite** |
 
-On large tables, row counts render as an instant estimate (always prefixed with `~`) until the exact
-count arrives, and cells over 4 KB come truncated with the full contents available on demand. Those
+Every database your app opens becomes an instance. For each one you get the table list with row
+counts, a schema view, an editable row grid, and a SQL console that runs arbitrary statements against
+the live database on the device.
+
+Both providers share the same engine-agnostic implementation, so every feature is identical between
+them. Two differences are inherent to the drivers:
+
+- **op-sqlite reports the operation.** Its update hook carries `INSERT` / `UPDATE` / `DELETE`, so the
+  activity feed names what happened. The expo-sqlite hook only reports which row changed, so those
+  events read as a generic change.
+- **op-sqlite returns BLOBs as `ArrayBuffer`**, expo-sqlite as a byte array. Either way the grid shows
+  the column as `(blob, 7.8 KB)` and opens a read-only hex viewer on double-click.
+
+Row counts are exact on ordinary tables; only genuinely large ones fall back to an estimate, always
+prefixed with `~`. Cells over 4 KB come truncated with the full contents available on demand. Those
 mechanics — and the guarantees that keep them from ever corrupting data — live in
 [Large datasets](/docs/storage/large-datasets).
+
+If you use an ORM on top of op-sqlite (Drizzle, for example), its internal database handle is
+instrumented too — the Metro resolver sees the import regardless of who wrote it.
+
+<Callout kind="warning">
+Builds of op-sqlite compiled against libsql or Turso have the SQLite hooks compiled out. NativeScope
+detects that and falls back to observing your SQL statements, so inspecting and editing keep working —
+only the per-row realtime feed is less precise.
+</Callout>
 
 ## Change attribution
 
@@ -49,6 +74,10 @@ count, so a tight write loop cannot flood the activity feed or the JS thread.
 
 ## Adding another provider
 
-The adapter interface is generic across key/value stores, and the search and export paths are
-implemented once on top of it rather than per adapter. A new key/value provider needs to implement
-listing, reading, writing and subscribing — it does not need to touch the protocol.
+The adapter layer is generic and the search, export and pagination paths are implemented once on top
+of it rather than per adapter. A new key/value provider implements listing, reading, writing and
+subscribing; a new SQL database provider usually only has to translate its query method into two
+functions. Neither touches the protocol.
+
+[Adding a database provider](/docs/storage/adding-a-provider) walks through it with the real
+checklist.

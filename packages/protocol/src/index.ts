@@ -3,6 +3,7 @@ export {
   KEY_VALUE_PREVIEW_LIMIT,
   STREAM_CHUNK_SIZE,
   CELL_PREVIEW_LIMIT,
+  BLOB_PREVIEW_BYTES,
   WIRE_MESSAGE_BUDGET,
   wireByteSize,
   exceedsWireBudget,

@@ -6,6 +6,8 @@ interface ConfirmDialogProps {
   description: string;
   detail?: ReactNode;
   loading?: boolean;
+  /** Confirmação forte: o botão só libera quando o chamador diz que pode. */
+  confirmDisabled?: boolean;
   confirmLabel?: string;
   loadingLabel?: string;
   onCancel: () => void;
@@ -17,6 +19,7 @@ export function ConfirmDialog({
   description,
   detail,
   loading = false,
+  confirmDisabled = false,
   confirmLabel = "Delete",
   loadingLabel = "Deleting...",
   onCancel,
@@ -53,7 +56,7 @@ export function ConfirmDialog({
           </button>
           <button
             onClick={onConfirm}
-            disabled={loading}
+            disabled={loading || confirmDisabled}
             className="h-8 rounded-md bg-deleted px-3 text-[12px] font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             {loading ? loadingLabel : confirmLabel}

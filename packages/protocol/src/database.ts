@@ -5,12 +5,23 @@ import { z } from "zod";
  * key-value de propósito: interfaces pequenas por capability (plano §13.3).
  */
 
-/** Valor de célula no fio. BLOBs trafegam em base64, read-only no MVP. */
+/**
+ * Valor de célula no fio. BLOBs trafegam em base64 e são READ-ONLY — quem
+ * escreve precisa recusar um objeto (ver toParam no adapter) e a UI não pode
+ * abrir edição inline em cima deles.
+ *
+ * `byteLength` é o tamanho REAL do BLOB, não o do `blobBase64`: na listagem o
+ * base64 vem cortado no preview. Opcional porque um runtime anterior a este
+ * campo continua válido no fio (aditivo, PROTOCOL_VERSION intacto).
+ */
 export const cellValueSchema = z.union([
   z.string(),
   z.number(),
   z.null(),
-  z.object({ blobBase64: z.string() }),
+  z.object({
+    blobBase64: z.string(),
+    byteLength: z.number().int().nonnegative().optional(),
+  }),
 ]);
 export type CellValue = z.infer<typeof cellValueSchema>;
 

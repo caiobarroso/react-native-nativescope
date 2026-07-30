@@ -2,7 +2,7 @@ import { networkInterfaces } from "node:os";
 import { basename, resolve } from "node:path";
 import { execFile, type ChildProcess } from "node:child_process";
 import { DEFAULT_PORT } from "@rnsi/protocol";
-import { detectProject, type DetectedProject } from "./detect.ts";
+import { detectProject, KNOWN_PROVIDER_LABELS, type DetectedProject } from "./detect.ts";
 import { runInit } from "./init.ts";
 import { MODULES, resolveEnabledModules } from "./modules-cli.ts";
 import { startLocalServer } from "./server.ts";
@@ -173,7 +173,7 @@ async function main(): Promise<void> {
     for (const p of project.providers) console.log(`  ✓ ${p.label}`);
   } else {
     console.log(
-      "No supported storage dependency found in package.json (MMKV, AsyncStorage, expo-sqlite).",
+      `No supported storage dependency found in package.json (${KNOWN_PROVIDER_LABELS}).`,
     );
   }
 

@@ -22,7 +22,7 @@ source is untouched.
 That gives three properties worth stating plainly:
 
 - **No app integration code.** Your imports of `@react-native-async-storage/async-storage`,
-  `react-native-mmkv` and `expo-sqlite` keep working exactly as written.
+  `react-native-mmkv`, `expo-sqlite` and `@op-engineering/op-sqlite` keep working exactly as written.
 - **A release no-op.** When Metro builds with `dev: false`, the resolver bypasses every NativeScope
   shim and resolves the real storage module. NativeScope's own CI scans a release bundle for the
   shim marker as a second guard.

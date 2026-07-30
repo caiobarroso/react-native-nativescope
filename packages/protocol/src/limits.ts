@@ -16,6 +16,16 @@ export const STREAM_CHUNK_SIZE = 64 * 1024;
 export const CELL_PREVIEW_LIMIT = 4 * 1024;
 
 /**
+ * Quantos BYTES de um BLOB a listagem codifica em base64. 3 KB de bytes → 4096
+ * chars, exatamente CELL_PREVIEW_LIMIT (3 bytes = 4 chars, sem padding).
+ *
+ * O corte acontece ANTES de codificar: o caminho anterior convertia o BLOB
+ * inteiro e só depois fatiava o base64, então um BLOB de 5 MB era percorrido
+ * por completo para a listagem descartar 99,9% do resultado.
+ */
+export const BLOB_PREVIEW_BYTES = 3 * 1024;
+
+/**
  * Orçamento de uma mensagem WS individual, em BYTES UTF-8 (§1). Fonte única —
  * o teste de orçamento e o guard de transporte leem daqui, nunca de um número
  * mágico solto.

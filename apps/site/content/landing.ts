@@ -60,7 +60,7 @@ export const landing: LandingContent = {
     {
       icon: "Zap",
       title: "Declare modules, not instances",
-      body: "Enable Storage in one config line, then a Metro resolver detects AsyncStorage, MMKV and expo-sqlite on its own. You never import, mount, wrap or register a storage instance by hand.",
+      body: "Enable Storage in one config line, then a Metro resolver detects AsyncStorage, MMKV, expo-sqlite and op-sqlite on its own. You never import, mount, wrap or register a storage instance by hand.",
     },
     {
       icon: "ArrowLeftRight",
@@ -132,7 +132,7 @@ export default defineNativeScopeConfig({
     {
       question: "Which storage libraries are supported?",
       answer:
-        "AsyncStorage, MMKV (including multiple named instances, discovered automatically) and expo-sqlite. The adapter layer is generic, so more providers can be added without protocol changes.",
+        "AsyncStorage, MMKV (including multiple named instances, discovered automatically), expo-sqlite and op-sqlite — the two SQLite drivers can even be used side by side in one app. The adapter layer is generic, so more providers can be added without protocol changes.",
     },
     {
       question: "What happens if a value is enormous?",

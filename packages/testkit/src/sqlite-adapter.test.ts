@@ -86,20 +86,55 @@ describe("expo-sqlite adapter", () => {
     expect(second.rows.map((r) => r.ref)).toEqual([{ rowid: 3 }]);
   });
 
-  it("contagem em duas fases: estimativa imediata, exata após o background", async () => {
+  it("tabela dentro do orçamento: contagem exata na hora, mesmo com buraco de rowid", async () => {
     const { adapter, db } = setup();
-    // Cria buraco de rowid: MAX(rowid) ≠ COUNT(*)
+    // Buraco de rowid: MAX(rowid) = 3, COUNT(*) = 2. Era exatamente aqui que a
+    // estimativa mentia — uma tabela com 14 linhas e rowid 20026 aparecia como
+    // "≈ 20026". Abaixo do orçamento não há estimativa nenhuma.
     await db.runAsync("DELETE FROM visits WHERE id = 2");
 
+    const page = await adapter.rows("app.db", "visits", { limit: 10, offset: 0 });
+    expect(page.total).toBe(2);
+    expect(page.totalIsEstimate).toBe(false);
+
+    const tables = await adapter.tables("app.db");
+    const visits = tables.find((t) => t.name === "visits");
+    expect(visits?.rowCount).toBe(2);
+    expect(visits?.rowCountIsEstimate).toBeFalsy();
+  });
+
+  it("acima do orçamento: estimativa imediata, exata após o background", async () => {
+    const { adapter, db } = setup();
+    // rowid acima do orçamento (50k) → COUNT(*) sai do caminho crítico.
+    await db.runAsync("INSERT INTO visits (id, status) VALUES (60000, 'done')");
+
     const first = await adapter.rows("app.db", "visits", { limit: 10, offset: 0 });
-    expect(first.total).toBe(3); // MAX(rowid) — estimativa
+    expect(first.total).toBe(60_000); // MAX(rowid), sem contagem exata anterior
     expect(first.totalIsEstimate).toBe(true);
 
     // O COUNT(*) exato roda em background e popula o cache.
     await new Promise((resolve) => setTimeout(resolve, 10));
     const second = await adapter.rows("app.db", "visits", { limit: 10, offset: 0 });
-    expect(second.total).toBe(2);
+    expect(second.total).toBe(4);
     expect(second.totalIsEstimate).toBe(false);
+  });
+
+  it("estimativa de tabela grande parte da última contagem exata, não de MAX(rowid)", async () => {
+    const { adapter, db } = setup();
+    await db.runAsync("INSERT INTO visits (id, status) VALUES (60000, 'done')");
+
+    // Primeira passada: estimativa + COUNT(*) em background = 4 exato.
+    await adapter.rows("app.db", "visits", { limit: 10, offset: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Uma escrita do app invalida a contagem. A estimativa seguinte tem de
+    // partir de "tinha 4 linhas", não de MAX(rowid) = 60000.
+    await db.runAsync("INSERT INTO visits (status) VALUES ('pending')");
+    adapter.notifyNativeChange("app.db", "visits", 60_001, "insert");
+
+    const page = await adapter.rows("app.db", "visits", { limit: 10, offset: 0 });
+    expect(page.totalIsEstimate).toBe(true);
+    expect(page.total).toBe(4); // erra por 1 linha, não por 59.996
   });
 
   it("célula grande chega truncada e marcada; database.cell devolve 100%", async () => {

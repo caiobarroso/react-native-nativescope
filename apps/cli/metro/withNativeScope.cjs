@@ -27,6 +27,7 @@ const SHIM_TARGETS = {
   "@tanstack/react-query": "react-query.js",
   "react-native-mmkv": "mmkv.js",
   "expo-sqlite": "expo-sqlite.js",
+  "@op-engineering/op-sqlite": "op-sqlite.js",
 };
 
 /** módulo virtual que entrega porta+token da sessão ao shim */
@@ -162,13 +163,15 @@ function withNativeScope(config, options = {}) {
         }
 
         if (moduleName === BOOT_MODULE) {
-          // Dev → boot real; prod → stub vazio (mesmo no-op absoluto dos shims,
-          // garantindo que runtime-bundle nunca entre no bundle de produção).
-          return {
-            type: "sourceFile",
-            filePath:
-              context.dev === false ? configStubFile : path.join(SHIM_DIR, "_boot.js"),
-          };
+          // Prod: MÓDULO VAZIO, não um arquivo. O valor deste require é
+          // descartado (`;require("__rnsi_boot__");`), então não há nada a
+          // exportar — e resolver para um arquivo do pacote obrigaria o Metro a
+          // hasheá-lo, num caminho fora da árvore do projeto. Era o que
+          // derrubava o export de release no CI. Com o transformer não injetando
+          // em release, este ramo é cinto: se outro transformer injetar o boot,
+          // o build de produção segue, sem instrumentação e sem quebrar.
+          if (context.dev === false) return { type: "empty" };
+          return { type: "sourceFile", filePath: path.join(SHIM_DIR, "_boot.js") };
         }
 
         // Release build é no-op absoluto: em bundle de produção o módulo

@@ -220,6 +220,32 @@ export const commandMessageSchema = z.discriminatedUnion("type", [
       ref: rowRefSchema,
     }),
   }),
+  /**
+   * Exclusão em lote de linhas identificadas. Existe para NÃO pagar um
+   * round-trip por linha: apagar 5.000 linhas selecionadas eram 5.000 comandos
+   * sequenciais, cada um com o seu timeout — e um erro no meio deixava a
+   * exclusão pela metade, sem rollback. Aqui é uma transação no device.
+   */
+  z.object({
+    ...commandBase,
+    type: z.literal("database.deleteRows"),
+    payload: z.object({
+      ...kvTarget,
+      table: z.string(),
+      refs: z.array(rowRefSchema).min(1),
+    }),
+  }),
+  /**
+   * Esvazia a tabela com um único `DELETE FROM`, que é o caminho em que o
+   * SQLite usa a *truncate optimization* (apaga sem percorrer linha a linha).
+   * É a diferença entre horas e milissegundos numa tabela de milhões de linhas.
+   * Irreversível de propósito: não há snapshot para desfazer.
+   */
+  z.object({
+    ...commandBase,
+    type: z.literal("database.deleteAll"),
+    payload: z.object({ ...kvTarget, table: z.string() }),
+  }),
   z.object({
     ...commandBase,
     type: z.literal("database.execute"),

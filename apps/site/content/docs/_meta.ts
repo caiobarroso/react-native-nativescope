@@ -35,6 +35,7 @@ export const storageDocsNav: DocGroup[] = [
       { slug: "storage/configuration", title: "Configuration" },
       { slug: "storage/react-query", title: "React Query bridge" },
       { slug: "storage/large-datasets", title: "Large datasets" },
+      { slug: "storage/adding-a-provider", title: "Adding a database provider" },
     ],
   },
   {

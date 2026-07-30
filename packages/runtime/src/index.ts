@@ -55,8 +55,22 @@ export {
   type MMKVInstanceLike,
 } from "./adapters/mmkv.ts";
 export {
-  createExpoSqliteAdapter,
-  type ExpoSqliteAdapter,
+  createSqliteAdapter,
+  type SqliteAdapter,
   type SQLiteDatabaseLike,
-} from "./adapters/expo-sqlite.ts";
+} from "./adapters/sqlite-core.ts";
+export { createExpoSqliteAdapter, type ExpoSqliteAdapter } from "./adapters/expo-sqlite.ts";
+export {
+  createOpSqliteAdapter,
+  createOpSqliteInstance,
+  opSqliteInstanceId,
+  toSqliteDatabase,
+  isFullTableDelete,
+  isDdl,
+  mutationTable,
+  type OpSqliteInstance,
+  type OpSqliteDatabaseLike,
+  type OpSqliteQueryResult,
+  type OpSqliteUpdateEvent,
+} from "./adapters/op-sqlite.ts";
 export { installNetworkModule } from "./modules/network/index.ts";

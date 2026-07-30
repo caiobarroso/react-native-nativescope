@@ -83,6 +83,17 @@ const { rows, loading, reload } = useInspectedSqlite<Visit>(
 );
 ```
 
+For `@op-engineering/op-sqlite`, use `useInspectedOpSqlite` — same signature, and it reads rows
+through that driver's `execute`:
+
+```tsx
+const { rows, loading, reload } = useInspectedOpSqlite<Photo>(
+  db,
+  "select * from photos where album = ?",
+  ["trips"],
+);
+```
+
 Each accepts an options object with a `source` filter, so you can react only to studio changes, only
 to app changes, or both.
 

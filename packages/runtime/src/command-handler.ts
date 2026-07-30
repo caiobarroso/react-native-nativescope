@@ -298,6 +298,18 @@ export async function handleCommand(
           command.payload.ref,
         );
         return succeed({});
+      case "database.deleteRows":
+        return succeed(
+          await adapter.deleteRows(
+            command.payload.instanceId,
+            command.payload.table,
+            command.payload.refs,
+          ),
+        );
+      case "database.deleteAll":
+        return succeed(
+          await adapter.deleteAll(command.payload.instanceId, command.payload.table),
+        );
       case "database.execute":
         return succeed({
           result: await adapter.execute(command.payload.instanceId, command.payload.sql),

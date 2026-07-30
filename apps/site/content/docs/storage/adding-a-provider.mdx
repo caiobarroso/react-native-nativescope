@@ -1,0 +1,137 @@
+---
+title: Adding a database provider
+description: The six touch points that turn a SQLite driver into a fully featured provider in the studio.
+---
+
+Support for a new SQL database driver is deliberately cheap. The adapter that powers the row grid,
+the SQL console, keyset pagination, two-phase counts, schema caching, search, export and the realtime
+feed is **engine-agnostic** — it depends on exactly two functions:
+
+```ts
+interface SQLiteDatabaseLike {
+  getAllAsync(sql: string, params?: unknown[]): Promise<Array<Record<string, unknown>>>;
+  runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
+}
+```
+
+Anything that can answer those two gets the whole inspector. There are three implementations today:
+expo-sqlite (native), op-sqlite (bridged from its `execute`) and `node:sqlite` (used by the test
+suite, which is how we know the seam is real).
+
+## The six touch points
+
+### 1. The adapter
+
+`packages/runtime/src/adapters/<driver>.ts`. Give the provider an identity and bridge the driver:
+
+```ts
+export function createMyDriverAdapter(): SqliteAdapter {
+  return createSqliteAdapter({ providerId: "my-driver", label: "My Driver" });
+}
+
+export function toSqliteDatabase(source: () => MyDriverDb): SQLiteDatabaseLike {
+  return {
+    getAllAsync: async (sql, params) => (await source().query(sql, params ?? [])).rows,
+    runAsync: async (sql, params) => {
+      const result = await source().query(sql, params ?? []);
+      return { changes: result.affected, lastInsertRowId: Number(result.insertId ?? NaN) };
+    },
+  };
+}
+```
+
+Four rules that are not obvious:
+
+- **Never import the driver package here**, not even `import type`. It is not a dependency of
+  `packages/runtime`, and this directory is bundled by esbuild into the Metro shims — an import breaks
+  a build that only runs at publish time. Declare the shape you need structurally instead.
+- **`providerId` must be unique.** Registering a second adapter under an existing id is ignored; you
+  get a console warning in development, and the provider silently missing without one.
+- **Prefer the async query method.** The adapter runs `COUNT(*)`, full-table `LIKE` scans and whole-table
+  exports. On a synchronous API those block the JS thread and an export becomes an ANR.
+- **Take the database via a function, not a value.** Apps close and reopen databases; a stable bridge
+  with a mutable pointer survives that, a captured handle does not.
+
+### 2. The barrel
+
+Export the factory from `packages/runtime/src/index.ts`. That file is the esbuild entry point for the
+shim bundle, so anything exported there becomes available to shims automatically.
+
+### 3. The shim
+
+`apps/cli/metro/shims/<driver>.js`, with the `__RNSI_SHIM__` marker in its header comment (a release
+guard greps for it to prove none of this reaches production bundles). The shim requires the **real**
+module — the resolver's anti-loop rule hands it the genuine package — wraps the open functions, and
+registers each database:
+
+```js
+const real = require("my-driver");
+const { getRuntime, rnsi, isModuleEnabled } = require("./_bootstrap.js");
+const runtime = isModuleEnabled("storage") ? getRuntime() : null;
+```
+
+Keep the shim thin. Anything with real logic belongs in `packages/runtime`, where it is typechecked and
+tested — shims are excluded from both.
+
+Three things worth getting right:
+
+- **Instrument in place.** Wrap methods on the object the driver returned; never `Object.create(db)`.
+  Prototype inheritance breaks on private class fields and desynchronises methods that write `this`.
+- **Instrumentation never throws into the app.** Every hook body is wrapped in `try/catch`. A broken
+  inspector must degrade to no inspector, never to a broken database.
+- **Secrets stay out.** An encryption key passed to `open()` must never reach an instance id, a label
+  or a log line — those travel to the studio.
+
+### 4. The resolver
+
+One entry in `SHIM_TARGETS` in `apps/cli/metro/withNativeScope.cjs`:
+
+```js
+"my-driver": "my-driver.js",
+```
+
+Matching is exact string equality on the import specifier, so scoped packages work as-is. Subpath
+imports (`my-driver/extras`) are not intercepted.
+
+### 5. Detection
+
+Add the package to `KNOWN_PROVIDERS` in `apps/cli/src/detect.ts`. This is what the CLI prints while
+waiting for a connection; without it, a project using only your driver is told no storage was found.
+
+### 6. Rebuild the bundle
+
+```bash
+pnpm --filter react-native-nativescope build
+```
+
+The shim bundle is generated, not committed. Editing the runtime without rebuilding leaves shims
+running the previous version.
+
+## What you do not touch
+
+- **The protocol.** `providerId` is an opaque string; provider descriptors carry a label and a
+  capability list. Nothing counts providers or enumerates their names.
+- **The studio.** Every feature is gated on capabilities (`database.query`, `database.mutate`,
+  `database.watch`), never on a provider id. A new database provider appears in the sidebar, the SQL
+  console, global search and snapshots with no UI work at all.
+
+## Realtime, and what a change hook misses
+
+If the driver exposes a change hook, use it — and know its limits, because they are SQLite's, not the
+driver's. `sqlite3_update_hook` operates at the VDBE level, so it covers prepared statements, batches
+and transactions for free, but it does **not** fire for:
+
+- `DELETE FROM t` with no `WHERE` clause, which SQLite serves with the truncate optimization;
+- DDL, which is not a row change at all — and DDL is exactly what has to invalidate the schema cache.
+
+So a driver with a perfect hook still needs a small amount of statement inspection for those two
+cases. Without a hook at all, statement inspection carries the whole realtime feed; report that
+through `hasChangeListener: false` when registering the database, and the adapter adjusts.
+
+If the hook holds a single callback, multiplex it rather than claiming it: store the app's callback
+and call it, so an ORM registering later does not silently disable your realtime — or get disabled by
+you.
+
+Finally, normalise the operation name. An operation outside the protocol's enum makes the studio
+reject the whole message during validation, which kills realtime with no error anywhere. The shared
+adapter coerces unknown values for you; do not work around it.

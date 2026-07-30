@@ -12,6 +12,7 @@ import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MMKV } from "react-native-mmkv";
 import * as SQLite from "expo-sqlite";
+import { open as openOpSqlite } from "@op-engineering/op-sqlite";
 import {
   QueryClient,
   QueryClientProvider,
@@ -24,10 +25,9 @@ import { installNativeScopeDevtools } from "react-native-nativescope/app";
 /*
  * Playground do NativeScope — feito para a demo.
  *
- * Três abas, cada uma cobrindo um storage, com uma interface que qualquer
- * pessoa entende em três segundos. TODO texto de UI é em inglês de propósito
- * (é o que vai no vídeo). Os comentários seguem em português, como o resto do
- * repo.
+ * Uma aba por storage, com uma interface que qualquer pessoa entende em três
+ * segundos. TODO texto de UI é em inglês de propósito (é o que vai no vídeo).
+ * Os comentários seguem em português, como o resto do repo.
  *
  * O ponto alto: tudo passa por React Query. Editar um valor no Studio (no
  * navegador) dispara um evento "source: studio", a ponte abaixo invalida as
@@ -75,6 +75,41 @@ async function getDb() {
   return dbPromise;
 }
 
+// Segundo banco, em OUTRO driver: op-sqlite. Existe para provar que dois
+// providers de banco coexistem no Studio, e para exercitar o que a aba do
+// expo-sqlite não exercita — BLOB e UPDATE.
+const PHOTOS_DB_NAME = "photos.db";
+let photosPromise = null;
+async function getPhotosDb() {
+  if (!photosPromise) {
+    photosPromise = (async () => {
+      // `open` do op-sqlite é SÍNCRONO (o do expo é async) e não precisa de
+      // nenhuma flag para o realtime funcionar — o updateHook é instalado
+      // depois, pelo shim.
+      const db = openOpSqlite({ name: PHOTOS_DB_NAME });
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS photos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          emoji TEXT NOT NULL,
+          thumb BLOB,
+          likes INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+      `);
+      return db;
+    })();
+  }
+  return photosPromise;
+}
+
+/** Bytes determinísticos fazendo papel de miniatura. */
+function makeThumb(size) {
+  const bytes = new Uint8Array(size);
+  for (let i = 0; i < size; i += 1) bytes[i] = (i * 31 + 17) % 256;
+  return bytes;
+}
+
 // ------------------------------------------------------------- conteúdo
 
 const CAGE_TEMPLATE = [
@@ -91,6 +126,8 @@ const ANIMAL_NAMES = ["Leo", "Milo", "Coco", "Nala", "Zuri", "Bibi", "Rex", "Pip
 const TRICKS = ["roar", "jump", "spin", "sleep", "dance", "wave"];
 const TOY_EMOJIS = ["🧸", "🚗", "🪀", "🎈", "🧩", "🪁", "⚽", "🎨", "🤖", "🦖"];
 const PLAYER_NAMES = ["Alex", "Sam", "Kai", "Nova", "Max", "Luna", "Finn", "Ivy", "Theo", "Mia", "Ezra", "Remy"];
+const PHOTO_TITLES = ["sunset", "trail", "downtown", "waterfall", "harbor", "rooftop", "market", "dunes"];
+const PHOTO_EMOJIS = ["🌅", "🥾", "🏙️", "💦", "⛵", "🌇", "🍉", "🏜️"];
 
 function randomFrom(list) {
   return list[Math.floor(Math.random() * list.length)];
@@ -116,6 +153,7 @@ const TABS = [
   { key: "zoo", label: "Zoo", icon: "🦁" },
   { key: "toys", label: "Toys", icon: "🧸" },
   { key: "scores", label: "Scores", icon: "🏆" },
+  { key: "photos", label: "Photos", icon: "📸" },
   { key: "api", label: "Request", icon: "🌐" },
 ];
 
@@ -128,6 +166,7 @@ function Shell() {
         {tab === "zoo" && <ZooScreen />}
         {tab === "toys" && <ToysScreen />}
         {tab === "scores" && <ScoresScreen />}
+        {tab === "photos" && <PhotosScreen />}
         {tab === "api" && <ApiScreen />}
       </View>
       <View style={styles.tabBar}>
@@ -362,6 +401,7 @@ async function readScores() {
 async function insertPlayers(count) {
   const db = await getDb();
   const createdAt = new Date().toISOString();
+  const started = Date.now();
   await db.withTransactionAsync(async () => {
     const stmt = await db.prepareAsync(
       "INSERT INTO players (name, emoji, score, created_at) VALUES (?, ?, ?, ?)",
@@ -379,6 +419,11 @@ async function insertPlayers(count) {
       await stmt.finalizeAsync();
     }
   });
+  // Par do log da aba Photos: as duas medidas juntas dizem se o volume de
+  // eventos do updateHook do op-sqlite custa caro no thread JS.
+  if (count > 1) {
+    console.log(`[playground] expo-sqlite: ${count} inserts em ${Date.now() - started}ms`);
+  }
 }
 
 async function clearScores() {
@@ -413,6 +458,152 @@ async function wipeEverything() {
   } catch {
     /* sqlite_sequence só existe depois do 1º insert com AUTOINCREMENT */
   }
+  // op-sqlite é OUTRO banco, em outra conexão: o wipe não o alcançava, e como
+  // este é o botão de reset entre tomadas, a aba Photos ficava com dado velho.
+  const photos = await getPhotosDb();
+  const { rows: photoTables } = await photos.execute(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+  );
+  for (const { name } of photoTables ?? []) {
+    await photos.execute(`DELETE FROM "${name}"`);
+  }
+  try {
+    await photos.execute("DELETE FROM sqlite_sequence");
+  } catch {
+    /* idem */
+  }
+}
+
+// ==================================================== Photos (op-sqlite)
+// A aba que exercita o que a de SQLite não exercita: coluna BLOB (que volta
+// como ArrayBuffer neste driver) e UPDATE. E um segundo provider de banco no
+// Studio, ao lado do expo-sqlite.
+
+async function readPhotos() {
+  const db = await getPhotosDb();
+  const { rows: countRows } = await db.execute("SELECT COUNT(*) AS n FROM photos");
+  // length(thumb) em vez de thumb: a listagem não precisa trazer os bytes.
+  const { rows: latest } = await db.execute(
+    `SELECT id, title, emoji, likes, length(thumb) AS thumb_bytes
+       FROM photos ORDER BY id DESC LIMIT 10`,
+  );
+  return { total: Number(countRows?.[0]?.n ?? 0), latest: latest ?? [] };
+}
+
+async function insertPhotos(count, thumbBytes) {
+  const db = await getPhotosDb();
+  const createdAt = new Date().toISOString();
+  const started = Date.now();
+  const params = Array.from({ length: count }, () => {
+    const index = randomInt(0, PHOTO_TITLES.length - 1);
+    return [
+      PHOTO_TITLES[index],
+      PHOTO_EMOJIS[index],
+      thumbBytes > 0 ? makeThumb(thumbBytes) : null,
+      randomInt(0, 500),
+      createdAt,
+    ];
+  });
+  // Um comando com N conjuntos de parâmetros — o op-sqlite embrulha em
+  // transação sozinho.
+  await db.executeBatch([
+    ["INSERT INTO photos (title, emoji, thumb, likes, created_at) VALUES (?, ?, ?, ?, ?)", params],
+  ]);
+  if (count > 1) {
+    // Comparar com a aba Scores (expo-sqlite) diz se o volume de eventos do
+    // updateHook está custando caro no thread JS.
+    console.log(`[playground] op-sqlite: ${count} inserts em ${Date.now() - started}ms`);
+  }
+}
+
+/** UPDATE — o hook nativo do op-sqlite reporta a operação de verdade. */
+async function likePhoto(id) {
+  const db = await getPhotosDb();
+  await db.execute("UPDATE photos SET likes = likes + 1 WHERE id = ?", [id]);
+}
+
+async function renamePhoto(id) {
+  const db = await getPhotosDb();
+  const index = randomInt(0, PHOTO_TITLES.length - 1);
+  await db.execute("UPDATE photos SET title = ?, emoji = ? WHERE id = ?", [
+    PHOTO_TITLES[index],
+    PHOTO_EMOJIS[index],
+    id,
+  ]);
+}
+
+/** DELETE sem WHERE: o caso que o updateHook NÃO reporta. */
+async function clearPhotos() {
+  const db = await getPhotosDb();
+  await db.execute("DELETE FROM photos");
+  await db.execute("DELETE FROM sqlite_sequence WHERE name = 'photos'");
+}
+
+function PhotosScreen() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["photos"], queryFn: readPhotos });
+  const total = data?.total ?? 0;
+  const latest = data?.latest ?? [];
+
+  const refresh = { onSuccess: () => qc.invalidateQueries({ queryKey: ["photos"] }) };
+  const add = useMutation({ mutationFn: ({ count, thumb }) => insertPhotos(count, thumb), ...refresh });
+  const like = useMutation({ mutationFn: likePhoto, ...refresh });
+  const rename = useMutation({ mutationFn: renamePhoto, ...refresh });
+  const clear = useMutation({ mutationFn: clearPhotos, ...refresh });
+
+  const busy = add.isPending;
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <Header emoji="📸" title="Photo Roll" subtitle="Thumbnails live in a BLOB column" />
+      <BigCount value={total} unit={total === 1 ? "photo" : "photos"} />
+
+      <View style={styles.buttonRow}>
+        <BigButton
+          label="Add one"
+          emoji="➕"
+          onPress={() => add.mutate({ count: 1, thumb: 96 })}
+        />
+        <BigButton
+          label={busy ? "Adding…" : "Add 10,000"}
+          emoji="🚀"
+          onPress={() => add.mutate({ count: 10000, thumb: 0 })}
+          disabled={busy}
+        />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Latest</Text>
+        {latest.length === 0 ? (
+          <Text style={styles.empty}>No photos yet — add some!</Text>
+        ) : (
+          latest.map((photo) => (
+            <View key={photo.id} style={styles.scoreRow}>
+              <Pressable onPress={() => rename.mutate(photo.id)}>
+                <Text style={styles.scoreEmoji}>{photo.emoji}</Text>
+              </Pressable>
+              <Pressable style={styles.photoLabel} onPress={() => rename.mutate(photo.id)}>
+                <Text style={styles.scoreName}>{photo.title}</Text>
+                <Text style={styles.photoMeta}>
+                  {photo.thumb_bytes ? `${photo.thumb_bytes} B thumb` : "no thumb"}
+                </Text>
+              </Pressable>
+              <Pressable onPress={() => like.mutate(photo.id)}>
+                <Text style={styles.scoreValue}>♥ {photo.likes}</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
+      </View>
+
+      <GhostButton
+        label="Add one with an 8 KB thumb"
+        onPress={() => add.mutate({ count: 1, thumb: 8000 })}
+      />
+      <GhostButton label="Clear the roll" onPress={() => clear.mutate()} />
+      <LiveHint />
+    </ScrollView>
+  );
 }
 
 function ScoresScreen() {
@@ -1089,6 +1280,8 @@ const styles = StyleSheet.create({
   scoreEmoji: { fontSize: 24 },
   scoreName: { flex: 1, fontSize: 17, fontWeight: "700", color: INK },
   scoreValue: { fontSize: 16, fontWeight: "800", color: CORAL },
+  photoLabel: { flex: 1 },
+  photoMeta: { fontSize: 12, color: MUTED, marginTop: 1 },
 
   ghostButton: { alignItems: "center", paddingVertical: 14 },
   ghostButtonText: { color: MUTED, fontSize: 15, fontWeight: "700" },

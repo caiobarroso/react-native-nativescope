@@ -21,8 +21,13 @@ Este doc é o contrato para adicionar um módulo novo. O módulo de **network** 
 - **Boot independente de storage.** `babel-transformer.cjs` injeta
   `require("__rnsi_boot__")` no `InitializeCore` do RN (sempre no grafo, roda
   antes do app). `shims/_boot.js` chama `bootModules()`, que sobe o runtime e
-  instala os módulos `earlyBoot` ligados. Em produção o resolver troca
-  `__rnsi_boot__` por um stub vazio — nada do runtime entra no bundle de release.
+  instala os módulos `earlyBoot` ligados. **Em release o transformer não injeta
+  nada** — a instrumentação não existe no grafo de produção, em vez de existir
+  como stub vazio. O resolver ainda devolve `{ type: "empty" }` para
+  `__rnsi_boot__` em produção, como cinto para o caso de outro transformer
+  injetar o require. Motivo de não usar arquivo: um stub do pacote mora FORA da
+  árvore do projeto (entra por symlink) e o Metro precisa hasheá-lo, o que
+  derrubava `expo export` com "Failed to get the SHA-1".
 - **Vocabulário L3 genérico.** O protocolo tem `module.event` (runtime→Studio) e
   `module.command` (Studio→runtime). O runtime expõe `sendModuleEvent` e
   `onModuleCommand`. O servidor relaya/roteia isso pelos caminhos genéricos que
@@ -92,3 +97,8 @@ garante que o evento chega ao Studio, carimbado com o `deviceId` de origem.
 
 Se você precisou mexer em algum destes para plugar um módulo, provavelmente há um
 caminho aditivo melhor — reveja o contrato acima.
+
+Isto vale para **módulos**. Um **provider de storage novo** (outro banco, outro
+key/value) é outra coisa: aí mexer no resolver e adicionar um shim é o caminho
+certo, não o desvio. O checklist está nas docs, em
+`content/docs/storage/adding-a-provider.mdx`.

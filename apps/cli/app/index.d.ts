@@ -126,7 +126,7 @@ export interface NativeScopeNetworkModuleConfig {
 
 export interface NativeScopeModulesConfig {
   /**
-   * Módulo de Storage (AsyncStorage, MMKV, expo-sqlite). `true` liga com os
+   * Módulo de Storage (AsyncStorage, MMKV, expo-sqlite, op-sqlite). `true` liga com os
    * padrões; um objeto liga com opções (indicator, reactQuery).
    */
   storage?: boolean | NativeScopeStorageModuleConfig;
@@ -203,6 +203,23 @@ export function useInspectedMMKV<T = unknown>(
 };
 
 export function useInspectedSqlite<T = unknown>(
+  db: unknown,
+  query: string,
+  params?: unknown[],
+  options?: {
+    instanceId?: string;
+    table?: string;
+    source?: NativeScopeChangeSource;
+  },
+): {
+  rows: T[];
+  loading: boolean;
+  error: unknown;
+  reload(): Promise<void>;
+};
+
+/** Igual ao `useInspectedSqlite`, para `@op-engineering/op-sqlite`. */
+export function useInspectedOpSqlite<T = unknown>(
   db: unknown,
   query: string,
   params?: unknown[],

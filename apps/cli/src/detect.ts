@@ -12,7 +12,15 @@ const KNOWN_PROVIDERS: Array<{ dependency: string; label: string }> = [
   { dependency: "react-native-mmkv", label: "MMKV" },
   { dependency: "@react-native-async-storage/async-storage", label: "AsyncStorage" },
   { dependency: "expo-sqlite", label: "SQLite" },
+  { dependency: "@op-engineering/op-sqlite", label: "OP-SQLite" },
 ];
+
+/**
+ * Rótulos para a mensagem de "nada detectado". Derivado da lista de propósito:
+ * a string vivia duplicada em index.ts e envelheceu na primeira vez que a lista
+ * mudou.
+ */
+export const KNOWN_PROVIDER_LABELS = KNOWN_PROVIDERS.map((p) => p.label).join(", ");
 
 /**
  * Lê o package.json do projeto alvo e detecta os storages instalados.

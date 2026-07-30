@@ -18,7 +18,7 @@ const { withNativeScope, SHIM_DIR, SESSION_MODULE, CONFIG_MODULE, BOOT_MODULE, A
           context: Record<string, unknown>,
           moduleName: string,
           platform: string | null,
-        ) => { type: string; filePath: string };
+        ) => { type: string; filePath?: string };
       };
     };
     SHIM_DIR: string;
@@ -103,6 +103,25 @@ describe("withNativeScope", () => {
     const { context } = fakeContext();
     const result = wrapped.resolver.resolveRequest(context, "react-native-mmkv", "android");
     expect(result.filePath).toBe(join(SHIM_DIR, "mmkv.js"));
+  });
+
+  it("intercepta @op-engineering/op-sqlite — pacote com escopo casa por igualdade exata", () => {
+    const wrapped = withNativeScope({});
+    const { context } = fakeContext();
+    const result = wrapped.resolver.resolveRequest(
+      context,
+      "@op-engineering/op-sqlite",
+      "android",
+    );
+    expect(result.filePath).toBe(join(SHIM_DIR, "op-sqlite.js"));
+  });
+
+  it("subpath do op-sqlite NÃO é interceptado (o lookup é da string inteira)", () => {
+    const wrapped = withNativeScope({});
+    const { context, calls } = fakeContext();
+    wrapped.resolver.resolveRequest(context, "@op-engineering/op-sqlite/lib/typeorm", "android");
+    // Cai no resolver upstream — limite conhecido, documentado.
+    expect(calls.map((c) => c.moduleName)).toEqual(["@op-engineering/op-sqlite/lib/typeorm"]);
   });
 
   it("intercepta React Query em dev para auto-discovery de QueryClient", () => {
@@ -201,11 +220,15 @@ describe("withNativeScope", () => {
     expect(result.filePath).toBe(join(SHIM_DIR, "_boot.js"));
   });
 
-  it("resolve __rnsi_boot__ para o stub vazio em produção (dev === false)", () => {
+  it("resolve __rnsi_boot__ para MÓDULO VAZIO em produção — nunca um arquivo do pacote", () => {
     const wrapped = withNativeScope({});
     const { context } = fakeContext({ dev: false });
     const result = wrapped.resolver.resolveRequest(context, BOOT_MODULE, "ios");
-    expect(result.filePath).toBe(join(SHIM_DIR, "no-config.js"));
+    // Apontar para um arquivo aqui obrigaria o Metro a hasheá-lo, num caminho
+    // fora da árvore do projeto (o pacote entra por symlink). Era o que quebrava
+    // `expo export` no CI com "Failed to get the SHA-1".
+    expect(result).toEqual({ type: "empty" });
+    expect(result.filePath).toBeUndefined();
   });
 
   it("instala o wrapper do babelTransformerPath (injeta o boot no InitializeCore)", () => {

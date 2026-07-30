@@ -39,7 +39,8 @@ module.exports = withNativeScope(config);
 
 `withNativeScope(config)` **wraps** your existing Metro config — it doesn't replace it. All it adds
 is a resolver that, in development, swaps your storage imports (`@react-native-async-storage/async-storage`,
-`react-native-mmkv`, `expo-sqlite`) for instrumented versions and injects the session so the app
+`react-native-mmkv`, `expo-sqlite`, `@op-engineering/op-sqlite`) for instrumented versions and
+injects the session so the app
 knows which port and token to connect with. That resolver is the entire mechanism behind "no app
 code changes" — and in the all-in-one flow the CLI writes and wraps this file for you, so this is
 the only place you'd ever touch it by hand. In a release build it's a no-op: the real storage

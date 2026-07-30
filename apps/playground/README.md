@@ -4,12 +4,13 @@ A tiny Expo app that exercises the real NativeScope stack end to end — the
 Metro resolver, the injection seam, the shims, and the live Studio. Use it to
 verify changes on a real device (not the `--fake` simulated runtime).
 
-It has four bottom tabs. The storage screens are wired with React Query so
+It has five bottom tabs. The storage screens are wired with React Query so
 edits from the Studio show up live on screen:
 
 - 🦁 **Zoo** — MMKV (nested arrays, high volume)
 - 🧸 **Toys** — AsyncStorage (a small CRUD)
-- 🏆 **Scores** — SQLite (a leaderboard, high volume)
+- 🏆 **Scores** — expo-sqlite (a leaderboard, high volume)
+- 📸 **Photos** — op-sqlite (a BLOB column, inline UPDATE, high volume)
 - 🌐 **Request** — Network, divided into HTTP and GraphQL scenarios
 
 The playground is intentionally **excluded from the pnpm workspace** and installs
@@ -29,6 +30,21 @@ cd apps/playground && npm install
 Re-run the CLI build (step 1) whenever you change anything under
 `apps/cli/metro`, `apps/cli/src`, or `packages/runtime` — the playground picks
 up the fresh build through the `file:../cli` link.
+
+Because `@op-engineering/op-sqlite` is a JSI native module, the native project
+has to be regenerated once after installing it:
+
+```bash
+cd apps/playground && npx expo prebuild --clean --platform ios
+```
+
+If `pod install` dies with `Unicode Normalization not appropriate for
+ASCII-8BIT`, your shell has an empty `LANG`. That's a CocoaPods + Ruby ≥ 3.4
+incompatibility, unrelated to NativeScope — export a UTF-8 locale first:
+
+```bash
+export LANG=en_US.UTF-8
+```
 
 ## Run it on the iOS Simulator
 
@@ -72,9 +88,13 @@ http://127.0.0.1:4782/?token=<printed-token>
     ✓ Network inspector
   ```
 
-- The app boots with the four tabs.
-- The Studio shows all three storages (MMKV, AsyncStorage, SQLite) — ideally
-  together, not one-at-a-time.
+- The app boots with the five tabs.
+- The Studio shows every storage (MMKV, AsyncStorage, SQLite, OP-SQLite) — ideally
+  together, not one-at-a-time. The two SQLite drivers are separate providers.
+- **Nothing is logged when everything works** — that's the point. A
+  `[nativescope] op-sqlite: …` warning only appears when realtime came up
+  degraded. To confirm the app is instrumented at all, look for the providers in
+  the Studio sidebar, not for a log line.
 - The Studio shows **Network → Requests** and records both HTTP and GraphQL in
   the same timeline.
 - Edit a value in the Studio → the app flashes the "Storage updated" toast and

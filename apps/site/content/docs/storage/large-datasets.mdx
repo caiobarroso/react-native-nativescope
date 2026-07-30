@@ -39,9 +39,16 @@ instance writes NDJSON to disk chunk by chunk. Browsers without the File System 
 to a Blob download, which necessarily retains the export in browser memory; the UI identifies this
 fallback before large exports become a surprise.
 
-**SQLite counts are two-phase.** An immediate estimate renders instantly, prefixed with `~`, and is
-replaced by the exact count once computed in the background. You never wait on `COUNT(*)` over a
-hundred million rows to see a table.
+**SQLite counts are exact until exactness gets expensive.** A cheap upper bound on the table's size
+decides: below the budget the count is computed exactly and rendered right away, so an ordinary table
+never shows an approximation. Above it, an estimate renders instantly, prefixed with `~`, and the exact
+`COUNT(*)` lands from the background. You never wait on `COUNT(*)` over a hundred million rows to see
+a table, and you never read `~ 20026` off a table that holds fourteen rows.
+
+**BLOBs are read-only, and sized.** A binary column reads as `(blob, 7.8 KB)` — the real size, even
+though only the first 3 KB travel with the page. Double-click opens a hex/ASCII viewer that can stream
+the complete value and copy it as base64. There is no write path: the row grid never opens a text
+editor over binary, because saving that text would replace the bytes.
 
 ## Why the JS thread stays free
 
@@ -53,6 +60,30 @@ still inherits the cost of each storage library's `getAllKeys()` primitive.
 Bursts of writes are coalesced with a leading-and-trailing window, so a loop writing the same key a
 thousand times a second produces a steady trickle of events carrying counts, not a thousand
 renders. If the pending queue ever hits its cap, it flushes immediately rather than growing.
+
+## Deleting at scale
+
+Deletion never costs one round-trip per row.
+
+**Selected rows** go out as a single command and run inside a transaction on the device, chunked to
+stay under SQLite's variable limit. Deleting 1,200 selected rows is 3 statements, not 1,200 commands.
+Because it is one transaction, a failure part-way through rolls back — you never end up with half a
+deletion.
+
+**Emptying a table** is a single `DELETE FROM` with no `WHERE`, which is the form where SQLite applies
+its *truncate optimization* and discards pages instead of walking rows. In the synthetic dataset,
+100,001 rows are removed in under a second, and the cost barely moves with row count. The eraser
+button in the table toolbar does this; it asks you to type the table name first, and it cannot be
+undone — there is no snapshot of a million rows to restore.
+
+<Callout kind="note">
+Selecting rows only ever selects the rows loaded in the current window, never the whole table. When a
+table holds more rows than are loaded, the delete confirmation says so and points at the eraser
+button — so "select all" can never be mistaken for "empty the table".
+</Callout>
+
+Undo is offered for deletions up to 200 rows. Above that it would re-insert row by row and hold every
+cell in memory, so it is declined explicitly rather than offered and then stalling.
 
 ## The guarantee about completeness
 
