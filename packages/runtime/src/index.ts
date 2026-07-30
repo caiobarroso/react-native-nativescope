@@ -55,8 +55,9 @@ export {
   type MMKVInstanceLike,
 } from "./adapters/mmkv.ts";
 export {
-  createExpoSqliteAdapter,
-  type ExpoSqliteAdapter,
+  createSqliteAdapter,
+  type SqliteAdapter,
   type SQLiteDatabaseLike,
-} from "./adapters/expo-sqlite.ts";
+} from "./adapters/sqlite-core.ts";
+export { createExpoSqliteAdapter, type ExpoSqliteAdapter } from "./adapters/expo-sqlite.ts";
 export { installNetworkModule } from "./modules/network/index.ts";
