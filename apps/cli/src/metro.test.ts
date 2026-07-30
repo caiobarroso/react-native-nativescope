@@ -18,7 +18,7 @@ const { withNativeScope, SHIM_DIR, SESSION_MODULE, CONFIG_MODULE, BOOT_MODULE, A
           context: Record<string, unknown>,
           moduleName: string,
           platform: string | null,
-        ) => { type: string; filePath: string };
+        ) => { type: string; filePath?: string };
       };
     };
     SHIM_DIR: string;
@@ -220,11 +220,15 @@ describe("withNativeScope", () => {
     expect(result.filePath).toBe(join(SHIM_DIR, "_boot.js"));
   });
 
-  it("resolve __rnsi_boot__ para o stub vazio em produção (dev === false)", () => {
+  it("resolve __rnsi_boot__ para MÓDULO VAZIO em produção — nunca um arquivo do pacote", () => {
     const wrapped = withNativeScope({});
     const { context } = fakeContext({ dev: false });
     const result = wrapped.resolver.resolveRequest(context, BOOT_MODULE, "ios");
-    expect(result.filePath).toBe(join(SHIM_DIR, "no-config.js"));
+    // Apontar para um arquivo aqui obrigaria o Metro a hasheá-lo, num caminho
+    // fora da árvore do projeto (o pacote entra por symlink). Era o que quebrava
+    // `expo export` no CI com "Failed to get the SHA-1".
+    expect(result).toEqual({ type: "empty" });
+    expect(result.filePath).toBeUndefined();
   });
 
   it("instala o wrapper do babelTransformerPath (injeta o boot no InitializeCore)", () => {

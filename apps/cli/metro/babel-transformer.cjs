@@ -16,8 +16,15 @@
  * torná-lo dependência de um módulo que já está lá.
  *
  * Tudo o mais é delegado, sem alteração, para o transformer upstream (expo/RN).
- * O gate dev/prod fica no resolver (`__rnsi_boot__` → boot em dev, stub em prod),
- * então em produção este require vira no-op e nada do runtime entra no bundle.
+ *
+ * Em produção NÃO injetamos nada. Antes a injeção era incondicional e o resolver
+ * trocava `__rnsi_boot__` por um stub — mas aquele stub é um arquivo do PACOTE,
+ * fora da árvore do projeto, e o Metro precisa hasheá-lo para colocar no grafo.
+ * No export de release do CI isso quebrava com "Failed to get the SHA-1 for
+ * .../metro/shims/no-config.js": o pacote entra por symlink e o caminho real
+ * dependia de watchFolders ter pegado. Não injetar é mais simples e é uma
+ * garantia mais forte do que um stub vazio — em bundle de produção não existe
+ * NADA nosso a resolver.
  */
 
 let upstreamCache = null;
@@ -53,7 +60,11 @@ const INITIALIZE_CORE = /[/\\]react-native[/\\]Libraries[/\\]Core[/\\]Initialize
 
 function transform(params) {
   const upstream = getUpstream();
-  if (typeof params.src === "string" && INITIALIZE_CORE.test(params.filename || "")) {
+  // `options.dev` vem do Metro em toda transformação (metro-transform-worker
+  // repassa as transform options ao transformer). Só `=== false` desliga: se o
+  // campo faltasse, o comportamento seguro é o de dev.
+  const isRelease = params.options?.dev === false;
+  if (!isRelease && typeof params.src === "string" && INITIALIZE_CORE.test(params.filename || "")) {
     // Append (não prepend): roda DEPOIS do core do RN estar de pé — Platform e
     // afins já disponíveis — porém ainda antes do módulo principal do app.
     return upstream.transform({
@@ -71,6 +82,6 @@ module.exports = {
     const base =
       typeof upstream.getCacheKey === "function" ? String(upstream.getCacheKey(...args)) : "";
     // Bump próprio: garante que a mudança de comportamento invalide o cache do Metro.
-    return base + "|rnsi-boot-inject-v1";
+    return base + "|rnsi-boot-inject-v2";
   },
 };
