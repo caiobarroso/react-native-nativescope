@@ -469,6 +469,23 @@ export function RowGrid() {
   const limitRef = useRef(PAGE);
   const rowsRequestSeqRef = useRef(0);
   const handledActivityFocusRef = useRef(0);
+  /**
+   * Requisições de janela cheia em voo. O `loading` que desabilita a toolbar é
+   * CONTAGEM, não corrida: antes, quem ligava o flag só o desligava se ainda
+   * fosse o `rowsRequestSeqRef` mais recente — e como o refresh de realtime
+   * (refreshVisibleWindow) e o loadMore também bumpam esse seq sem nunca mexer
+   * em `loading`, um evento chegando no meio de um refresh deixava a toolbar
+   * desabilitada PARA SEMPRE (Insert, Delete, refresh e export).
+   */
+  const loadingCountRef = useRef(0);
+  const beginLoad = useCallback(() => {
+    loadingCountRef.current += 1;
+    setLoading(true);
+  }, []);
+  const endLoad = useCallback(() => {
+    loadingCountRef.current = Math.max(0, loadingCountRef.current - 1);
+    if (loadingCountRef.current === 0) setLoading(false);
+  }, []);
   // Espelhos em ref para o refresh realtime ler estado atual sem recriar o
   // callback a cada render (o que dispararia o efeito de nonce em loop).
   const rowsRef = useRef<Row[]>(rows);
@@ -500,7 +517,7 @@ export function RowGrid() {
     async (limit: number) => {
       if (!selection || !selectedTable) return;
       const requestSeq = ++rowsRequestSeqRef.current;
-      setLoading(true);
+      beginLoad();
       setError(null);
       try {
         const sort = sorting[0];
@@ -522,10 +539,12 @@ export function RowGrid() {
           setError(cause instanceof Error ? cause.message : String(cause));
         }
       } finally {
-        if (requestSeq === rowsRequestSeqRef.current) setLoading(false);
+        // Sem condição: o seq decide quem ESCREVE os dados, não quem devolve o
+        // flag. Um refresh de realtime pode ter bumpado o seq no meio.
+        endLoad();
       }
     },
-    [selection, selectedTable, sorting, schema?.columns],
+    [selection, selectedTable, sorting, schema?.columns, beginLoad, endLoad],
   );
 
   /**
@@ -1009,7 +1028,7 @@ export function RowGrid() {
     handledActivityFocusRef.current = activityFocus.token;
     const requestSeq = ++rowsRequestSeqRef.current;
     let cancelled = false;
-    setLoading(true);
+    beginLoad();
     setError(null);
     void loadRows(selection.providerId, selection.instanceId, selectedTable, {
       limit: PAGE,
@@ -1027,7 +1046,11 @@ export function RowGrid() {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     }).finally(() => {
-      if (!cancelled && requestSeq === rowsRequestSeqRef.current) setLoading(false);
+      // Sem condição, nem `cancelled` nem seq: `cancelled` só diz que o effect
+      // foi refeito, e se a nova execução caiu num dos early returns acima
+      // (rowId null, tabela diferente, sort ativo) ninguém devolveria o flag.
+      // O `cancelled` continua guardando os setters de DADOS, que é onde importa.
+      endLoad();
     });
 
     return () => {
@@ -1113,7 +1136,7 @@ export function RowGrid() {
     const undoSafe = selectedVisibleRows.every(
       (row) => (row.truncatedColumns?.length ?? 0) === 0,
     );
-    setLoading(true);
+    beginLoad();
     setDeletingRows(true);
     setError(null);
     try {
@@ -1142,7 +1165,7 @@ export function RowGrid() {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setDeletingRows(false);
-      setLoading(false);
+      endLoad();
     }
   }
 
