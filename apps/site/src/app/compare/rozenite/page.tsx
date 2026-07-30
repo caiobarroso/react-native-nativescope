@@ -38,7 +38,7 @@ const rows = [
   },
   {
     label: "Storage coverage",
-    native: "AsyncStorage, MMKV and expo-sqlite in one package today.",
+    native: "AsyncStorage, MMKV, expo-sqlite and op-sqlite in one package today.",
     rozenite: "Storage plugin covers key-value stores; SQLite uses its own plugin.",
   },
   {

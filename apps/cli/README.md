@@ -10,7 +10,7 @@ NativeScope is a plug-and-play debug environment for React Native apps. It is de
 
 Two modules ship today:
 
-- **Storage** automatically discovers AsyncStorage, MMKV, and expo-sqlite and adds professional inspection, editing, diff, restore, JSON, and SQL tooling.
+- **Storage** automatically discovers AsyncStorage, MMKV, expo-sqlite, and op-sqlite and adds professional inspection, editing, diff, restore, JSON, and SQL tooling.
 - **Network** captures HTTP and GraphQL operations in one timeline with structured replay, filters, capture sessions, performance insights, and automatic storage impact.
 
 No account. No cloud. No provider. No root wrapper. Your development data stays on your machine.
@@ -24,7 +24,7 @@ Open your app normally. NativeScope composes Metro in development, maintains the
 
 ## What ships today
 
-- Storage discovery for AsyncStorage, MMKV, and expo-sqlite.
+- Storage discovery for AsyncStorage, MMKV, expo-sqlite, and op-sqlite.
 - Realtime, bidirectional editing between the Studio and the running app.
 - Visual JSON navigation for nested objects, arrays, inline edits, and TypeScript shape export.
 - SQLite table tooling with tabs, sorting, selection, inline edits, inserts, and SQL execution.

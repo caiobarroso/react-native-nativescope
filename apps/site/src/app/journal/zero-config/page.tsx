@@ -66,7 +66,8 @@ export default function ZeroConfigArticlePage() {
         <p data-article-kicker>The attachment point</p>
         <h2>Meet the app where its imports resolve</h2>
         <p>
-          When Metro resolves <code>react-native-mmkv</code>, <code>expo-sqlite</code> or
+          When Metro resolves <code>react-native-mmkv</code>, <code>expo-sqlite</code>,{" "}
+          <code>@op-engineering/op-sqlite</code> or{" "}
           <code>@react-native-async-storage/async-storage</code> in development, NativeScope returns a
           small shim from its own package. The shim loads the real module, wraps the behavior needed
           for inspection, and re-exports the public API transparently.
