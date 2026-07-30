@@ -92,3 +92,8 @@ garante que o evento chega ao Studio, carimbado com o `deviceId` de origem.
 
 Se você precisou mexer em algum destes para plugar um módulo, provavelmente há um
 caminho aditivo melhor — reveja o contrato acima.
+
+Isto vale para **módulos**. Um **provider de storage novo** (outro banco, outro
+key/value) é outra coisa: aí mexer no resolver e adicionar um shim é o caminho
+certo, não o desvio. O checklist está nas docs, em
+`content/docs/storage/adding-a-provider.mdx`.

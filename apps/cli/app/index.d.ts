@@ -126,7 +126,7 @@ export interface NativeScopeNetworkModuleConfig {
 
 export interface NativeScopeModulesConfig {
   /**
-   * Módulo de Storage (AsyncStorage, MMKV, expo-sqlite). `true` liga com os
+   * Módulo de Storage (AsyncStorage, MMKV, expo-sqlite, op-sqlite). `true` liga com os
    * padrões; um objeto liga com opções (indicator, reactQuery).
    */
   storage?: boolean | NativeScopeStorageModuleConfig;
