@@ -52,15 +52,67 @@ function toParam(value: CellValue): string | number | null {
   return value;
 }
 
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/**
+ * Base64 sem depender de `btoa` — o React Native NÃO o polifila (nem o Hermes),
+ * e o fallback anterior devolvia os bytes CRUS rotulados como base64, então o
+ * Studio decodificava lixo. O caminho nunca doeu porque nenhuma tabela nossa
+ * tinha BLOB.
+ *
+ * Em blocos múltiplos de 3 para que cada pedaço feche em 4 caracteres: só o
+ * último pode precisar de padding, então juntar os pedaços é concatenação
+ * simples. O loop anterior concatenava 1 char por byte, o que num BLOB de
+ * alguns MB é stall de JS thread.
+ */
+function toBase64(bytes: Uint8Array): string {
+  const size = bytes.length;
+  if (size === 0) return "";
+  const CHUNK_BYTES = 3072;
+  const parts: string[] = [];
+  for (let start = 0; start < size; start += CHUNK_BYTES) {
+    const end = Math.min(start + CHUNK_BYTES, size);
+    let chunk = "";
+    let i = start;
+    for (; i + 2 < end; i += 3) {
+      const n = (bytes[i]! << 16) | (bytes[i + 1]! << 8) | bytes[i + 2]!;
+      chunk +=
+        BASE64_CHARS[(n >> 18) & 63]! +
+        BASE64_CHARS[(n >> 12) & 63]! +
+        BASE64_CHARS[(n >> 6) & 63]! +
+        BASE64_CHARS[n & 63]!;
+    }
+    // CHUNK_BYTES é múltiplo de 3, logo só o último bloco tem resto.
+    const rest = end - i;
+    if (rest === 1) {
+      const n = bytes[i]! << 16;
+      chunk += `${BASE64_CHARS[(n >> 18) & 63]!}${BASE64_CHARS[(n >> 12) & 63]!}==`;
+    } else if (rest === 2) {
+      const n = (bytes[i]! << 16) | (bytes[i + 1]! << 8);
+      chunk += `${BASE64_CHARS[(n >> 18) & 63]!}${BASE64_CHARS[(n >> 12) & 63]!}${BASE64_CHARS[(n >> 6) & 63]!}=`;
+    }
+    parts.push(chunk);
+  }
+  return parts.join("");
+}
+
 function toCell(value: unknown): CellValue {
   if (value === null || typeof value === "string" || typeof value === "number") return value;
   if (typeof value === "boolean") return value ? 1 : 0;
-  if (value instanceof Uint8Array) {
-    let binary = "";
-    for (const byte of value) binary += String.fromCharCode(byte);
-    // btoa indisponível em alguns runtimes RN — mas Uint8Array de SQLite em
-    // RN chega como base64 na prática; aqui cobrimos o caminho node.
-    return { blobBase64: globalThis.btoa ? globalThis.btoa(binary) : binary };
+  // BLOB chega em três formas conforme o driver: Uint8Array (expo-sqlite,
+  // node:sqlite), ArrayBuffer cru (op-sqlite faz `new ArrayBuffer` + memcpy)
+  // ou outra view. Sem os três ramos um ArrayBuffer cairia no String(value)
+  // lá embaixo e a célula viajaria como a string "[object ArrayBuffer]".
+  if (value instanceof Uint8Array) return { blobBase64: toBase64(value) };
+  if (value instanceof ArrayBuffer) return { blobBase64: toBase64(new Uint8Array(value)) };
+  if (ArrayBuffer.isView(value)) {
+    // byteOffset/byteLength importam: uma view parcial não deve arrastar o
+    // buffer inteiro.
+    return {
+      blobBase64: toBase64(
+        new Uint8Array(value.buffer as ArrayBuffer, value.byteOffset, value.byteLength),
+      ),
+    };
   }
   return String(value);
 }
