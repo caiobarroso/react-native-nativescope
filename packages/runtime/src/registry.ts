@@ -28,9 +28,9 @@ export function createRegistry(): AdapterRegistry {
         // nada que aponte para a causa.
         if (existing !== adapter) {
           console.warn(
-            `[nativescope] providerId duplicado: "${adapter.providerId}" já está ` +
-              `registrado como "${existing.label}". O segundo adapter ("${adapter.label}") ` +
-              `foi ignorado — cada provider precisa de um providerId único.`,
+            `[nativescope] duplicate providerId: "${adapter.providerId}" is already ` +
+              `registered as "${existing.label}". The second adapter ("${adapter.label}") ` +
+              `was ignored — every provider needs a unique providerId.`,
           );
         }
         return;

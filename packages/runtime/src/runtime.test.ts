@@ -114,7 +114,7 @@ describe("registry", () => {
 
     // Sem o aviso, o sintoma é só "o segundo provider não aparece no Studio".
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[0]).toContain("providerId duplicado");
+    expect(warn.mock.calls[0]?.[0]).toContain("duplicate providerId");
     expect(warn.mock.calls[0]?.[0]).toContain("sqlite");
     expect(registry.describe()).toHaveLength(1);
     expect(registry.describe()[0]?.label).toBe("SQLite");

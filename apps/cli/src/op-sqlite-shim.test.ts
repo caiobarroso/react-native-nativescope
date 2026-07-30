@@ -247,7 +247,7 @@ describe("op-sqlite shim", () => {
     const warnings = logs.filter((line) => line.includes("op-sqlite:"));
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("updateHook");
-    expect(warnings[0]).toContain("inspecionar e editar continuam funcionando");
+    expect(warnings[0]).toContain("reading and editing still work");
   });
 
   it("updateHook não embrulhável: avisa que um ORM pode nos derrubar", () => {

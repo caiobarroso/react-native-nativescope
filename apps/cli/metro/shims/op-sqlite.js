@@ -62,13 +62,12 @@ if (runtime) {
           warnedAboutRealtime = true;
           console.warn(
             !info.updateHook
-              ? "[nativescope] op-sqlite: este build não expõe updateHook (builds " +
-                  "libsql/Turso o compilam fora). O realtime passa a se basear nos " +
-                  "statements SQL — inspecionar e editar continuam funcionando."
-              : "[nativescope] op-sqlite: não foi possível embrulhar db.updateHook, " +
-                  "então um updateHook registrado pelo seu app (ou por um ORM) " +
-                  "substitui o do NativeScope e interrompe o realtime. Inspecionar " +
-                  "e editar continuam funcionando.",
+              ? "[nativescope] op-sqlite: this build has no updateHook (libsql/Turso " +
+                  "builds compile it out). Realtime falls back to inspecting SQL " +
+                  "statements — reading and editing still work."
+              : "[nativescope] op-sqlite: could not wrap db.updateHook, so an " +
+                  "updateHook registered by your app (or by an ORM) replaces " +
+                  "NativeScope's and stops realtime. Reading and editing still work.",
           );
         }
       } catch {
