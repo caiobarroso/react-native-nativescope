@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CELL_PREVIEW_LIMIT } from "@rnsi/protocol";
+import { BLOB_PREVIEW_BYTES, CELL_PREVIEW_LIMIT } from "@rnsi/protocol";
 import { createExpoSqliteAdapter, type SQLiteDatabaseLike } from "@rnsi/runtime";
 import { createNodeSqlite } from "./fakes/sqlite.ts";
 
@@ -147,6 +147,58 @@ describe("sqlite adapter — BLOB", () => {
 
     const full = await readCell(adapter);
     expect(full?.data).toBe(base64(payload));
+  });
+
+  it("byteLength é o tamanho REAL do BLOB, não o do preview", async () => {
+    const payload = new Uint8Array(Array.from({ length: 8_000 }, (_, i) => i % 256));
+    const page = await setup(payload).rows("app.db", "files", { limit: 10, offset: 0 });
+    const cell = page.rows[0]?.cells["payload"];
+
+    // Sem isto o Studio só sabe dizer "(blob)" — 1 byte e 5 MB ficam iguais.
+    expect(typeof cell === "object" && cell !== null && cell.byteLength).toBe(8_000);
+  });
+
+  it("preview codifica só os bytes do preview — o corte vem ANTES do base64", async () => {
+    // 5 MB: o caminho anterior convertia os 5 MB inteiros byte a byte para
+    // depois a listagem descartar tudo menos 4 KB.
+    const payload = new Uint8Array(5 * 1024 * 1024);
+    for (let i = 0; i < payload.length; i += 1) payload[i] = i % 256;
+    const page = await setup(payload).rows("app.db", "files", { limit: 10, offset: 0 });
+    const cell = page.rows[0]?.cells["payload"];
+
+    expect(typeof cell === "object" && cell !== null).toBe(true);
+    if (typeof cell === "object" && cell !== null) {
+      expect(cell.byteLength).toBe(5 * 1024 * 1024);
+      // Igualdade EXATA com o base64 dos primeiros BLOB_PREVIEW_BYTES bytes:
+      // prova que nada além do preview foi codificado (3072 bytes → 4096 chars,
+      // sem padding, então é um prefixo exato do valor completo).
+      expect(cell.blobBase64).toBe(base64(payload.subarray(0, BLOB_PREVIEW_BYTES)));
+      expect(cell.blobBase64.length).toBe(CELL_PREVIEW_LIMIT);
+    }
+  });
+
+  it("blob dentro do preview não é marcado como truncado", async () => {
+    const payload = new Uint8Array(Array.from({ length: 96 }, (_, i) => i));
+    const page = await setup(payload).rows("app.db", "files", { limit: 10, offset: 0 });
+    const cell = page.rows[0]?.cells["payload"];
+
+    expect(page.rows[0]?.truncatedColumns).toBeUndefined();
+    expect(typeof cell === "object" && cell !== null && cell.byteLength).toBe(96);
+    if (typeof cell === "object" && cell !== null) {
+      expect(cell.blobBase64).toBe(base64(payload));
+    }
+  });
+
+  it("exportRows e o console SQL levam o BLOB inteiro — lá não há preview", async () => {
+    const payload = new Uint8Array(Array.from({ length: 8_000 }, (_, i) => i % 256));
+    const adapter = setup(payload);
+
+    const console = await adapter.execute("app.db", "SELECT payload FROM files");
+    expect(console.kind).toBe("rows");
+    if (console.kind === "rows") {
+      const cell = console.rows[0]?.["payload"];
+      expect(typeof cell === "object" && cell !== null && cell.blobBase64).toBe(base64(payload));
+    }
   });
 
   it("não depende de btoa — funciona com globalThis.btoa ausente", async () => {

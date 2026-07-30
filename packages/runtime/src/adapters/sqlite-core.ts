@@ -1,4 +1,5 @@
 import {
+  BLOB_PREVIEW_BYTES,
   CELL_PREVIEW_LIMIT,
   type CellValue,
   type ChangeSource,
@@ -79,6 +80,13 @@ const DEFAULT_SELECT_LIMIT = 200;
 const ROWID_ALIAS = "__rnsi_rowid__";
 /** Contagem cacheada vale por este tempo além da invalidação por evento. */
 const COUNT_TTL_MS = 3000;
+/**
+ * Até quantas linhas (medidas por MAX(rowid), o limite superior barato) vale
+ * contar exato em linha. O COUNT(*) do SQLite varre o menor índice; nessa
+ * ordem de grandeza é ~1 ms num device, muito mais barato que exibir um número
+ * errado. Acima disso a contagem vira estimativa + COUNT(*) em background.
+ */
+const EXACT_COUNT_ROW_BUDGET = 50_000;
 
 /** Identificadores SQL sempre entre aspas duplas, escapadas. */
 function quoteIdent(name: string): string {
@@ -136,23 +144,35 @@ function toBase64(bytes: Uint8Array): string {
   return parts.join("");
 }
 
-function toCell(value: unknown): CellValue {
+/**
+ * `maxBytes` corta ANTES de codificar — é o que impede a listagem de percorrer
+ * um BLOB de 5 MB inteiro para depois jogar fora tudo menos o preview.
+ * `byteLength` é sempre o tamanho REAL, mesmo quando o base64 vem cortado: é o
+ * único jeito de a UI dizer "(blob, 8.0 KB)" em vez de só "(blob)".
+ */
+function toBlobCell(bytes: Uint8Array, maxBytes?: number): CellValue {
+  const byteLength = bytes.length;
+  const slice =
+    maxBytes !== undefined && byteLength > maxBytes ? bytes.subarray(0, maxBytes) : bytes;
+  return { blobBase64: toBase64(slice), byteLength };
+}
+
+function toCell(value: unknown, maxBytes?: number): CellValue {
   if (value === null || typeof value === "string" || typeof value === "number") return value;
   if (typeof value === "boolean") return value ? 1 : 0;
   // BLOB chega em três formas conforme o driver: Uint8Array (expo-sqlite,
   // node:sqlite), ArrayBuffer cru (op-sqlite faz `new ArrayBuffer` + memcpy)
   // ou outra view. Sem os três ramos um ArrayBuffer cairia no String(value)
   // lá embaixo e a célula viajaria como a string "[object ArrayBuffer]".
-  if (value instanceof Uint8Array) return { blobBase64: toBase64(value) };
-  if (value instanceof ArrayBuffer) return { blobBase64: toBase64(new Uint8Array(value)) };
+  if (value instanceof Uint8Array) return toBlobCell(value, maxBytes);
+  if (value instanceof ArrayBuffer) return toBlobCell(new Uint8Array(value), maxBytes);
   if (ArrayBuffer.isView(value)) {
     // byteOffset/byteLength importam: uma view parcial não deve arrastar o
     // buffer inteiro.
-    return {
-      blobBase64: toBase64(
-        new Uint8Array(value.buffer as ArrayBuffer, value.byteOffset, value.byteLength),
-      ),
-    };
+    return toBlobCell(
+      new Uint8Array(value.buffer as ArrayBuffer, value.byteOffset, value.byteLength),
+      maxBytes,
+    );
   }
   return String(value);
 }
@@ -179,11 +199,17 @@ export function createSqliteAdapter(identity: {
     schemaCache: Map<string, TableInfo>;
     /**
      * Contagem em duas fases (plano de grandes volumes §A3): estimativa
-     * imediata via MAX(rowid), COUNT(*) exato em background populando o
-     * cache. Um COUNT(*) numa tabela de milhões de linhas nunca fica no
-     * caminho crítico de uma resposta.
+     * imediata, COUNT(*) exato em background populando o cache. Um COUNT(*)
+     * numa tabela de milhões de linhas nunca fica no caminho crítico de uma
+     * resposta.
      */
     countCache: Map<string, { value: number; exact: boolean; expiresAt: number }>;
+    /**
+     * Último COUNT(*) exato conhecido por tabela. Sobrevive ao invalidateCount
+     * de propósito: depois de uma mutação, "quantas linhas tinha há pouco" é
+     * uma estimativa muito melhor que MAX(rowid) — ver tableCount.
+     */
+    lastExactCount: Map<string, number>;
   }
 
   const tracked = new Map<string, Tracked>();
@@ -301,10 +327,31 @@ export function createSqliteAdapter(identity: {
     return info;
   }
 
+  function rememberExactCount(t: Tracked, table: string, value: number): void {
+    t.countCache.set(table, { value, exact: true, expiresAt: Date.now() + COUNT_TTL_MS });
+    t.lastExactCount.set(table, value);
+  }
+
+  async function exactCount(
+    t: Tracked,
+    table: string,
+  ): Promise<{ total: number; exact: boolean }> {
+    const row = await t.db.getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`);
+    const total = Number(row[0]?.["n"] ?? 0);
+    rememberExactCount(t, table, total);
+    return { total, exact: true };
+  }
+
   /**
-   * Contagem em duas fases. Tabela rowid sem cache: devolve MAX(rowid)
-   * (custo ~O(log n)) como estimativa AGORA e dispara o COUNT(*) exato em
-   * background — o refresh seguinte pega o valor exato do cache.
+   * Contagem em duas fases, mas só quando a tabela é grande de verdade.
+   *
+   * MAX(rowid) é PÉSSIMO como estimativa de contagem: qualquer tabela que já
+   * apagou linhas tem rowid alto e poucas linhas — 14 linhas com rowid 20026
+   * estimavam "≈ 20026", errado por três ordens de magnitude, e era o caso
+   * comum (o botão de esvaziar tabela produz exatamente isso). No que MAX(rowid)
+   * é bom é em ser um limite superior BARATO do trabalho que o COUNT(*) daria:
+   * abaixo do orçamento contamos exato na hora e ninguém vê "≈"; acima, a
+   * estimativa se paga e o COUNT(*) vai para background.
    */
   async function tableCount(
     t: Tracked,
@@ -315,32 +362,26 @@ export function createSqliteAdapter(identity: {
     if (cached && cached.expiresAt > Date.now()) {
       return { total: cached.value, exact: cached.exact };
     }
-    if (identity === "rowid") {
-      const maxRow = await t.db.getAllAsync(
-        `SELECT MAX(rowid) AS m FROM ${quoteIdent(table)}`,
-      );
-      const estimate = Number(maxRow[0]?.["m"] ?? 0);
-      t.countCache.set(table, {
-        value: estimate,
-        exact: false,
-        expiresAt: Date.now() + COUNT_TTL_MS,
-      });
-      void t.db
-        .getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`)
-        .then((row) => {
-          t.countCache.set(table, {
-            value: Number(row[0]?.["n"] ?? 0),
-            exact: true,
-            expiresAt: Date.now() + COUNT_TTL_MS,
-          });
-        })
-        .catch(() => {});
-      return { total: estimate, exact: false };
-    }
-    const row = await t.db.getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`);
-    const total = Number(row[0]?.["n"] ?? 0);
-    t.countCache.set(table, { value: total, exact: true, expiresAt: Date.now() + COUNT_TTL_MS });
-    return { total, exact: true };
+    if (identity !== "rowid") return exactCount(t, table);
+
+    const maxRow = await t.db.getAllAsync(`SELECT MAX(rowid) AS m FROM ${quoteIdent(table)}`);
+    const maxRowid = Number(maxRow[0]?.["m"] ?? 0);
+    if (maxRowid <= EXACT_COUNT_ROW_BUDGET) return exactCount(t, table);
+
+    // Tabela realmente grande. A última contagem exata, se houver, erra por
+    // quantas linhas mudaram desde então — MAX(rowid) erra por quantas linhas
+    // já foram apagadas na vida da tabela.
+    const estimate = t.lastExactCount.get(table) ?? maxRowid;
+    t.countCache.set(table, {
+      value: estimate,
+      exact: false,
+      expiresAt: Date.now() + COUNT_TTL_MS,
+    });
+    void t.db
+      .getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`)
+      .then((row) => rememberExactCount(t, table, Number(row[0]?.["n"] ?? 0)))
+      .catch(() => {});
+    return { total: estimate, exact: false };
   }
 
   /** Mudança na tabela: a contagem cacheada deixou de valer. */
@@ -497,6 +538,7 @@ export function createSqliteAdapter(identity: {
         recentEvents: new Map(),
         schemaCache: new Map(),
         countCache: new Map(),
+        lastExactCount: new Map(),
       });
       for (const listener of registrationListeners) listener();
     },
@@ -525,8 +567,12 @@ export function createSqliteAdapter(identity: {
     notifySchemaChanged(instanceId, table) {
       const t = tracked.get(instanceId);
       if (!t) return;
-      // DDL do app (CREATE/DROP/ALTER): invalida só a tabela afetada.
+      // DDL do app (CREATE/DROP/ALTER): invalida só a tabela afetada. A
+      // contagem cai junto — depois de um DROP/CREATE do mesmo nome, o que
+      // sabíamos sobre o tamanho da tabela não vale mais nada.
       t.schemaCache.delete(table);
+      invalidateCount(t, table);
+      t.lastExactCount.delete(table);
     },
 
     async tables(instanceId) {
@@ -605,17 +651,15 @@ export function createSqliteAdapter(identity: {
           // Células grandes viajam truncadas — o conteúdo completo vem por
           // database.cell via stream. A listagem nunca carrega um BLOB de
           // 200 MB ou um JSON gigante inteiro.
-          const cell = toCell(value);
+          const cell = toCell(value, BLOB_PREVIEW_BYTES);
           if (typeof cell === "string" && cell.length > CELL_PREVIEW_LIMIT) {
             cells[column] = cell.slice(0, CELL_PREVIEW_LIMIT);
             truncatedColumns.push(column);
-          } else if (
-            cell !== null &&
-            typeof cell === "object" &&
-            cell.blobBase64.length > CELL_PREVIEW_LIMIT
-          ) {
-            cells[column] = { blobBase64: cell.blobBase64.slice(0, CELL_PREVIEW_LIMIT) };
-            truncatedColumns.push(column);
+          } else if (cell !== null && typeof cell === "object") {
+            // O base64 já veio cortado por toCell; `byteLength` diz se sobrou
+            // conteúdo — comparar o tamanho do base64 mediria a fatia, não o BLOB.
+            cells[column] = cell;
+            if ((cell.byteLength ?? 0) > BLOB_PREVIEW_BYTES) truncatedColumns.push(column);
           } else {
             cells[column] = cell;
           }
@@ -845,6 +889,13 @@ export function createSqliteAdapter(identity: {
         releaseTableEvents(t, table);
         throw error;
       }
+      // Sabemos exatamente quantas linhas saíram: descontar da última contagem
+      // conhecida é melhor que deixar a estimativa cair em MAX(rowid), que
+      // ignora deleções por definição.
+      const knownBefore = t.lastExactCount.get(table);
+      if (knownBefore !== undefined) {
+        t.lastExactCount.set(table, Math.max(0, knownBefore - rowsAffected));
+      }
       // Renova a janela para os eventos que o hook ainda entregar em atraso.
       suppressTableEvents(t, table, RECENT_EVENT_TTL_MS);
       // `emit` direto, não `emitOnce`: este é o evento autoritativo do lote e
@@ -869,6 +920,8 @@ export function createSqliteAdapter(identity: {
         releaseTableEvents(t, table);
         throw error;
       }
+      // A tabela está vazia — isto é conhecimento exato, não estimativa.
+      rememberExactCount(t, table, 0);
       suppressTableEvents(t, table, RECENT_EVENT_TTL_MS);
       emit(t, { table, rowId: null, operation: "delete", source: "studio" });
       return { rowsAffected };
@@ -897,8 +950,11 @@ export function createSqliteAdapter(identity: {
       // Mutação manual: o eco vem como "app"… a menos que marquemos. Sem
       // saber a tabela afetada, marcamos como studio via evento direto.
       // Mutação manual pode ser DDL — invalida schema e contagens inteiros.
+      // lastExactCount também: depois de um DROP/CREATE, "quantas linhas tinha"
+      // não é palpite conservador, é lixo.
       t.schemaCache.clear();
       t.countCache.clear();
+      t.lastExactCount.clear();
       const result = await t.db.runAsync(trimmed);
       if (!t.hasChangeListener) {
         emit(t, { table: "*", rowId: null, operation: "unknown", source: "studio" });

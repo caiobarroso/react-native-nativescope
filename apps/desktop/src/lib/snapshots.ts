@@ -6,6 +6,7 @@ import type {
   StorageValue,
   TableSchema,
 } from "@rnsi/protocol";
+import { blobLabel, isBlobCell } from "./cell-format.ts";
 import {
   fetchAllKeys,
   fetchAllTables,
@@ -211,10 +212,7 @@ export function valueText(value: StorageValue | null): string {
 export function cellPreview(cells: Record<string, CellValue>): string {
   const entries = Object.entries(cells).slice(0, 4);
   const body = entries
-    .map(
-      ([key, value]) =>
-        `${key}: ${typeof value === "object" && value !== null ? "(blob)" : String(value)}`,
-    )
+    .map(([key, value]) => `${key}: ${isBlobCell(value) ? blobLabel(value) : String(value)}`)
     .join(", ");
   return truncate(body, 120);
 }

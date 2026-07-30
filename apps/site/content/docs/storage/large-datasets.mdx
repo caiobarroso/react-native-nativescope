@@ -39,9 +39,16 @@ instance writes NDJSON to disk chunk by chunk. Browsers without the File System 
 to a Blob download, which necessarily retains the export in browser memory; the UI identifies this
 fallback before large exports become a surprise.
 
-**SQLite counts are two-phase.** An immediate estimate renders instantly, prefixed with `~`, and is
-replaced by the exact count once computed in the background. You never wait on `COUNT(*)` over a
-hundred million rows to see a table.
+**SQLite counts are exact until exactness gets expensive.** A cheap upper bound on the table's size
+decides: below the budget the count is computed exactly and rendered right away, so an ordinary table
+never shows an approximation. Above it, an estimate renders instantly, prefixed with `~`, and the exact
+`COUNT(*)` lands from the background. You never wait on `COUNT(*)` over a hundred million rows to see
+a table, and you never read `~ 20026` off a table that holds fourteen rows.
+
+**BLOBs are read-only, and sized.** A binary column reads as `(blob, 7.8 KB)` — the real size, even
+though only the first 3 KB travel with the page. Double-click opens a hex/ASCII viewer that can stream
+the complete value and copy it as base64. There is no write path: the row grid never opens a text
+editor over binary, because saving that text would replace the bytes.
 
 ## Why the JS thread stays free
 

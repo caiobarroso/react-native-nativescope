@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Binary,
   Braces,
   Download,
   Eraser,
@@ -49,7 +50,9 @@ import {
   updateCell,
 } from "../lib/studio-client.ts";
 import { createFileSink } from "../lib/export.ts";
+import { cellText, isBlobCell, type BlobCell } from "../lib/cell-format.ts";
 import { AppToast, type AppToastState } from "./AppToast.tsx";
+import { BlobCellModal } from "./BlobCellModal.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { JsonWorkspace } from "./ValueEditor.tsx";
 
@@ -64,12 +67,6 @@ const EMPTY_TABS: string[] = [];
 const SqlConsole = lazy(() =>
   import("./SqlConsole.tsx").then((module) => ({ default: module.SqlConsole })),
 );
-
-function cellText(value: CellValue): string {
-  if (value === null) return "NULL";
-  if (typeof value === "object") return "(blob)";
-  return String(value);
-}
 
 function refKey(ref: RowRef | null): string | null {
   return ref ? JSON.stringify(ref) : null;
@@ -94,6 +91,15 @@ interface JsonCellState {
   table: string;
   draft: string;
   original: string;
+}
+
+interface BlobCellState {
+  ref: RowRef;
+  column: string;
+  table: string;
+  /** Preview da listagem no começo; o conteúdo completo substitui ao carregar. */
+  cell: BlobCell;
+  truncated: boolean;
 }
 
 type SqlColumn = TableSchema["columns"][number];
@@ -471,6 +477,9 @@ export function RowGrid() {
   const [jsonCell, setJsonCell] = useState<JsonCellState | null>(null);
   const [jsonSaving, setJsonSaving] = useState(false);
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const [blobCell, setBlobCell] = useState<BlobCellState | null>(null);
+  const [blobLoading, setBlobLoading] = useState(false);
+  const [blobError, setBlobError] = useState<string | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const [activityRowFocus, setActivityRowFocus] = useState<{
@@ -680,6 +689,52 @@ export function RowGrid() {
     [selection, selectedTable],
   );
 
+  /** Substitui o preview do BLOB aberto pelo conteúdo completo (stream). */
+  const loadFullBlob = useCallback(async (): Promise<void> => {
+    if (!selection || !selectedTable || !blobCell) return;
+    setBlobError(null);
+    setBlobLoading(true);
+    try {
+      const full = await getFullCell(
+        selection.providerId,
+        selection.instanceId,
+        selectedTable,
+        blobCell.ref,
+        blobCell.column,
+      );
+      if (full === null) return;
+      setBlobCell((current) =>
+        current
+          ? // byteLength do preview é o tamanho REAL — preservar mantém o
+            // cabeçalho estável em vez de "encolher" para o que foi carregado.
+            {
+              ...current,
+              cell: { blobBase64: full.data, byteLength: current.cell.byteLength },
+              truncated: false,
+            }
+          : current,
+      );
+    } catch (cause) {
+      setBlobError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBlobLoading(false);
+    }
+  }, [selection, selectedTable, blobCell]);
+
+  /**
+   * Reset do ESTADO DE UI, e SÓ quando o usuário troca de alvo.
+   *
+   * Isto morava junto com o refetch acima, dependendo de `refresh`. Como o store
+   * entrega um array de `tables` NOVO a cada loadTables, e todo evento de
+   * realtime dispara um loadTables, a identidade de `refresh` mudava a cada
+   * poucos segundos num app que escreve — e este bloco então apagava a seleção
+   * de linhas (medido: ~4s para perder tudo), cancelava a edição inline, fechava
+   * os viewers de JSON/BLOB no meio do uso e voltava a janela carregada para as
+   * primeiras 50 linhas depois de você ter rolado.
+   *
+   * As deps são PRIMITIVAS de propósito: identidade de objeto do store não é
+   * sinal de que o usuário trocou de tabela.
+   */
   useEffect(() => {
     cellLoadAbortRef.current?.abort();
     cellLoadAbortRef.current = null;
@@ -692,11 +747,22 @@ export function RowGrid() {
     setInsertDraft({ values: {}, useNull: new Set() });
     setJsonCell(null);
     setJsonError(null);
-    void refresh(PAGE);
+    setBlobCell(null);
+    setBlobError(null);
     return () => {
       cellLoadAbortRef.current?.abort();
       cellLoadAbortRef.current = null;
     };
+  }, [selection?.providerId, selection?.instanceId, selectedTable]);
+
+  /**
+   * A consulta mudou (instância, tabela, ordenação, colunas) → refaz a busca.
+   * Declarado DEPOIS do reset acima porque React roda os efeitos na ordem de
+   * declaração: numa troca de tabela o reset já zerou `limitRef`, então aqui a
+   * página volta a ser PAGE; nos outros casos a janela rolada é preservada.
+   */
+  useEffect(() => {
+    void refresh(limitRef.current);
   }, [refresh]);
 
   useEffect(() => {
@@ -851,13 +917,38 @@ export function RowGrid() {
           }
 
           const canOpenJson = rowRef !== null && !isTruncated && isJsonCell(value, schemaColumn);
+          /**
+           * BLOB é sempre read-only. O editor inline é de texto: abri-lo aqui
+           * gravaria o rótulo "(blob, 96 B)" — ou o base64 completo — em cima
+           * dos bytes, e o runtime não tem como distinguir isso de um write de
+           * texto legítimo. Abrimos o visualizador em vez da edição.
+           */
+          const blob = isBlobCell(value) && rowRef !== null ? value : null;
+          const openBlob =
+            blob === null || rowRef === null
+              ? undefined
+              : () => {
+                  setBlobError(null);
+                  setBlobCell({
+                    ref: rowRef,
+                    column: schemaColumn.name,
+                    table: selectedTable ?? "",
+                    cell: blob,
+                    truncated: isTruncated,
+                  });
+                };
 
           return (
             <div className="flex h-8 min-w-0 items-center">
               <button
                 type="button"
                 onDoubleClick={() => {
-                  if (readOnly || rowRef === null) return;
+                  if (rowRef === null) return;
+                  if (openBlob) {
+                    openBlob();
+                    return;
+                  }
+                  if (readOnly) return;
                   if (isTruncated) {
                     // Editar sobre preview truncado corromperia — carrega o
                     // conteúdo completo (stream) antes de abrir a edição.
@@ -868,13 +959,29 @@ export function RowGrid() {
                   }
                   onStartEdit(rowRef, schemaColumn.name, value === null ? "" : cellText(value));
                 }}
-                title={value === null ? "NULL" : cellText(value)}
+                title={
+                  value === null
+                    ? "NULL"
+                    : openBlob
+                      ? `${cellText(value)} — read-only, double-click to inspect the bytes`
+                      : cellText(value)
+                }
                 className={`block h-full min-w-0 flex-1 truncate px-3 text-left ${
                   readOnly || rowRef === null ? "cursor-default" : "cursor-text"
-                } ${value === null ? "text-text-subtle" : "text-text"}`}
+                } ${value === null ? "text-text-subtle" : openBlob ? "text-text-muted" : "text-text"}`}
               >
                 {value === null ? "NULL" : cellText(value)}
               </button>
+              {openBlob && (
+                <button
+                  type="button"
+                  onClick={openBlob}
+                  title="Inspect BLOB (read-only)"
+                  className="mr-1 shrink-0 rounded p-1 text-text-subtle opacity-70 hover:bg-accent-wash hover:text-accent group-hover:opacity-100"
+                >
+                  <Binary size={12} strokeWidth={1.5} />
+                </button>
+              )}
               {canOpenJson && (
                 <button
                   type="button"
@@ -894,7 +1001,9 @@ export function RowGrid() {
                   <Braces size={12} strokeWidth={1.5} />
                 </button>
               )}
-              {isTruncated && rowRef !== null && (
+              {/* BLOB não passa por aqui: este caminho terminava em
+                  onStartEdit com o base64 completo dentro de um <input>. */}
+              {isTruncated && rowRef !== null && blob === null && (
                 <button
                   type="button"
                   onClick={() => {
@@ -1148,9 +1257,13 @@ export function RowGrid() {
     // O undo re-insere linha a linha, então só faz sentido em seleções pequenas.
     // Em milhares de linhas ele levaria mais que a própria exclusão e ainda
     // guardaria tudo em memória. Células truncadas também matam o undo: ele
-    // re-inseriria dados cortados.
+    // re-inseriria dados cortados. BLOB idem — o write de BLOB não existe no
+    // protocolo, então o undo falharia DEPOIS da exclusão, e um undo que não
+    // desfaz é pior que nenhum.
+    const hasBlob = selectedVisibleRows.some((row) => Object.values(row.cells).some(isBlobCell));
     const undoSafe =
       deletedRows.length <= UNDO_ROW_LIMIT &&
+      !hasBlob &&
       selectedVisibleRows.every((row) => (row.truncatedColumns?.length ?? 0) === 0);
     beginLoad();
     setDeletingRows(true);
@@ -1170,7 +1283,9 @@ export function RowGrid() {
         ? ""
         : deletedRows.length > UNDO_ROW_LIMIT
           ? " (undo unavailable: too many rows)"
-          : " (undo unavailable: large cell was truncated)";
+          : hasBlob
+            ? " (undo unavailable: row contains a BLOB)"
+            : " (undo unavailable: large cell was truncated)";
       showToast({
         message: `${selectedTable}: ${rowsAffected} row${rowsAffected === 1 ? "" : "s"} deleted${undoNote}`,
         undo: undoSafe
@@ -1613,6 +1728,21 @@ export function RowGrid() {
             onClose={() => {
               setJsonCell(null);
               setJsonError(null);
+            }}
+          />
+        )}
+        {blobCell && (
+          <BlobCellModal
+            table={blobCell.table}
+            column={blobCell.column}
+            cell={blobCell.cell}
+            truncated={blobCell.truncated}
+            loading={blobLoading}
+            error={blobError}
+            onLoadFull={() => void loadFullBlob()}
+            onClose={() => {
+              setBlobCell(null);
+              setBlobError(null);
             }}
           />
         )}
