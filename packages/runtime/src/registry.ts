@@ -19,7 +19,22 @@ export function createRegistry(): AdapterRegistry {
 
   return {
     register(adapter) {
-      if (adapters.has(adapter.providerId)) return;
+      const existing = adapters.get(adapter.providerId);
+      if (existing) {
+        // Registrar o MESMO adapter duas vezes é rotina: shim reavaliado por
+        // Fast Refresh, import duplicado. Dois adapters DIFERENTES disputando
+        // o mesmo providerId é bug de quem escreveu o provider novo, e o
+        // sintoma — o segundo simplesmente não aparece no Studio — não tem
+        // nada que aponte para a causa.
+        if (existing !== adapter) {
+          console.warn(
+            `[nativescope] providerId duplicado: "${adapter.providerId}" já está ` +
+              `registrado como "${existing.label}". O segundo adapter ("${adapter.label}") ` +
+              `foi ignorado — cada provider precisa de um providerId único.`,
+          );
+        }
+        return;
+      }
       adapters.set(adapter.providerId, adapter);
       for (const listener of listeners) listener(adapter);
     },

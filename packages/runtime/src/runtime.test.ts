@@ -92,6 +92,34 @@ describe("registry", () => {
     expect(registry.describe()).toHaveLength(1);
     expect(registry.describe()[0]?.label).toBe("MMKV");
   });
+
+  it("registrar o MESMO adapter de novo é silencioso (Fast Refresh, import duplicado)", () => {
+    const registry = createRegistry();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const adapter = createMemoryAdapter({ providerId: "mmkv", label: "MMKV" });
+
+    registry.register(adapter);
+    registry.register(adapter);
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("dois adapters DIFERENTES com o mesmo providerId: avisa e mantém o primeiro", () => {
+    const registry = createRegistry();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    registry.register(createMemoryAdapter({ providerId: "sqlite", label: "SQLite" }));
+    registry.register(createMemoryAdapter({ providerId: "sqlite", label: "OP-SQLite" }));
+
+    // Sem o aviso, o sintoma é só "o segundo provider não aparece no Studio".
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("providerId duplicado");
+    expect(warn.mock.calls[0]?.[0]).toContain("sqlite");
+    expect(registry.describe()).toHaveLength(1);
+    expect(registry.describe()[0]?.label).toBe("SQLite");
+    warn.mockRestore();
+  });
 });
 
 describe("command handler", () => {
