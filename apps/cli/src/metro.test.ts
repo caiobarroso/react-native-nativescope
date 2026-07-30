@@ -105,6 +105,25 @@ describe("withNativeScope", () => {
     expect(result.filePath).toBe(join(SHIM_DIR, "mmkv.js"));
   });
 
+  it("intercepta @op-engineering/op-sqlite — pacote com escopo casa por igualdade exata", () => {
+    const wrapped = withNativeScope({});
+    const { context } = fakeContext();
+    const result = wrapped.resolver.resolveRequest(
+      context,
+      "@op-engineering/op-sqlite",
+      "android",
+    );
+    expect(result.filePath).toBe(join(SHIM_DIR, "op-sqlite.js"));
+  });
+
+  it("subpath do op-sqlite NÃO é interceptado (o lookup é da string inteira)", () => {
+    const wrapped = withNativeScope({});
+    const { context, calls } = fakeContext();
+    wrapped.resolver.resolveRequest(context, "@op-engineering/op-sqlite/lib/typeorm", "android");
+    // Cai no resolver upstream — limite conhecido, documentado.
+    expect(calls.map((c) => c.moduleName)).toEqual(["@op-engineering/op-sqlite/lib/typeorm"]);
+  });
+
   it("intercepta React Query em dev para auto-discovery de QueryClient", () => {
     const wrapped = withNativeScope({});
     const { context } = fakeContext();

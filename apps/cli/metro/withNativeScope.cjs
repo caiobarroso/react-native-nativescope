@@ -27,6 +27,7 @@ const SHIM_TARGETS = {
   "@tanstack/react-query": "react-query.js",
   "react-native-mmkv": "mmkv.js",
   "expo-sqlite": "expo-sqlite.js",
+  "@op-engineering/op-sqlite": "op-sqlite.js",
 };
 
 /** módulo virtual que entrega porta+token da sessão ao shim */
