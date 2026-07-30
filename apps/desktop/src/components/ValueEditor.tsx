@@ -2306,6 +2306,18 @@ export function ValueEditor() {
   const [convertTarget, setConvertTarget] = useState<ValueType | null>(null);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const pendingActionRef = useRef<JsonChangeAction>("edited");
+  /**
+   * Write agendado e ainda não executado. Existe porque o cleanup do debounce
+   * cancela o timer, e trocar de chave (ou desmontar) dentro da janela fazia a
+   * edição desaparecer em silêncio — o usuário confirmava um delete, via a
+   * linha sumir, e o valor voltava intacto depois.
+   */
+  const pendingSaveRef = useRef<{
+    providerId: string;
+    instanceId: string;
+    key: string;
+    value: StorageValue;
+  } | null>(null);
   const saveSeqRef = useRef(0);
   const toastIdRef = useRef(1);
   const fullLoadAbortRef = useRef<AbortController | null>(null);
@@ -2434,8 +2446,10 @@ export function ValueEditor() {
     const action = pendingActionRef.current;
     const seq = saveSeqRef.current + 1;
     saveSeqRef.current = seq;
+    pendingSaveRef.current = { providerId, instanceId, key, value: valueToSave };
 
     const timer = window.setTimeout(() => {
+      pendingSaveRef.current = null;
       setState("saving");
       setError(null);
       void setValue(providerId, instanceId, key, valueToSave)
@@ -2459,7 +2473,10 @@ export function ValueEditor() {
           setError(cause instanceof Error ? cause.message : String(cause));
           setState("ready");
         });
-    }, draftType === "json" ? 450 : 650);
+      // Só DIGITAR merece debounce. Deletar, duplicar e adicionar são ações
+      // discretas e já confirmadas — segurá-las por 450ms só cria uma janela em
+      // que a ação pode ser perdida.
+    }, action === "edited" ? (draftType === "json" ? 450 : 650) : 0);
 
     return () => window.clearTimeout(timer);
   }, [
@@ -2474,6 +2491,27 @@ export function ValueEditor() {
     state,
     truncatedInfo,
   ]);
+
+  /**
+   * Rede de segurança: sair da chave (ou desmontar o editor) não pode descartar
+   * uma edição que o usuário já fez. O cleanup do debounce acima cancela o
+   * timer, então sem isto o write simplesmente nunca aconteceria — em silêncio.
+   *
+   * Deliberadamente fire-and-forget: já não estamos mais nesta chave, então
+   * tocar estado do componente no retorno corromperia o que está na tela agora.
+   */
+  useEffect(() => {
+    return () => {
+      const pending = pendingSaveRef.current;
+      if (!pending) return;
+      pendingSaveRef.current = null;
+      void setValue(pending.providerId, pending.instanceId, pending.key, pending.value).catch(
+        () => {
+          /* o Studio já saiu desta chave; não há onde mostrar o erro */
+        },
+      );
+    };
+  }, [selectedKey, selection]);
 
   useEffect(() => {
     if (!toast) return;
