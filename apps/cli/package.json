@@ -1,6 +1,6 @@
 {
   "name": "react-native-nativescope",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A local, plug-and-play debugging environment for React Native apps.",
   "license": "MIT",
   "author": "Caio Barroso",
