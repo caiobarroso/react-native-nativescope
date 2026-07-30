@@ -27,7 +27,7 @@ Open your app normally. NativeScope composes Metro in development, maintains the
 - Storage discovery for AsyncStorage, MMKV, expo-sqlite, and op-sqlite.
 - Realtime, bidirectional editing between the Studio and the running app.
 - Visual JSON navigation for nested objects, arrays, inline edits, and TypeScript shape export.
-- SQLite table tooling with tabs, sorting, selection, inline edits, inserts, and SQL execution.
+- SQLite table tooling with tabs, sorting, selection, inline edits, inserts, bulk delete, and SQL execution.
 - Snapshots and diff to compare storage changes and restore safely.
 - HTTP and GraphQL inspection with structured replay, session insights, sound rules, and storage impact.
 - A local-first workflow over `127.0.0.1`, with no login, telemetry, or hosted data path.
