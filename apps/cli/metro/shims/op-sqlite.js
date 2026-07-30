@@ -32,7 +32,7 @@ if (runtime) {
     // Uma instância por instanceId, viva pelo resto da sessão: é ela que
     // atravessa o ciclo close/reopen.
     const instances = new Map();
-    let logged = false;
+    let warnedAboutRealtime = false;
 
     const track = (options, db) => {
       try {
@@ -53,13 +53,22 @@ if (runtime) {
           hasChangeListener: instance.hasChangeListener(),
         });
 
-        // Uma linha, uma vez: responde metade das dúvidas de um E2E ruim.
-        if (!logged) {
-          logged = true;
-          const info = instance.diagnostics();
-          console.log(
-            `[nativescope] op-sqlite: updateHook=${info.updateHook ? "installed" : "missing"}` +
-              `, multiplex=${info.multiplex ? "yes" : "no"}`,
+        // Silêncio quando está tudo certo — como todos os outros shims. Só
+        // falamos quando o realtime saiu DEGRADADO, que é o caso em que o
+        // usuário precisa saber por que a timeline está menos precisa do que a
+        // documentação promete. Uma vez por sessão, não por banco.
+        const info = instance.diagnostics();
+        if (!warnedAboutRealtime && !(info.updateHook && info.multiplex)) {
+          warnedAboutRealtime = true;
+          console.warn(
+            !info.updateHook
+              ? "[nativescope] op-sqlite: este build não expõe updateHook (builds " +
+                  "libsql/Turso o compilam fora). O realtime passa a se basear nos " +
+                  "statements SQL — inspecionar e editar continuam funcionando."
+              : "[nativescope] op-sqlite: não foi possível embrulhar db.updateHook, " +
+                  "então um updateHook registrado pelo seu app (ou por um ORM) " +
+                  "substitui o do NativeScope e interrompe o realtime. Inspecionar " +
+                  "e editar continuam funcionando.",
           );
         }
       } catch {

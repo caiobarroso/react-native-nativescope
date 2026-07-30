@@ -17,14 +17,27 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(currentDir, "../metro/shims/op-sqlite.js"), "utf8");
 
 /** Banco op-sqlite mínimo — o comportamento do adapter é testado no testkit. */
-function fakeDb(): OpSqliteDatabaseLike & { hooked: boolean } {
+function fakeDb(options: { updateHookWritable?: boolean } = {}): OpSqliteDatabaseLike & {
+  hooked: boolean;
+} {
   const db = {
     hooked: false,
     execute: async () => ({ rows: [], rowsAffected: 0 }),
-    updateHook(callback: unknown) {
-      db.hooked = typeof callback === "function";
-    },
+  } as OpSqliteDatabaseLike & { hooked: boolean };
+  const install = (callback: unknown): void => {
+    db.hooked = typeof callback === "function";
   };
+  if (options.updateHookWritable === false) {
+    // Simula um HostObject JSI cujo método não pode ser sobrescrito.
+    Object.defineProperty(db, "updateHook", {
+      value: install,
+      writable: false,
+      configurable: false,
+      enumerable: true,
+    });
+  } else {
+    db.updateHook = install;
+  }
   return db;
 }
 
@@ -212,27 +225,41 @@ describe("op-sqlite shim", () => {
     expect((exported as { IOS_LIBRARY_PATH?: string }).IOS_LIBRARY_PATH).toBe("/Library");
   });
 
-  it("loga o diagnóstico uma vez só", () => {
+  it("caminho feliz: NENHUM log — um devtool não fala quando está tudo certo", () => {
     const { exported, logs } = runShim({ real: { open: () => fakeDb() } });
 
     exported.open?.({ name: "a.db" });
     exported.open?.({ name: "b.db" });
 
-    const diagnostics = logs.filter((line) => line.includes("op-sqlite:"));
-    expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]).toContain("updateHook=installed");
-    expect(diagnostics[0]).toContain("multiplex=yes");
+    expect(logs).toEqual([]);
   });
 
-  it("build sem updateHook: registra e avisa no log, sem quebrar", () => {
+  it("build sem updateHook: registra, avisa o que degradou, e não quebra", () => {
     const { exported, registry, logs } = runShim({
       real: { open: () => ({ execute: async () => ({ rows: [], rowsAffected: 0 }) }) },
     });
 
     exported.open?.({ name: "libsql.db" });
+    exported.open?.({ name: "outro.db" });
 
-    expect(registry.describe()[0]?.instances).toHaveLength(1);
-    expect(logs.join("\n")).toContain("updateHook=missing");
+    expect(registry.describe()[0]?.instances).toHaveLength(2);
+    // Uma vez por sessão, não por banco.
+    const warnings = logs.filter((line) => line.includes("op-sqlite:"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("updateHook");
+    expect(warnings[0]).toContain("inspecionar e editar continuam funcionando");
+  });
+
+  it("updateHook não embrulhável: avisa que um ORM pode nos derrubar", () => {
+    const { exported, logs } = runShim({
+      real: { open: () => fakeDb({ updateHookWritable: false }) },
+    });
+
+    exported.open?.({ name: "hostobject.db" });
+
+    const warnings = logs.filter((line) => line.includes("op-sqlite:"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("db.updateHook");
   });
 
   it("falha na instrumentação não impede o app de abrir o banco", () => {

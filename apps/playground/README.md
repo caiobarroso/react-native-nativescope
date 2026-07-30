@@ -91,8 +91,10 @@ http://127.0.0.1:4782/?token=<printed-token>
 - The app boots with the five tabs.
 - The Studio shows every storage (MMKV, AsyncStorage, SQLite, OP-SQLite) — ideally
   together, not one-at-a-time. The two SQLite drivers are separate providers.
-- On first launch the terminal logs `[nativescope] op-sqlite: updateHook=installed,
-  multiplex=yes` — that one line confirms realtime is wired.
+- **Nothing is logged when everything works** — that's the point. A
+  `[nativescope] op-sqlite: …` warning only appears when realtime came up
+  degraded. To confirm the app is instrumented at all, look for the providers in
+  the Studio sidebar, not for a log line.
 - The Studio shows **Network → Requests** and records both HTTP and GraphQL in
   the same timeline.
 - Edit a value in the Studio → the app flashes the "Storage updated" toast and
