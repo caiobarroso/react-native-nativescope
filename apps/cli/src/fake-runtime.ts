@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { WebSocket } from "ws";
+import { NETWORK_BODY_INLINE_LIMIT } from "@rnsi/protocol";
 import {
   startRuntime,
   createMemoryAdapter,
@@ -464,7 +465,32 @@ export function startFakeRuntime(options: {
         2,
       ),
     },
+    {
+      // Corpo grande de propósito: é o caso em que "Load full body" tem de sair
+      // por stream. Antes ele voltava inteiro num command-result e o runtime
+      // gritava "frame exceeds the wire budget" no terminal do app.
+      method: "GET",
+      pathq: "/reports/export?range=90d",
+      status: 200,
+      duration: 1840,
+      response: JSON.stringify(
+        {
+          range: "90d",
+          rows: Array.from({ length: 4000 }, (_, i) => ({
+            id: i + 1,
+            sku: `SKU-${String(i + 1).padStart(6, "0")}`,
+            label: `Item de relatório ${i + 1} com descrição longa para inflar o corpo`,
+            revenue: Number(((i * 137) % 9999) + 0.99),
+            region: ["norte", "nordeste", "sudeste", "sul", "centro-oeste"][i % 5],
+          })),
+        },
+        null,
+        2,
+      ),
+    },
   ];
+  /** Preview no evento; o resto vem por get-body. Espelha maxBodyPreview do device. */
+  const NET_PREVIEW_CHARS = 4 * 1024;
   const netStatusText: Record<number, string> = {
     200: "OK",
     404: "Not Found",
@@ -473,6 +499,13 @@ export function startFakeRuntime(options: {
   let netId = 1;
   let netCursor = 0;
   const emittedById = new Map<string, Record<string, unknown>>();
+  /**
+   * Corpo ÍNTEGRO por request, para o get-body ter o que devolver — inclusive
+   * acima do limite inline, que é o caminho de stream. Sem isto o fake não
+   * exercitava o "load full body" de corpo grande, que é justamente onde o
+   * command-result estourava o orçamento de fio.
+   */
+  const fullBodies = new Map<string, { request: string | null; response: string | null }>();
   const emitRequest = (spec: NetSpec): void => {
     const q = spec.pathq.indexOf("?");
     const path = q === -1 ? spec.pathq : spec.pathq.slice(0, q);
@@ -510,20 +543,22 @@ export function startFakeRuntime(options: {
         "content-type": "application/json; charset=utf-8",
         "content-length": String(Buffer.byteLength(resText)),
       },
+      // Preview capado como no device: o EVENTO também tem orçamento de fio, e
+      // o corpo íntegro vem sob demanda por get-body.
       requestBody: reqText
         ? {
-            text: reqText,
+            text: reqText.slice(0, NET_PREVIEW_CHARS),
             size: Buffer.byteLength(reqText),
-            truncated: false,
+            truncated: reqText.length > NET_PREVIEW_CHARS,
             contentType: "application/json",
             kind: "json",
           }
         : null,
       responseBody: resText
         ? {
-            text: resText,
+            text: resText.slice(0, NET_PREVIEW_CHARS),
             size: Buffer.byteLength(resText),
-            truncated: false,
+            truncated: resText.length > NET_PREVIEW_CHARS,
             contentType: "application/json",
             kind:
               resText.trimStart().startsWith("{") ||
@@ -534,6 +569,7 @@ export function startFakeRuntime(options: {
         : null,
     };
     emittedById.set(record.id as string, record);
+    fullBodies.set(record.id as string, { request: reqText, response: resText || null });
     runtime.sendModuleEvent("network", "request", record);
 
     // Efeito de storage correlacionado — o "app" escreve logo após certas
@@ -571,7 +607,7 @@ export function startFakeRuntime(options: {
   // Replay simulado: reexecuta a partir do capturado + overrides, emitindo uma
   // nova request (replayOf) — espelha o módulo real no device (que é testado à
   // parte). get-body devolve indisponível (o fake não guarda corpo íntegro).
-  runtime.onModuleCommand("network", (command, data) => {
+  runtime.onModuleCommand("network", (command, data, context) => {
     const input = (data && typeof data === "object" ? data : {}) as {
       id?: string;
       overrides?: {
@@ -633,7 +669,30 @@ export function startFakeRuntime(options: {
       runtime.sendModuleEvent("network", "request", record);
       return { id: newId };
     }
-    if (command === "get-body") return { available: false, body: null };
+    if (command === "get-body") {
+      const stored = input.id ? fullBodies.get(input.id) : undefined;
+      const side = (data as { side?: unknown })?.side === "request" ? "request" : "response";
+      const text = stored ? stored[side] : null;
+      if (text === null || text === undefined) return { available: false, body: null };
+      const body = {
+        text,
+        size: Buffer.byteLength(text),
+        truncated: false,
+        contentType: "application/json",
+        kind: text.trimStart().startsWith("{") || text.trimStart().startsWith("[")
+          ? ("json" as const)
+          : ("text" as const),
+      };
+      // Mesma regra do módulo real: acima do limite inline o corpo vai por
+      // stream, e o command-result leva só metadados.
+      if (text.length <= NETWORK_BODY_INLINE_LIMIT) return { available: true, body };
+      return {
+        available: true,
+        body: { ...body, text: "" },
+        streamId: context.streamText(text),
+        totalSize: text.length,
+      };
+    }
     return null;
   });
 

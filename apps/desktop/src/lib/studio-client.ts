@@ -561,11 +561,30 @@ export async function sendModuleCommand(
 export async function getNetworkBody(
   id: string,
   side: "request" | "response",
+  options?: { onProgress?: (received: number, total: number) => void; signal?: AbortSignal },
 ): Promise<NetworkBody | null> {
   const result = await sendModuleCommand("network", "get-body", { id, side });
   const parsed = networkGetBodyResultSchema.safeParse(result);
   if (!parsed.success || !parsed.data.available) return null;
-  return parsed.data.body;
+  const { body, streamId, totalSize } = parsed.data;
+  // Sem streamId o corpo já veio inline (caso comum). Com streamId, o device
+  // mandou só os metadados e o texto chega em chunks — corpo grande nunca vira
+  // uma mensagem WS grande.
+  if (!streamId || !body) return body;
+  if (options?.signal?.aborted) {
+    cancelStream(streamId);
+    throw new DOMException("Aborted", "AbortError");
+  }
+  const onAbort = () => cancelStream(streamId);
+  options?.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const text = await awaitStream(streamId, totalSize ?? 0, {
+      ...(options?.onProgress ? { onProgress: options.onProgress } : {}),
+    });
+    return { ...body, text };
+  } finally {
+    options?.signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 /** Rede: reexecuta uma request no device. Devolve o id da nova request (ela

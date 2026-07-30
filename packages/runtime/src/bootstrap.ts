@@ -32,12 +32,23 @@ export interface RuntimeOptions {
 }
 
 /**
+ * Serviços do runtime disponíveis para o handler de um módulo. Hoje só o
+ * streaming: sem isto, um módulo só sabe devolver o valor inteiro no
+ * command-result — e o guard de fio existe justamente porque isso não escala.
+ */
+export interface ModuleCommandContext {
+  /** Transmite `data` em chunks e devolve o streamId imediatamente. */
+  streamText(data: string): string;
+}
+
+/**
  * Handler de comando de um módulo (ex.: network). Recebe o comando interno e o
  * payload; retorna o resultado (vira command-result ok) ou lança (vira ok:false).
  */
 export type ModuleCommandHandler = (
   command: string,
   data: unknown,
+  context: ModuleCommandContext,
 ) => unknown | Promise<unknown>;
 
 export interface Runtime {
@@ -78,9 +89,10 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     // usuário por causa do inspector violaria a promessa central.
     if (exceedsWireBudget(raw)) {
       console.error(
-        `[rnsi] frame acima do orçamento de fio (${WIRE_MESSAGE_BUDGET} bytes): ` +
+        `[nativescope] frame exceeds the wire budget (${WIRE_MESSAGE_BUDGET} bytes): ` +
           `type=${message.kind === "event" || message.kind === "command" ? message.type : message.kind}, ` +
-          `~${raw.length} chars — deveria ir por stream.*`,
+          `~${raw.length} chars — this value should travel as stream.*. ` +
+          `Please report it: https://github.com/caiobarroso/react-native-nativescope/issues`,
       );
     }
     transport.send(raw);
@@ -129,7 +141,9 @@ export function startRuntime(options: RuntimeOptions): Runtime {
       };
     }
     try {
-      const result = await handler(command, data);
+      // O streamId é devolvido no result; o primeiro chunk sai num tick futuro,
+      // então o Studio sempre conhece o stream antes do primeiro chunk chegar.
+      const result = await handler(command, data, { streamText: streams.streamText });
       return { kind: "command-result", requestId: message.requestId, ok: true, result: result ?? null };
     } catch (error) {
       return {

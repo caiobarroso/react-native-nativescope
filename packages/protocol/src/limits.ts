@@ -26,6 +26,16 @@ export const CELL_PREVIEW_LIMIT = 4 * 1024;
 export const BLOB_PREVIEW_BYTES = 3 * 1024;
 
 /**
+ * Até quantos chars do corpo de uma request viajam DENTRO do command-result de
+ * `network.get-body`. Acima disso o corpo sai por `stream.*`.
+ *
+ * Bem abaixo do WIRE_MESSAGE_BUDGET de propósito: o resultado carrega metadados
+ * junto, e o mesmo corpo pode ter até 3 bytes UTF-8 por char. Um corpo de 1,1 M
+ * de chars estourava o orçamento e o guard gritava no terminal do app.
+ */
+export const NETWORK_BODY_INLINE_LIMIT = 64 * 1024;
+
+/**
  * Orçamento de uma mensagem WS individual, em BYTES UTF-8 (§1). Fonte única —
  * o teste de orçamento e o guard de transporte leem daqui, nunca de um número
  * mágico solto.
