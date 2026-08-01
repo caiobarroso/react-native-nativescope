@@ -156,10 +156,24 @@ function handleStreamEnd(payload: {
   stream.resolve(stream.parts.join(""));
 }
 
+/**
+ * Erro de cancelamento — UM tipo só para os dois caminhos (signal já abortado
+ * na entrada e abort disparado em voo).
+ *
+ * O contrato é o mesmo do fetch, de propósito: quem cancela recebe uma
+ * DOMException "AbortError", então `error.name === "AbortError"` basta para
+ * separar "eu cancelei" de "falhou de verdade". Antes o caminho de entrada
+ * lançava AbortError e o de voo rejeitava com Error("cancelled"), o que
+ * impedia justamente essa distinção.
+ */
+function abortError(): DOMException {
+  return new DOMException("Aborted", "AbortError");
+}
+
 /** Cancela um stream: avisa o device (para de ler) e rejeita o lado local. */
-export function cancelStream(streamId: string): void {
+function cancelStream(streamId: string): void {
   void sendCommand({ type: "stream.cancel", payload: { streamId } }).catch(() => {});
-  activeStreams.get(streamId)?.reject(new Error("cancelled"));
+  activeStreams.get(streamId)?.reject(abortError());
 }
 
 function sessionToken(): string | null {
@@ -733,7 +747,10 @@ function materializeValue(type: StorageValue["type"], data: string): StorageValu
 
 /**
  * Valor COMPLETO de uma chave, por streaming chunked — o caminho de
- * "100% dos dados" para valores grandes. Cancelável via AbortSignal.
+ * "100% dos dados" para valores grandes.
+ *
+ * Cancelável via AbortSignal: cancelar rejeita com DOMException "AbortError",
+ * seja o signal já abortado na entrada ou abortado no meio da transferência.
  */
 export async function getFullValue(
   providerId: string,
@@ -756,7 +773,7 @@ export async function getFullValue(
   const onAbort = () => cancelStream(streamId);
   if (options?.signal?.aborted) {
     cancelStream(streamId);
-    throw new DOMException("Aborted", "AbortError");
+    throw abortError();
   }
   options?.signal?.addEventListener("abort", onAbort, { once: true });
   try {
@@ -1047,7 +1064,12 @@ export async function loadRows(
   return parsed.success ? parsed.data : null;
 }
 
-/** Conteúdo COMPLETO de uma célula (BLOB/texto grande) via stream. */
+/**
+ * Conteúdo COMPLETO de uma célula (BLOB/texto grande) via stream.
+ *
+ * Mesmo contrato de cancelamento do getFullValue: DOMException "AbortError"
+ * nos dois caminhos.
+ */
 export async function getFullCell(
   providerId: string,
   instanceId: string,
@@ -1070,7 +1092,7 @@ export async function getFullCell(
   const onAbort = () => cancelStream(streamId);
   if (options?.signal?.aborted) {
     cancelStream(streamId);
-    throw new DOMException("Aborted", "AbortError");
+    throw abortError();
   }
   options?.signal?.addEventListener("abort", onAbort, { once: true });
   try {

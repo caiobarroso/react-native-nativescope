@@ -196,6 +196,69 @@ describe("morte do device em foco", () => {
   });
 });
 
+describe("contrato de cancelamento", () => {
+  const ROW = { rowid: 1 } as never;
+
+  /** O que um caller escreve quando segue o padrão do fetch. */
+  const isAbort = (error: unknown): boolean => (error as Error | null)?.name === "AbortError";
+
+  it("getFullValue: signal já abortado rejeita com AbortError", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const box = watch(getFullValue("mmkv", "default", "k", { signal: controller.signal }));
+    await tick();
+
+    expect(isAbort(box.value)).toBe(true);
+  });
+
+  it("getFullValue: abort em voo rejeita com AbortError — o MESMO tipo", async () => {
+    const controller = new AbortController();
+    const box = watch(getFullValue("mmkv", "default", "k", { signal: controller.signal }));
+    await tick();
+    expect(box.settled).toBe(false);
+
+    controller.abort();
+    await tick();
+
+    // Antes daqui este caminho rejeitava com Error("cancelled"), e só o de cima
+    // com AbortError — então `err.name === "AbortError"` dava false num
+    // cancelamento legítimo.
+    expect(isAbort(box.value)).toBe(true);
+  });
+
+  it("getFullCell: os dois caminhos também", async () => {
+    const pre = new AbortController();
+    pre.abort();
+    const boxPre = watch(getFullCell("sqlite", "db", "t", ROW, "col", { signal: pre.signal }));
+    await tick();
+
+    const live = new AbortController();
+    const boxLive = watch(getFullCell("sqlite", "db", "t", ROW, "col", { signal: live.signal }));
+    await tick();
+    live.abort();
+    await tick();
+
+    expect(isAbort(boxPre.value)).toBe(true);
+    expect(isAbort(boxLive.value)).toBe(true);
+  });
+
+  it("falha de verdade continua sendo falha — não vira AbortError", async () => {
+    const box = await openStream();
+
+    socket!.deliver({
+      ...EVENT,
+      deviceId: DEVICE_ID,
+      type: "stream.end",
+      payload: { streamId: nextStreamId, ok: false, chunkCount: 0, error: "disk read failed" },
+    });
+    await tick();
+
+    expect(isAbort(box.value)).toBe(false);
+    expect((box.value as Error).message).toBe("disk read failed");
+  });
+});
+
 describe("origem do chunk", () => {
   function chunk(data: string, deviceId?: string): void {
     socket!.deliver({
