@@ -47,9 +47,11 @@ function getUpstream() {
     }
   }
   if (!upstreamCache) {
+    // Aparece no terminal do Metro do usuário — inglês, e com o caminho de saída.
     throw new Error(
-      "[nativescope] não encontrei o babel transformer upstream para delegar. " +
-        "Defina RNSI_UPSTREAM_BABEL_TRANSFORMER ou reporte um bug.",
+      "[nativescope] could not find the upstream babel transformer to delegate to. " +
+        "Set RNSI_UPSTREAM_BABEL_TRANSFORMER to your project's babelTransformerPath, " +
+        "or report it: https://github.com/caiobarroso/react-native-nativescope/issues",
     );
   }
   return upstreamCache;

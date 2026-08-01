@@ -902,21 +902,29 @@ function BodySection({
 }) {
   const [full, setFull] = useState<NetworkBody | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const effective = full ?? body;
   const hasText = effective !== null && effective.text.length > 0;
 
   const loadFull = async () => {
     setLoading(true);
+    setProgress(null);
     setError(null);
     try {
-      const result = await getNetworkBody(requestId, side);
+      // Corpo grande chega em chunks: sem progresso, um corpo de MB por WiFi
+      // parece travamento.
+      const result = await getNetworkBody(requestId, side, {
+        onProgress: (received, total) =>
+          setProgress(total > 0 ? Math.min(100, Math.round((received / total) * 100)) : null),
+      });
       if (result) setFull(result);
       else setError("Full body is no longer available on the device.");
     } catch {
       setError("Failed to load full body.");
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   };
 
@@ -959,7 +967,11 @@ function BodySection({
                 className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-created px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
               >
                 <Download size={12} strokeWidth={2} />
-                {loading ? "Loading…" : "Load full body"}
+                {loading
+                  ? progress === null
+                    ? "Loading…"
+                    : `Loading… ${progress}%`
+                  : "Load full body"}
               </button>
             </div>
           ) : null}

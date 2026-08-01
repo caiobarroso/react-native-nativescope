@@ -26,7 +26,13 @@ export {
   type TransportOptions,
   type WebSocketLike,
 } from "./transport.ts";
-export { startRuntime, type Runtime, type RuntimeOptions } from "./bootstrap.ts";
+export {
+  startRuntime,
+  type ModuleCommandContext,
+  type ModuleCommandHandler,
+  type Runtime,
+  type RuntimeOptions,
+} from "./bootstrap.ts";
 export {
   enableAutoReactQueryBridge,
   emitAppDevtoolsChange,

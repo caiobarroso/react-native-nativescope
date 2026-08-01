@@ -10,7 +10,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "NativeScope — local React Native debugging",
     short_name: "NativeScope",
     description:
-      "A plug-and-play, fully local debugging environment for React Native. Inspect and edit AsyncStorage, MMKV and SQLite while your app runs.",
+      "A plug-and-play, fully local debugging environment for React Native. Inspect storage and capture HTTP and GraphQL traffic in one modular Studio.",
     start_url: "/",
     display: "standalone",
     background_color: "#faf9f5",

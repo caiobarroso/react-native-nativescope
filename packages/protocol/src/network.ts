@@ -101,6 +101,14 @@ export const networkGetBodyResultSchema = z.object({
   /** false quando a request foi evictada do buffer do device. */
   available: z.boolean(),
   body: networkBodySchema.nullable(),
+  /**
+   * Presente quando o corpo é grande demais para o orçamento de fio: o `text`
+   * do body vem VAZIO e o conteúdo chega por `stream.*` sob este id. Mesmo
+   * contrato de `database.cell`. Ausente/null = corpo já veio inline.
+   */
+  streamId: z.string().nullable().optional(),
+  /** Tamanho total anunciado do stream, em chars — só com `streamId`. */
+  totalSize: z.number().int().nonnegative().optional(),
 });
 export type NetworkGetBodyResult = z.infer<typeof networkGetBodyResultSchema>;
 
