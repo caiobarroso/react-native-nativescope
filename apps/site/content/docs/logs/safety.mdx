@@ -39,9 +39,37 @@ could not retain everything.
 
 ## Sensitive values
 
-Local transport is not automatic redaction. If your app passes a token, password, personal data or
-another secret to `console.*`, that value can appear in the Studio and in a copied log. Do not log
-secrets. Logs currently does not silently redact console arguments for you.
+Logs redacts secrets **by default**. When an object or `Map` key looks like a secret — `token`,
+`password`, `secret`, `authorization`, `apiKey`, `credential`, `privateKey`, `creditCard`,
+`cardNumber`, `cvv` — the value is replaced with `«redacted»` before it leaves the device. The
+getter is never even called.
+
+Matching is by substring on the normalized key (lowercased, `_`, `-` and `.` removed), so
+`accessToken`, `access_token` and `API-KEY` all match.
+
+```js
+console.log("auth", { userId: 7, accessToken: "eyJhbGciOi…" });
+// arrives as: { userId: 7, accessToken: "«redacted»" }
+```
+
+Add your own keys, or turn it off when you need to read the value:
+
+```js
+logs: { redactKeys: ["cpf", "deviceId"] }   // added to the defaults
+logs: { redact: false }                      // off entirely
+```
+
+**What redaction does not cover.** It matches keys, so a secret passed as a bare value has no key
+to match:
+
+```js
+console.log("token", accessToken);  // NOT redacted — there is no key
+console.log({ accessToken });       // redacted
+```
+
+It also does not read your strings: a token embedded in a URL or in a message is sent as written.
+Redaction is a safety net for the common shape, not a guarantee — the reliable rule is still to
+not log secrets.
 
 Be equally careful with screenshots and screen sharing. Closing the Studio discards the captured
 session; there is no cross-execution log database.

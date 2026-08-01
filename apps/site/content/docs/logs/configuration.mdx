@@ -40,6 +40,14 @@ modules: {
 | `maxPerSecond` | Hard per-second entry ceiling. Excess entries become `dropped`. | `500` |
 | `preReadyBuffer` | Entries retained while the Studio connection is not ready. | `500` |
 | `ignorePatterns` | Message substrings ignored before capture. | NativeScope noise patterns |
+| `redact` | Replace secret-looking object keys with `«redacted»` before they leave the device. | `true` |
+| `redactKeys` | Extra keys to redact, added to the defaults. | `[]` |
+| `maxMessageLength` | Maximum characters for the rendered message line. | `4096` |
+| `maxArgs` | Arguments captured per call; the rest become a marker. | `12` |
+| `maxKeys` | Object keys serialized per level. | `100` |
+| `maxArrayItems` | Array items serialized per level. | `100` |
+| `maxStringLength` | Cut for strings nested inside objects. | `2048` |
+| `maxBatchChars` | Character budget for one transport batch. | `98304` |
 
 ## Choosing limits
 

@@ -9,8 +9,12 @@ When a console call receives an object, array or `Error`, Logs serializes a boun
 for the wire and keeps the structured argument available in the detail panel. Select the row and
 open **Data**, **Argument** or **Error** to inspect it.
 
-The viewer is the same read-only JSON workspace used by Storage. That gives you familiar search,
-tree navigation and readable nested values instead of a terminal-style `[Object]` placeholder.
+The detail panel matches the shape of the data. Flat data — a handful of scalar fields — reads as a
+plain key/value table, because tabs and a field search buy you nothing when there is nothing to
+navigate. Anything nested, long or capped opens in the same read-only JSON workspace used by
+Storage, with familiar search, tree navigation and readable nested values instead of a
+terminal-style `[Object]` placeholder. A **Viewer** button on the panel header opens the workspace
+for flat data too, when you want the raw JSON or the generated TypeScript types.
 
 ```ts
 console.log("[Checkout] created", {
@@ -20,8 +24,16 @@ console.log("[Checkout] created", {
 });
 ```
 
-The stream can show a compact preview such as the order id and total. The detail panel lets you
-open the nested customer, tags and totals without logging the object again.
+The stream shows a one-line preview that degrades as the payload grows: the values inline when they
+fit, then a key silhouette like `{id, customer, totals}`, then just `{3 keys}`. The message line
+stays one line no matter how large the object is, and the detail panel lets you open the nested
+customer, tags and totals without logging the object again.
+
+Format specifiers work as they do in a browser console, so libraries that use them read correctly:
+
+```ts
+console.log("%s items in %s", 5, "cart"); // → 5 items in cart
+```
 
 ## Errors carry their stack
 

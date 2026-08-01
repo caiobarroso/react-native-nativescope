@@ -15,6 +15,11 @@ console.warn("Checkout: payment gateway is slow");
 These become the `Checkout` namespace in the Studio. The original message is preserved, and the
 namespace becomes a fast filter rather than a second logging API your app has to adopt.
 
+A leading level marker is skipped rather than mistaken for a namespace, so the very common
+`"[ERROR] Auth: failed"` shape resolves to `Auth`, not `ERROR`. Stacked prefixes work too —
+`"[DEBUG][Auth] token expired"` is `Auth`. Words that only look like levels are left alone:
+`[Errors]` and `[Logger]` are still namespaces.
+
 Messages without a recognizable prefix remain un-namespaced and are still searchable normally.
 
 ## Levels keep the hierarchy intact
