@@ -195,3 +195,59 @@ describe("morte do device em foco", () => {
     expect(useStudio.getState().selectedDeviceId).toBe(DEVICE_ID);
   });
 });
+
+describe("origem do chunk", () => {
+  function chunk(data: string, deviceId?: string): void {
+    socket!.deliver({
+      ...EVENT,
+      ...(deviceId !== undefined ? { deviceId } : {}),
+      type: "stream.chunk",
+      payload: { streamId: nextStreamId, seq: 0, data },
+    });
+  }
+
+  function end(deviceId?: string): void {
+    socket!.deliver({
+      ...EVENT,
+      ...(deviceId !== undefined ? { deviceId } : {}),
+      type: "stream.end",
+      payload: { streamId: nextStreamId, ok: true, chunkCount: 1 },
+    });
+  }
+
+  it("não costura no stream um chunk carimbado por OUTRO device", async () => {
+    const box = await openStream();
+
+    chunk("VEIO-DO-DEVICE-ERRADO", "device-intruso");
+    chunk("legítimo", DEVICE_ID);
+    end(DEVICE_ID);
+    await tick();
+
+    expect(box.settled).toBe(true);
+    expect(box.value).toEqual({ type: "string", value: "legítimo" });
+  });
+
+  it("aceita chunk sem carimbo — truncar um valor é pior que a guarda redundante", async () => {
+    const box = await openStream();
+
+    chunk("sem-carimbo");
+    end();
+    await tick();
+
+    expect(box.settled).toBe(true);
+    expect(box.value).toEqual({ type: "string", value: "sem-carimbo" });
+  });
+
+  it("também ignora o stream.end de outro device — o stream segue vivo", async () => {
+    const box = await openStream();
+
+    end("device-intruso");
+    await tick();
+    expect(box.settled).toBe(false);
+
+    chunk("chegou depois", DEVICE_ID);
+    end(DEVICE_ID);
+    await tick();
+    expect(box.value).toEqual({ type: "string", value: "chegou depois" });
+  });
+});

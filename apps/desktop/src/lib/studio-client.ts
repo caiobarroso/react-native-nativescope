@@ -477,11 +477,22 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       return;
     }
 
+    // Único par de eventos de device que não filtrava por origem. Hoje o
+    // serviço já reescreve o id local para um id global (`gstream-N`, único no
+    // processo) e entrega o chunk só ao Studio dono da rota — então isto é
+    // defesa em profundidade, não correção de bug observável. Vale mesmo assim:
+    // stream é o caminho de DADO, e costurar chunk de um device no buffer de
+    // outro passaria pelo checksum quando ele viesse ausente.
+    //
+    // Diferente dos vizinhos, tolera deviceId ausente em vez de descartar: aqui
+    // um falso negativo trunca um valor no meio, e a guarda é redundante.
     case "stream.chunk":
+      if (event.deviceId !== undefined && event.deviceId !== store.selectedDeviceId) return;
       handleStreamChunk(event.payload.streamId, event.payload.data);
       return;
 
     case "stream.end":
+      if (event.deviceId !== undefined && event.deviceId !== store.selectedDeviceId) return;
       handleStreamEnd(event.payload);
       return;
 
