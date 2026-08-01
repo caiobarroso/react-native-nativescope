@@ -1090,42 +1090,139 @@ summary {
 
 /* Contextual documentation module selector ------------------------------ */
 [data-docs-module-switcher] {
+  position: relative;
   margin: 14px 18px 22px;
-  padding: 4px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 3px;
+  min-height: 52px;
+  padding: 9px 11px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--surface-sunken);
 }
-[data-docs-module-switcher] > a {
+[data-docs-module-trigger] {
+  width: 100%;
   min-width: 0;
-  padding: 9px;
+  padding: 0;
   display: grid;
-  grid-template-columns: 18px 1fr;
+  grid-template-columns: 20px minmax(0, 1fr) 16px;
   align-items: center;
-  border-radius: 5px;
-  color: var(--text-subtle);
-}
-[data-docs-module-switcher] > a[data-active="true"] {
-  background: var(--surface-raised);
+  gap: 9px;
+  border: 0;
+  background: transparent;
   color: var(--text);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 8%, transparent);
+  text-align: left;
 }
-[data-docs-module-switcher] > a svg {
+[data-docs-module-trigger] > svg:first-child {
   color: var(--accent);
 }
-[data-docs-module-switcher] span {
+[data-docs-module-trigger] > span {
   min-width: 0;
   display: grid;
-  font-size: 11px;
-  font-weight: 620;
+  gap: 2px;
 }
-[data-docs-module-switcher] small {
+[data-docs-module-trigger] small {
   color: var(--text-subtle);
   font: 7px var(--site-mono);
   text-transform: uppercase;
+}
+[data-docs-module-trigger] strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 620;
+}
+[data-docs-module-trigger] > svg:last-child {
+  color: var(--text-subtle);
+  transition: transform 180ms ease;
+}
+[data-docs-module-switcher][data-open="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+[data-docs-module-switcher][data-open="true"] [data-docs-module-trigger] > svg:last-child {
+  transform: rotate(180deg);
+}
+[data-docs-module-menu] {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+  transform-origin: 50% 0;
+}
+[data-docs-module-menu] > a {
+  min-height: 38px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 9px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 560;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-docs-module-menu] > a:hover,
+[data-docs-module-menu] > a:focus-visible {
+  background: var(--accent-wash);
+  color: var(--text);
+  transform: translateX(2px);
+}
+[data-docs-module-menu] > a[data-active="true"] {
+  background: var(--accent);
+  color: var(--surface-raised);
+}
+[data-docs-module-menu] > a[data-active="true"]:hover,
+[data-docs-module-menu] > a[data-active="true"]:focus-visible {
+  background: var(--accent-hover);
+  color: var(--surface-raised);
+}
+[data-docs-module-menu] > a svg {
+  color: var(--accent);
+}
+[data-docs-module-menu] > a[data-active="true"] svg {
+  color: currentColor;
+}
+[data-docs-module-switcher]:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+[data-docs-module-menu] span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-docs-module-menu] a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+[data-docs-module-menu] a[data-active="true"] {
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  font-weight: 650;
+}
+[data-docs-module-menu] a[data-active="true"] > svg,
+[data-docs-module-menu] a[data-active="true"] > span {
+  color: inherit;
+}
+[data-docs-module-menu] a > svg:last-child {
+  justify-self: end;
+}
+[data-docs-module-menu] a:not([data-active="true"]) > svg:last-child {
+  opacity: 0;
 }
 
 @media (max-width: 1120px) {
@@ -1308,8 +1405,18 @@ summary {
     width: 100%;
     flex-direction: column;
   }
+  [data-platform-command] {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  [data-platform-command] [data-code-block] {
+    width: calc(100% - 34px);
+    flex: 1 1 calc(100% - 34px);
+  }
   [data-platform-command] > a {
-    display: none;
+    width: calc(100% - 34px);
+    margin: 8px 0 0 34px;
+    display: inline-flex;
   }
   [data-platform-principles] > div,
   [data-network-capabilities] > div {

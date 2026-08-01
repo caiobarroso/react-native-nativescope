@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     template: "%s · NativeScope",
   },
   description:
-    "A plug-and-play, fully local React Native debugging environment. Inspect Storage and capture HTTP and GraphQL in one modular Studio.",
+    "A plug-and-play, fully local React Native debugging environment. Inspect Storage, capture HTTP and GraphQL, read JavaScript Logs and connect them in one modular Studio.",
   applicationName: "NativeScope",
   authors: [{ name: "Caio Barroso", url: "https://github.com/caiobarroso" }],
   creator: "Caio Barroso",
@@ -40,7 +40,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     title: "NativeScope — a local debugging environment for React Native",
     description:
-      "One local Studio for React Native debugging. Storage and HTTP + GraphQL Network modules are available now, with no account or cloud.",
+      "One local Studio for React Native debugging. Storage, Network and Logs are available now, with Timeline to connect the context and no account or cloud.",
     url: "/",
     images: [
       {
@@ -55,7 +55,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "NativeScope — a local debugging environment for React Native",
     description:
-      "One local Studio for React Native debugging. Storage and HTTP + GraphQL Network modules are live now.",
+      "One local Studio for React Native debugging. Storage, Network and Logs are live now, with a shared Timeline for context.",
     images: ["/og"],
   },
 };

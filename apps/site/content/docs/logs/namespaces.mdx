@@ -1,0 +1,48 @@
+---
+title: Namespaces & levels
+description: Use inferred namespaces and level filters to keep a busy JavaScript stream readable without changing every log call.
+---
+
+## Namespaces come from the message
+
+Logs recognizes a namespace at the beginning of a message:
+
+```ts
+console.log("[Checkout] started");
+console.warn("Checkout: payment gateway is slow");
+```
+
+These become the `Checkout` namespace in the Studio. The original message is preserved, and the
+namespace becomes a fast filter rather than a second logging API your app has to adopt.
+
+Messages without a recognizable prefix remain un-namespaced and are still searchable normally.
+
+## Levels keep the hierarchy intact
+
+The filter bar exposes `ERROR`, `WARN`, `INFO`, `LOG` and `DEBUG`. Counts show how much signal is
+available in the current scope before a level is toggled off, so hiding a level never makes it look
+as if it did not happen.
+
+Use the levels as a reading lens, not as a permanent rewrite of your logging style:
+
+- Start with `ERROR` when the question is “what failed?”
+- Add `WARN` and `INFO` to understand the recovery path.
+- Return to `LOG` and `DEBUG` when you need the detailed sequence.
+
+The original console methods continue to receive their calls. Filtering changes what the Studio
+shows, not what your app emits to its normal development console.
+
+## Filter noisy libraries at capture time
+
+For a library that emits known, irrelevant messages, use `ignorePatterns` in the Logs config. The
+match is a substring of the rendered message, so keep patterns specific enough not to hide a useful
+neighboring event.
+
+```ts
+logs: {
+  ignorePatterns: ["[VerboseAnimationLib]"],
+},
+```
+
+The inspector's own internal noise is ignored by default. Read [Configuration](/docs/logs/configuration)
+for the complete typed surface.

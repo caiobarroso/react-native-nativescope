@@ -1,0 +1,59 @@
+---
+title: Configuration
+description: Tune captured levels, serialization bounds, batching and startup buffering without changing the app's logging calls.
+---
+
+The shortest configuration is one line:
+
+```ts
+modules: {
+  logs: true,
+}
+```
+
+Use an object when the defaults do not fit the volume or shape of your app:
+
+```ts
+modules: {
+  logs: {
+    levels: ["log", "warn", "error"],
+    maxArgLength: 8192,
+    maxDepth: 6,
+    maxBatchEntries: 200,
+    flushMs: 120,
+    maxPerSecond: 500,
+    preReadyBuffer: 500,
+    ignorePatterns: ["[VerboseAnimationLib]"],
+  },
+}
+```
+
+## Options
+
+| Option | What it controls | Default |
+| --- | --- | --- |
+| `levels` | Console levels captured. The original console still receives every call. | All five levels |
+| `maxArgLength` | Maximum characters for one serialized argument before it is bounded. | `8192` |
+| `maxDepth` | Maximum object depth sent to the Studio. | `6` |
+| `maxBatchEntries` | Maximum entries in one transport batch. | `200` |
+| `flushMs` | Maximum time a batch waits before it is sent. | `120` ms |
+| `maxPerSecond` | Hard per-second entry ceiling. Excess entries become `dropped`. | `500` |
+| `preReadyBuffer` | Entries retained while the Studio connection is not ready. | `500` |
+| `ignorePatterns` | Message substrings ignored before capture. | NativeScope noise patterns |
+
+## Choosing limits
+
+Lower `levels` when a library's debug output is useful in Metro but not in the Studio. Increase
+`maxArgLength` or `maxDepth` when the detail you need is being capped, but remember that larger
+values consume more memory and wire budget. Increase `maxPerSecond` only when the additional stream
+is worth the cost of serializing and rendering it.
+
+The typed public options intentionally focus on the decisions most projects need. Internal caps
+for message length, argument count, keys, array items, strings and batch bytes remain safety
+defaults rather than extra configuration knobs.
+
+## Timeline does not need another option
+
+Timeline reads the Logs, Network and Storage stores already present in the Studio. Its source
+toggles and time/event window are user controls in the desktop UI, not app configuration. See
+[Timeline](/docs/logs/timeline) for how to choose a scope.

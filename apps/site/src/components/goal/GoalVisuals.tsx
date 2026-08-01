@@ -9,6 +9,7 @@ export default defineNativeScopeConfig({
       reactQuery: true,
     },
     network: true,
+    logs: true,
 
     // Product direction: one config block per module
     // performance: {
@@ -69,7 +70,7 @@ export function ModuleOrganism() {
         <svg
           viewBox="0 0 980 520"
           role="img"
-          aria-label="NativeScope as one local core connected to independent modules. Storage and Network are available now; Logs, State, Performance, Navigation, Files and Notifications represent the product direction."
+          aria-label="NativeScope as one local core connected to independent modules. Storage, Network and Logs are available now; State, Performance, Navigation, Files and Notifications represent the product direction."
         >
           <defs>
             <marker
@@ -110,8 +111,8 @@ export function ModuleOrganism() {
           />
           <path
             d="M415 257 C340 278 310 319 226 319"
-            data-goal-tentacle
-            markerEnd="url(#goal-tentacle-dot)"
+            data-goal-tentacle="active"
+            markerEnd="url(#goal-tentacle-active)"
           />
           <path
             d="M438 282 C365 354 330 433 226 433"
@@ -169,7 +170,7 @@ export function ModuleOrganism() {
 
           <ModuleNode x={42} y={62} label="Storage" detail="available now" active />
           <ModuleNode x={42} y={176} label="Network" detail="available now" active />
-          <ModuleNode x={42} y={290} label="Logs" detail="structured timeline" />
+          <ModuleNode x={42} y={290} label="Logs" detail="structured timeline" active />
           <ModuleNode x={42} y={404} label="State" detail="queries · stores" />
           <ModuleNode x={754} y={62} label="Performance" detail="frames · memory" />
           <ModuleNode x={754} y={176} label="Navigation" detail="routes · deep links" />
@@ -210,6 +211,10 @@ export async function OneFileContract() {
               <strong>+ Network</strong>
               <span>available now</span>
             </p>
+            <p data-active>
+              <strong>+ Logs</strong>
+              <span>available now</span>
+            </p>
             <p>
               <strong>+ Performance</strong>
               <span>one future config block</span>
@@ -226,8 +231,8 @@ export async function OneFileContract() {
         </footer>
       </div>
       <figcaption>
-        Storage and Network share one root config. Unreleased module blocks remain comments
-        so the product direction is visible without pretending that future APIs already exist.
+        Storage, Network and Logs share one root config. Unreleased module blocks remain comments so
+        the product direction is visible without pretending that future APIs already exist.
       </figcaption>
     </figure>
   );

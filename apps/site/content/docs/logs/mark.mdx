@@ -1,0 +1,33 @@
+---
+title: Mark a moment
+description: Mark the boundary before an action so the Logs view and Timeline focus on what happened next.
+---
+
+## Mark before reproducing
+
+Open **Logs → Console** and press **Mark** immediately before the action you want to investigate:
+
+1. Clear your mental starting point by pressing **Mark**.
+2. Reproduce the tap, navigation or flow in the app.
+3. Read the entries captured after the marker.
+4. Open **Timeline** on the Mark row when the interaction crosses modules.
+
+The boundary uses the device sequence number, not only the clock. Several entries can share a
+millisecond; the marker still separates the earlier stream from the new one.
+
+## Earlier events stay available
+
+By default, the stream hides the entries before the Mark so the new behavior has room to speak. The
+earlier context is not deleted. Expand it when the setup, previous request or initial state matters.
+
+The marker row tells you how much earlier context is hidden and gives you a direct Timeline action.
+Removing the Mark returns the stream to the full retained history.
+
+## Mark is forward-looking
+
+A Mark answers: “What did my action cause?” Its Timeline window starts at the marker and follows the
+events that came after it. A log, error or failed request answers a different question — “What
+happened around this exact event?” — so those anchors show context before and after.
+
+This distinction keeps the same Timeline useful for both reproductions and post-failure analysis.
+Read [Timeline](/docs/logs/timeline) for the shared model.

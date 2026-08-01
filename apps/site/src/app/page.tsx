@@ -7,11 +7,11 @@ import { Reveal } from "@/components/ui/Reveal";
 export const metadata = pageMetadata({
   title: "NativeScope — local React Native debugging environment",
   description:
-    "One local, modular Studio for React Native debugging. Inspect storage and understand HTTP and GraphQL traffic without an account or cloud.",
+    "One local, modular Studio for React Native debugging. Inspect storage, understand HTTP and GraphQL traffic, capture JavaScript logs and connect them in Timeline without an account or cloud.",
   path: "/",
   ogTitle: "NativeScope — one local Studio for React Native debugging",
   ogDescription:
-    "Storage and HTTP + GraphQL Network debugging are live now. One package, one local Studio, zero accounts and zero cloud hops.",
+    "Storage, Network and Logs are live now. One package, one local Studio, zero accounts and a shared Timeline for context.",
 });
 
 /**

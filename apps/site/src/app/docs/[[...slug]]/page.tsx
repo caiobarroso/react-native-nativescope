@@ -61,7 +61,11 @@ export default async function DocPage({ params }: PageProps) {
 
   const { previous, next } = getNeighbours(doc.slug);
   const headings = extractHeadings(doc.body);
-  const moduleName = doc.slug.startsWith("network/") ? "Network" : "Storage";
+  const moduleName = doc.slug.startsWith("logs/")
+    ? "Logs"
+    : doc.slug.startsWith("network/")
+      ? "Network"
+      : "Storage";
 
   return (
     <div data-doc-page>
