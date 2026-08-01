@@ -68,6 +68,28 @@ describe("buildLogRows", () => {
     expect(rows[1]).toMatchObject({ kind: "entry", repeat: 1 });
   });
 
+  it("NÃO funde quando só os argumentos diferem", () => {
+    // Regressão: a identidade era nível+mensagem+namespace. Duas chamadas com
+    // o mesmo texto e dados diferentes viravam UMA linha ×2, e a segunda
+    // entrada — que continua no store — ficava inalcançável pela lista.
+    const arg = (json: string): LogEntry["args"] => [
+      { kind: "json", preview: "{id}", json, truncated: false },
+    ];
+    const rows = buildLogRows(
+      [
+        entry({ message: "state", args: arg('{"id":1}') }),
+        entry({ message: "state", args: arg('{"id":2}') }),
+        entry({ message: "state", args: arg('{"id":2}') }),
+      ],
+      NO_FILTERS,
+      NO_MARK,
+    );
+
+    const entries = rows.filter((row) => row.kind === "entry");
+    expect(entries).toHaveLength(2);
+    expect(entries.map((row) => (row.kind === "entry" ? row.repeat : 0))).toEqual([1, 2]);
+  });
+
   it("não funde quando o nível difere", () => {
     const rows = buildLogRows(
       [entry({ message: "same", level: "log" }), entry({ message: "same", level: "error" })],

@@ -52,6 +52,38 @@ describe("logs capture — helpers puros", () => {
     expect(deriveNamespace("[Logger] ready")).toBe("Logger");
   });
 
+  it("preview cabe numa linha — degrada para silhueta em vez de despejar JSON", () => {
+    const options = normalizeLogsOptions({});
+
+    // Cabe: o valor aparece inteiro, o dev lê sem clicar.
+    expect(serializeArg({ id: 7, ok: true }, options).preview).toBe('{"id":7,"ok":true}');
+
+    // Não cabe: silhueta de chaves. Era este o log de três linhas na lista.
+    const fat = {
+      ts: "01/08/2026, 11:34:45",
+      context: {},
+      error: { name: "Error", message: "Waiting for previous start action to complete" },
+    };
+    expect(serializeArg(fat, options).preview).toBe("{ts, context, error}");
+
+    // Nem a silhueta cabe: só a contagem.
+    const wide = Object.fromEntries(
+      Array.from({ length: 40 }, (_, i) => [`campoDeNomeLongo${i}`, i]),
+    );
+    expect(serializeArg(wide, options).preview).toBe("{40 keys}");
+
+    // Array grande vira contagem, não 80 chars de números.
+    expect(serializeArg(Array.from({ length: 200 }, (_, i) => i), options).preview).toBe(
+      "[200 items]",
+    );
+  });
+
+  it("erro no preview é o cabeçalho, não o objeto serializado", () => {
+    const arg = serializeArg(new Error("Waiting for previous start action"), normalizeLogsOptions({}));
+    expect(arg.kind).toBe("error");
+    expect(arg.preview).toBe("Error: Waiting for previous start action");
+  });
+
   it("serializa objeto em JSON válido para o viewer", () => {
     const arg = serializeArg({ user: { id: 7, name: "Ana" } }, normalizeLogsOptions({}));
     expect(arg.kind).toBe("json");
@@ -136,6 +168,41 @@ describe("logs batcher", () => {
 
     expect(batches[0]!.entries).toHaveLength(1);
     expect(batches[0]!.entries[0]!.repeat).toBe(50);
+  });
+
+  it("NÃO funde quando só os argumentos diferem", () => {
+    // Regressão: a identidade do ×N era nível+mensagem. Como a mensagem
+    // carregava o JSON dos argumentos capado em 200 chars, dois payloads que
+    // divergissem depois do corte fundiam — e o segundo nunca era emitido.
+    // Com o preview reduzido a uma silhueta isso deixaria de ser exceção.
+    const batches: LogBatch[] = [];
+    const batcher = createLogBatcher((b) => batches.push(b), normalizeLogsOptions({}));
+    batcher.setReady(true);
+
+    const arg = (json: string): LogEntry["args"] => [
+      { kind: "json", preview: "{id}", json, truncated: false },
+    ];
+    batcher.push(entry({ message: "state", args: arg('{"id":1}') }));
+    batcher.push(entry({ message: "state", args: arg('{"id":2}') }));
+    batcher.push(entry({ message: "state", args: arg('{"id":2}') })); // este sim funde
+    batcher.flush();
+
+    const entries = batches[0]!.entries;
+    expect(entries).toHaveLength(2);
+    expect(entries.map((e) => e.repeat)).toEqual([1, 2]);
+    expect(entries.map((e) => e.args[0]!.json)).toEqual(['{"id":1}', '{"id":2}']);
+  });
+
+  it("stack diferente também é linha diferente", () => {
+    const batches: LogBatch[] = [];
+    const batcher = createLogBatcher((b) => batches.push(b), normalizeLogsOptions({}));
+    batcher.setReady(true);
+
+    batcher.push(entry({ level: "error", message: "boom", stack: "at a()" }));
+    batcher.push(entry({ level: "error", message: "boom", stack: "at b()" }));
+    batcher.flush();
+
+    expect(batches[0]!.entries).toHaveLength(2);
   });
 
   it("respeita o teto por segundo e conta os descartes", () => {

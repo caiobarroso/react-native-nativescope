@@ -68,9 +68,25 @@ export function collectNamespaces(entries: LogEntry[]): string[] {
   return [...seen].sort((a, b) => a.localeCompare(b));
 }
 
-/** true quando as duas linhas são "a mesma coisa de novo" (candidatas ao ×N). */
+/**
+ * true quando as duas linhas são "a mesma coisa de novo" (candidatas ao ×N).
+ *
+ * Os ARGUMENTOS entram na conta, espelhando o isSameLogLine do device. Sem
+ * isso, dois logs com o mesmo texto e dados diferentes viravam UMA linha ×2 —
+ * e a segunda entrada, que continua no store, ficava inalcançável pela lista.
+ * Antes o acaso salvava: a mensagem carregava o JSON dos argumentos, então
+ * dados diferentes davam mensagens diferentes. Só que o preview é capado, e
+ * dois objetos que só divergissem depois do corte já colidiam.
+ */
 function isSameLine(a: LogEntry, b: LogEntry): boolean {
-  return a.level === b.level && a.message === b.message && a.namespace === b.namespace;
+  if (a.level !== b.level || a.message !== b.message) return false;
+  if (a.namespace !== b.namespace || a.stack !== b.stack) return false;
+  if (a.args.length !== b.args.length) return false;
+  for (let i = 0; i < a.args.length; i += 1) {
+    if (a.args[i]!.json !== b.args[i]!.json) return false;
+    if (a.args[i]!.preview !== b.args[i]!.preview) return false;
+  }
+  return true;
 }
 
 /**

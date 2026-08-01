@@ -5,7 +5,7 @@ export {
   serializeArg,
   formatMessage,
   deriveNamespace,
-  entrySignature,
+  isSameLogLine,
   createLogBatcher,
   LOG_LEVELS,
   type LogsOptions,

@@ -252,18 +252,63 @@ function primitiveLabel(value: unknown): string {
   return String(value);
 }
 
-/** Preview de uma linha: JSON compacto, capado, para a lista. */
-function compactPreview(plain: unknown, limit: number): string {
+/** O que cabe numa LINHA da lista sem o log virar parágrafo. */
+const PREVIEW_LIMIT = 80;
+
+/**
+ * Quantos itens o array tinha DE VERDADE.
+ *
+ * O toPlain corta em maxArrayItems e empurra `«+N items»` no fim, então o
+ * comprimento do array já achatado mente: 200 itens viram 101. O preview tem
+ * que dizer 200 — é o número que o dev reconhece.
+ */
+const ARRAY_CUT = /^«\+(\d+) items»$/;
+function arrayCount(plain: unknown[]): number {
+  const last = plain[plain.length - 1];
+  const cut = typeof last === "string" ? ARRAY_CUT.exec(last) : null;
+  return cut ? plain.length - 1 + Number(cut[1]) : plain.length;
+}
+/** Teto da silhueta de chaves antes de virar só a contagem. */
+const SILHOUETTE_LIMIT = 120;
+
+/**
+ * Preview de UMA LINHA, para a lista e para a mensagem.
+ *
+ * Escada de degradação, do mais informativo ao mais compacto:
+ *
+ *   {"id":7,"ok":true}     cabe inteiro — o dev lê o valor sem clicar
+ *   {ts, context, error}   não coube — silhueta de chaves
+ *   {14 keys}              nem a silhueta coube
+ *
+ * O conteúdo íntegro nunca depende disto: ele viaja em `json` e quem o mostra é
+ * o painel de detalhe. Antes o teto era 200 chars de JSON cru colados dentro da
+ * mensagem, e um único log de erro ocupava três linhas da lista — repetindo o
+ * que o painel logo abaixo já mostrava estruturado.
+ */
+function compactPreview(plain: unknown, limit: number = PREVIEW_LIMIT): string {
   let text: string;
   try {
     text = JSON.stringify(plain) ?? "null";
   } catch {
     return "«unserializable»";
   }
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+  if (text.length <= limit) return text;
+
+  if (Array.isArray(plain)) return `[${arrayCount(plain)} items]`;
+  if (plain !== null && typeof plain === "object") {
+    const keys = Object.keys(plain as Record<string, unknown>);
+    if (keys.length === 0) return text.slice(0, limit) + "…";
+    const silhouette = `{${keys.join(", ")}}`;
+    return silhouette.length <= SILHOUETTE_LIMIT ? silhouette : `{${keys.length} keys}`;
+  }
+  return `${text.slice(0, limit)}…`;
 }
 
-const PREVIEW_LIMIT = 200;
+/** Cabeçalho de erro numa linha: `Error: mensagem`, capado. */
+function errorPreview(value: Error): string {
+  const text = `${value.name}: ${value.message}`;
+  return text.length > PREVIEW_LIMIT ? `${text.slice(0, PREVIEW_LIMIT)}…` : text;
+}
 
 /** Caps mais apertados na 2ª passada, quando a 1ª estourou o teto de tamanho. */
 function tighten(options: LogsOptions): LogsOptions {
@@ -326,9 +371,7 @@ export function serializeArg(value: unknown, options: LogsOptions): LogArg {
     }
   }
 
-  const preview = errorLike
-    ? `${(value as Error).name}: ${(value as Error).message}`
-    : compactPreview(plain, PREVIEW_LIMIT);
+  const preview = errorLike ? errorPreview(value as Error) : compactPreview(plain);
 
   return {
     kind: errorLike ? "error" : "json",
@@ -402,9 +445,29 @@ export function deriveNamespace(message: string): string | null {
   return null;
 }
 
-/** Assinatura de fusão do "×N": mesmo nível + mesma mensagem. */
-export function entrySignature(entry: LogEntry): string {
-  return `${entry.level} ${entry.message}`;
+/**
+ * Duas entradas são "a mesma linha de novo", para efeito do ×N?
+ *
+ * Os ARGUMENTOS entram na conta. Antes bastava nível+mensagem, e isso só
+ * parecia funcionar porque a mensagem carregava até 200 chars do JSON dos
+ * argumentos: dois objetos que só diferissem DEPOIS do corte já fundiam, e um
+ * deles simplesmente não era emitido. Com o preview reduzido a uma silhueta a
+ * colisão deixaria de ser exceção e viraria o caso comum.
+ *
+ * Comparação estrutural em vez de assinatura em string: sai fora no primeiro
+ * campo diferente, sem concatenar até 96 KB de argumentos por log só para
+ * descobrir que dois logs são diferentes.
+ */
+export function isSameLogLine(a: LogEntry, b: LogEntry): boolean {
+  if (a.level !== b.level || a.message !== b.message) return false;
+  if (a.namespace !== b.namespace || a.stack !== b.stack) return false;
+  if (a.args.length !== b.args.length) return false;
+  for (let i = 0; i < a.args.length; i += 1) {
+    const left = a.args[i]!;
+    const right = b.args[i]!;
+    if (left.json !== right.json || left.preview !== right.preview) return false;
+  }
+  return true;
 }
 
 /** Estimativa barata do custo de fio de uma entrada. */
@@ -495,7 +558,7 @@ export function createLogBatcher(
       // Fusão de idênticas consecutivas: não conta contra o teto e não cresce
       // o lote — é o caso do loop de render, que é ruído, não informação.
       const last = pending[pending.length - 1];
-      if (last && entrySignature(last) === entrySignature(entry)) {
+      if (last && isSameLogLine(last, entry)) {
         last.repeat += 1;
         return;
       }
