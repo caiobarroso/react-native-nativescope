@@ -353,6 +353,34 @@ const NAMESPACE_BRACKET = /^\s*\[([^\]\s][^\]]{0,31})\]/;
 const NAMESPACE_COLON = /^\s*([A-Za-z][\w.-]{0,31}):\s/;
 
 /**
+ * Palavras que são NÍVEL, não namespace.
+ *
+ * `console.error("[ERROR] Auth: falhou")` é o formato de meio mundo. Tratar
+ * "ERROR" como namespace pintava dois badges idênticos no detalhe (um de nível,
+ * outro de namespace), enchia o filtro de namespace com ERROR/WARN/INFO, e —
+ * pior — escondia "Auth", que é o namespace de verdade, porque a regra de
+ * colchete vencia antes da regra de dois-pontos.
+ */
+const LEVEL_WORDS = new Set([
+  "log",
+  "info",
+  "warn",
+  "warning",
+  "error",
+  "err",
+  "debug",
+  "trace",
+  "fatal",
+  "critical",
+  "notice",
+  "verbose",
+  "silly",
+]);
+
+/** Prefixos de nível empilhados (`[INFO][Auth]`) são raros mas existem. */
+const MAX_LEVEL_PREFIXES = 3;
+
+/**
  * Namespace inferido do prefixo da mensagem.
  *
  * Pedir para o dev taguear 300 `console.log` que já existem não escala; metade
@@ -360,9 +388,16 @@ const NAMESPACE_COLON = /^\s*([A-Za-z][\w.-]{0,31}):\s/;
  * em código legado, sem exigir uma linha de mudança no app.
  */
 export function deriveNamespace(message: string): string | null {
-  const bracket = NAMESPACE_BRACKET.exec(message);
-  if (bracket?.[1]) return bracket[1].trim() || null;
-  const colon = NAMESPACE_COLON.exec(message);
+  let rest = message;
+  for (let i = 0; i < MAX_LEVEL_PREFIXES; i += 1) {
+    const bracket = NAMESPACE_BRACKET.exec(rest);
+    if (!bracket?.[1]) break;
+    const label = bracket[1].trim();
+    if (!LEVEL_WORDS.has(label.toLowerCase())) return label || null;
+    // Era só o nível: descarta e procura o namespace no que sobrou.
+    rest = rest.slice(bracket[0].length);
+  }
+  const colon = NAMESPACE_COLON.exec(rest);
   if (colon?.[1]) return colon[1].trim() || null;
   return null;
 }

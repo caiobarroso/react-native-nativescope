@@ -32,6 +32,26 @@ describe("logs capture — helpers puros", () => {
     expect(deriveNamespace("nothing to see here")).toBeNull();
   });
 
+  it("marcador de nível no prefixo não é namespace", () => {
+    // Regressão: `[ERROR] RnbgLocationService: falha` devolvia "ERROR". Isso
+    // pintava dois badges idênticos no detalhe (nível + namespace), poluía o
+    // filtro de namespace com ERROR/WARN/INFO e escondia o namespace real,
+    // porque a regra de colchete vencia antes da de dois-pontos.
+    expect(deriveNamespace("[ERROR] RnbgLocationService: falha ao iniciar")).toBe(
+      "RnbgLocationService",
+    );
+    expect(deriveNamespace("[INFO] NetworkService: Initializing")).toBe("NetworkService");
+    expect(deriveNamespace("[warn] cache miss")).toBeNull();
+    expect(deriveNamespace("[DEBUG][Auth] token expired")).toBe("Auth");
+  });
+
+  it("colchete que só PARECE nível continua valendo como namespace", () => {
+    // "Errors" e "Logger" não são níveis — quem taguear assim não pode perder
+    // o namespace por causa do prefixo.
+    expect(deriveNamespace("[Errors] boundary caught")).toBe("Errors");
+    expect(deriveNamespace("[Logger] ready")).toBe("Logger");
+  });
+
   it("serializa objeto em JSON válido para o viewer", () => {
     const arg = serializeArg({ user: { id: 7, name: "Ana" } }, normalizeLogsOptions({}));
     expect(arg.kind).toBe("json");
