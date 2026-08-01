@@ -36,6 +36,11 @@ export interface LogsOptions {
   preReadyBuffer: number;
   /** Substrings de mensagem a ignorar. */
   ignorePatterns: string[];
+  /**
+   * Chaves cujo valor vira `«redacted»` antes de sair do device. Já normalizadas
+   * (minúsculas, sem separadores). Vazio = redação desligada.
+   */
+  redactKeys: string[];
 }
 
 const DEFAULT_MAX_ARG_LENGTH = 8 * 1024;
@@ -86,6 +91,12 @@ export function normalizeLogsOptions(config: unknown): LogsOptions {
     maxPerSecond: positive(c.maxPerSecond, DEFAULT_MAX_PER_SECOND),
     preReadyBuffer: positive(c.preReadyBuffer, DEFAULT_PRE_READY_BUFFER),
     ignorePatterns: [...DEFAULT_IGNORE, ...toStringArray(c.ignorePatterns)],
+    // `redact: false` desliga por inteiro; `redactKeys` SOMA aos defaults, como
+    // ignorePatterns. Quem quiser ver um token específico desliga e pronto.
+    redactKeys:
+      c.redact === false
+        ? []
+        : [...DEFAULT_REDACT_KEYS, ...toStringArray(c.redactKeys).map(normalizeKey)],
   };
 }
 
@@ -201,7 +212,10 @@ function toPlain(
           break;
         }
         count += 1;
-        out[String(key)] = toPlain(entry, options, depth + 1, seen, state);
+        const name = String(key);
+        out[name] = isSecretKey(name, options)
+          ? REDACTED
+          : toPlain(entry, options, depth + 1, seen, state);
       }
       return { "«Map»": out };
     }
@@ -230,6 +244,11 @@ function toPlain(
         break;
       }
       count += 1;
+      if (isSecretKey(key, options)) {
+        // Nem lê o valor: um getter de token não deve nem ser invocado.
+        out[key] = REDACTED;
+        continue;
+      }
       try {
         out[key] = toPlain((object as Record<string, unknown>)[key], options, depth + 1, seen, state);
       } catch {
@@ -250,6 +269,55 @@ function primitiveLabel(value: unknown): string {
     return `ƒ ${(value as { name?: string }).name || "anonymous"}`;
   }
   return String(value);
+}
+
+export const REDACTED = "«redacted»";
+
+/**
+ * Chaves cujo VALOR nunca sai do device.
+ *
+ * Ligado por padrão, ao contrário do `redactHeaders` do Network — e de
+ * propósito. Um header `authorization` é secreto quase por definição, então lá
+ * o opt-in é barato; aqui o dev que escreve `console.log("auth", { token })`
+ * não tem como saber que precisava configurar algo, e no modo `--lan` isso vai
+ * para a rede local protegido só pelo token de sessão. Perder um valor com o
+ * marcador `«redacted»` na tela é reversível em uma linha de config; vazar não é.
+ *
+ * A comparação é por SUBSTRING sobre a chave normalizada (minúscula, sem `_`
+ * nem `-`), então `accessToken`, `access_token` e `API-KEY` caem todos. O preço
+ * é falso positivo em coisas como `tokenCount` — visível, e desligável.
+ */
+const DEFAULT_REDACT_KEYS = [
+  "password",
+  "passwd",
+  "secret",
+  "token",
+  "authorization",
+  "apikey",
+  "credential",
+  "privatekey",
+  "creditcard",
+  "cardnumber",
+  "cvv",
+];
+
+/** Minúsculas e sem separadores: `access_token`, `AccessToken` e `ACCESS-TOKEN` viram um só. */
+function normalizeKey(key: string): string {
+  let out = "";
+  for (let i = 0; i < key.length; i += 1) {
+    const char = key[i]!;
+    if (char !== "_" && char !== "-" && char !== ".") out += char.toLowerCase();
+  }
+  return out;
+}
+
+export function isSecretKey(key: string, options: LogsOptions): boolean {
+  if (options.redactKeys.length === 0) return false;
+  const normalized = normalizeKey(key);
+  for (const needle of options.redactKeys) {
+    if (needle && normalized.indexOf(needle) !== -1) return true;
+  }
+  return false;
 }
 
 /** O que cabe numa LINHA da lista sem o log virar parágrafo. */

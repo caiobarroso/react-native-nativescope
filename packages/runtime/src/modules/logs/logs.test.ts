@@ -84,6 +84,61 @@ describe("logs capture — helpers puros", () => {
     expect(arg.preview).toBe("Error: Waiting for previous start action");
   });
 
+  it("redige segredos por padrão, sem precisar de config", () => {
+    const options = normalizeLogsOptions({});
+    const arg = serializeArg(
+      {
+        userId: 7,
+        token: "eyJhbGciOi.SECRETO",
+        access_token: "outro-SECRETO",
+        "API-KEY": "k-SECRETO",
+        nested: { password: "hunter2", keep: "visível" },
+      },
+      options,
+    );
+
+    expect(arg.json).not.toContain("SECRETO");
+    expect(arg.json).not.toContain("hunter2");
+    const parsed = JSON.parse(arg.json!);
+    expect(parsed.userId).toBe(7); // o que não é segredo continua legível
+    expect(parsed.token).toBe("«redacted»");
+    expect(parsed.access_token).toBe("«redacted»");
+    expect(parsed["API-KEY"]).toBe("«redacted»");
+    expect(parsed.nested).toEqual({ password: "«redacted»", keep: "visível" });
+  });
+
+  it("nem invoca o getter de uma chave secreta", () => {
+    let lido = false;
+    const alvo = {
+      get token() {
+        lido = true;
+        return "SECRETO";
+      },
+    };
+
+    const arg = serializeArg(alvo, normalizeLogsOptions({}));
+    expect(lido).toBe(false);
+    expect(arg.json).toContain("«redacted»");
+  });
+
+  it("redação é desligável, e chaves extras somam aos defaults", () => {
+    const off = serializeArg({ token: "abc" }, normalizeLogsOptions({ redact: false }));
+    expect(JSON.parse(off.json!).token).toBe("abc");
+
+    const extra = normalizeLogsOptions({ redactKeys: ["cpf"] });
+    const arg = serializeArg({ cpf: "000", token: "abc", nome: "Ana" }, extra);
+    const parsed = JSON.parse(arg.json!);
+    expect(parsed.cpf).toBe("«redacted»");
+    expect(parsed.token).toBe("«redacted»"); // default continua valendo
+    expect(parsed.nome).toBe("Ana");
+  });
+
+  it("Map também é redigido — é objeto disfarçado", () => {
+    const arg = serializeArg(new Map([["refreshToken", "SECRETO"]]), normalizeLogsOptions({}));
+    expect(arg.json).not.toContain("SECRETO");
+    expect(arg.json).toContain("«redacted»");
+  });
+
   it("serializa objeto em JSON válido para o viewer", () => {
     const arg = serializeArg({ user: { id: 7, name: "Ana" } }, normalizeLogsOptions({}));
     expect(arg.kind).toBe("json");
