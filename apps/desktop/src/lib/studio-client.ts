@@ -429,6 +429,14 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
           nav: snapshotNav(),
         };
       }
+      // O device em foco morreu (reload do bundle, crash, cabo). Comando e
+      // stream em voo não têm mais quem responda: o serviço já apagou as rotas
+      // deste device (clearRoutesForDevice), então nada mais chega — sobrava só
+      // esperar o timeout. Derrubar aqui troca 4s (comando) e 15s (stream) de
+      // espera morta por um erro imediato e honesto: o stream expirava dizendo
+      // "the app stopped responding", e o app não travou — ele reiniciou.
+      // switchDevice já fazia exatamente isto; aqui era omissão.
+      if (wasSelected) failInFlight("the app disconnected");
       store.removeDevice(goneId);
       const after = useStudio.getState();
       if (after.devices.length === 0) {
