@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type { LogArg, LogEntry } from "@rnsi/protocol";
-import { Check, ChevronDown, ChevronRight, Clock, Copy, MousePointerClick } from "lucide-react";
+import { Braces, Check, ChevronDown, ChevronRight, Clock, Copy, MousePointerClick } from "lucide-react";
 import { useLogs } from "../../lib/logs-store.ts";
 import { useTimeline } from "../../lib/timeline-store.ts";
+import { describeLogPayload, type CompactField } from "../../lib/log-payload.ts";
 import { JsonWorkspace } from "../ValueEditor.tsx";
 import {
   formatAbsolute,
@@ -27,8 +28,8 @@ export function LogDetail() {
           <MousePointerClick size={20} strokeWidth={1.5} className="text-text-subtle" />
           <p className="text-[12px] text-text-muted">Select a log to inspect it.</p>
           <p className="text-[11px] leading-relaxed text-text-subtle">
-            Objects logged with <code className="font-mono">console.log</code> open in the same
-            viewer used by Storage — expandable, searchable, copyable.
+            Flat data reads as a plain table. Anything nested or long opens in the same viewer
+            used by Storage — expandable, searchable, copyable.
           </p>
         </div>
       </div>
@@ -137,34 +138,86 @@ export function LogDetail() {
 
 function ArgPanel({ arg, index, total }: { arg: LogArg; index: number; total: number }) {
   const [collapsed, setCollapsed] = useState(false);
+  // Escapatória: mesmo num payload raso, às vezes se quer o Raw ou o TS.
+  const [forceWorkspace, setForceWorkspace] = useState(false);
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   const label = arg.kind === "error" ? "Error" : total === 1 ? "Data" : `Argument ${index + 1}`;
+  const payload = describeLogPayload(arg);
+  const compact = payload.shape === "compact" && !forceWorkspace;
 
   return (
     <section className="flex min-h-0 flex-col">
-      <button
-        onClick={() => setCollapsed((current) => !current)}
-        className="flex h-7 items-center gap-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-text-subtle hover:text-text"
-      >
-        <Chevron size={12} strokeWidth={2} />
-        {label}
-        {arg.truncated && (
-          <span className="font-normal normal-case tracking-normal text-text-subtle">
-            (capped)
-          </span>
+      <div className="flex h-7 items-center gap-1.5">
+        <button
+          onClick={() => setCollapsed((current) => !current)}
+          className="flex items-center gap-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-text-subtle hover:text-text"
+        >
+          <Chevron size={12} strokeWidth={2} />
+          {label}
+          {arg.truncated && (
+            <span className="font-normal normal-case tracking-normal text-text-subtle">
+              (capped)
+            </span>
+          )}
+        </button>
+        <span className="min-w-0 flex-1" />
+        {!collapsed && compact && (
+          <button
+            onClick={() => setForceWorkspace(true)}
+            title="Open this in the full viewer — tree, raw JSON and TypeScript types"
+            className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-border px-1.5 text-[10px] text-text-subtle hover:border-accent hover:text-accent"
+          >
+            <Braces size={10} strokeWidth={1.5} />
+            Viewer
+          </button>
         )}
-      </button>
-      {!collapsed && (
-        <div className="flex min-h-[220px] flex-col">
-          <JsonWorkspace
-            draft={arg.json ?? "null"}
-            onDraftChange={() => {}}
-            sourceName={label}
-            readOnly
-          />
-        </div>
-      )}
+      </div>
+      {!collapsed &&
+        (compact ? (
+          <CompactFields fields={payload.shape === "compact" ? payload.fields : []} />
+        ) : (
+          <div className="flex min-h-[220px] flex-col">
+            <JsonWorkspace
+              draft={arg.json ?? "null"}
+              onDraftChange={() => {}}
+              sourceName={label}
+              readOnly
+            />
+          </div>
+        ))}
     </section>
+  );
+}
+
+/**
+ * Payload raso: tabela chave/valor e nada mais. Mesmo desenho dos headers do
+ * Network — dois campos escalares não justificam abas, breadcrumb nem busca.
+ */
+function CompactFields({ fields }: { fields: CompactField[] }) {
+  if (fields.length === 0) {
+    return <p className="text-[11px] text-text-subtle">Empty object.</p>;
+  }
+  return (
+    <div className="overflow-hidden rounded-md border border-border">
+      {fields.map((field, index) => (
+        <div
+          key={field.key || index}
+          className={`flex gap-2 px-2 py-1 text-[11px] ${
+            index > 0 ? "border-t border-border/60" : ""
+          }`}
+        >
+          {field.key !== "" && (
+            <span
+              className="w-40 shrink-0 truncate font-mono font-semibold text-text-muted"
+              title={field.key}
+            >
+              {field.key}
+            </span>
+          )}
+          <span className="min-w-0 flex-1 break-all font-mono text-text">{field.value}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
