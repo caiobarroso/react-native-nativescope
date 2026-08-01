@@ -5,6 +5,7 @@ import { installLogsModule } from "./install.ts";
 import {
   createLogBatcher,
   deriveNamespace,
+  formatMessage,
   normalizeLogsOptions,
   serializeArg,
 } from "./capture.ts";
@@ -156,6 +157,38 @@ describe("logs capture — helpers puros", () => {
     expect(arg.kind).toBe("unserializable");
     expect(arg.preview).toBe("«unserializable»");
     expect(arg.truncated).toBe(true);
+  });
+
+  it("aplica format specifiers em vez de imprimir o placeholder cru", () => {
+    const options = normalizeLogsOptions({});
+    const fmt = (...values: unknown[]): string =>
+      formatMessage(
+        values.map((value) => serializeArg(value, options)),
+        options,
+      );
+
+    // Regressão: isto rendia literalmente "%s items %d". A lib `debug` e boa
+    // parte do código de biblioteca usam isso o tempo todo.
+    expect(fmt("%s items in %s", 5, "cart")).toBe("5 items in cart");
+    expect(fmt("%d%% done", 42)).toBe("42% done");
+    expect(fmt("id=%i", 7.9)).toBe("id=7");
+    expect(fmt("ratio=%f", 1.5)).toBe("ratio=1.5");
+    expect(fmt("user %o", { id: 1 })).toBe('user {"id":1}');
+
+    // %c é estilo: consome o argumento e não imprime nada.
+    expect(fmt("%cstyled", "color: red")).toBe("styled");
+
+    // Sem argumento sobrando, o especificador fica literal — igual ao browser.
+    expect(fmt("%s and %s", "um")).toBe("um and %s");
+
+    // Argumento que sobra é anexado no fim.
+    expect(fmt("%s", "um", "dois")).toBe("um dois");
+
+    // Sem especificador, nada muda.
+    expect(fmt("plain", { a: 1 })).toBe('plain {"a":1}');
+
+    // Só o PRIMEIRO argumento é format string — um "%s" vindo de dado não conta.
+    expect(fmt({ tpl: "%s" }, "x")).toBe('{"tpl":"%s"} x');
   });
 
   it("serializa objeto em JSON válido para o viewer", () => {

@@ -465,8 +465,72 @@ export function serializeArg(value: unknown, options: LogsOptions): LogArg {
  * Mensagem e namespace
  * ------------------------------------------------------------------ */
 
+/** `%s %d %i %f %o %O %j %c %%` — o mesmo conjunto que o console do browser aceita. */
+const HAS_SPECIFIER = /%[sdifoOjc%]/;
+const SPECIFIERS = "sdifoOjc";
+
+/** Substitui UM especificador pelo argumento correspondente. */
+function formatOne(arg: LogArg, token: string): string {
+  if (token === "d" || token === "i") {
+    const n = Number(arg.preview);
+    return Number.isFinite(n) ? String(Math.trunc(n)) : "NaN";
+  }
+  if (token === "f") {
+    const n = Number(arg.preview);
+    return Number.isFinite(n) ? String(n) : "NaN";
+  }
+  return arg.preview; // %s %o %O %j
+}
+
+/**
+ * Aplica a format string do primeiro argumento.
+ *
+ * `console.log("%s items", 5)` virava literalmente `"%s items 5"`. Não é caso
+ * de borda: a biblioteca `debug` — e metade do código de lib que existe — usa
+ * `%s`/`%o` o tempo todo, e o dev via o placeholder cru na lista.
+ *
+ * Segue o console do browser nos detalhes que importam: `%%` é um por cento
+ * literal, `%c` consome o argumento de CSS e não imprime nada, especificador
+ * sem argumento sobrando fica literal, e o que sobrar de argumento é anexado
+ * no fim separado por espaço.
+ */
+function applyFormat(args: LogArg[]): string {
+  const format = args[0]!.preview;
+  let out = "";
+  let next = 1;
+  let i = 0;
+
+  while (i < format.length) {
+    const char = format[i]!;
+    if (char === "%" && i + 1 < format.length) {
+      const token = format[i + 1]!;
+      if (token === "%") {
+        out += "%";
+        i += 2;
+        continue;
+      }
+      if (SPECIFIERS.indexOf(token) !== -1 && next < args.length) {
+        // %c é estilo, não conteúdo: consome o argumento e não imprime nada.
+        if (token !== "c") out += formatOne(args[next]!, token);
+        next += 1;
+        i += 2;
+        continue;
+      }
+    }
+    out += char;
+    i += 1;
+  }
+
+  for (; next < args.length; next += 1) out += ` ${args[next]!.preview}`;
+  return out;
+}
+
 export function formatMessage(args: LogArg[], options: LogsOptions): string {
-  const message = args.map((arg) => arg.preview).join(" ");
+  const first = args[0];
+  const message =
+    first !== undefined && first.kind === "text" && HAS_SPECIFIER.test(first.preview)
+      ? applyFormat(args)
+      : args.map((arg) => arg.preview).join(" ");
   return message.length > options.maxMessageLength
     ? `${message.slice(0, options.maxMessageLength)}…`
     : message;

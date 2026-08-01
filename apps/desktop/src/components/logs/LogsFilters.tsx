@@ -103,7 +103,7 @@ export function LogsFilters() {
 
       {dropped > 0 && (
         <span
-          title="The device hit its per-second log ceiling and discarded these to protect your app."
+          title="The device hit its per-second log ceiling and discarded these to protect your app. Counted since the last Clear — Clear resets it."
           className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-updated/40 px-2 text-[11px] text-updated"
         >
           <AlertTriangle size={12} strokeWidth={1.5} />

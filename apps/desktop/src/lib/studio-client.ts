@@ -486,6 +486,20 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       if (wasSelected) failInFlight("the app disconnected");
       store.removeDevice(goneId);
       const after = useStudio.getState();
+
+      // O foco pulou para OUTRO device. Network e Logs são capturas escopadas
+      // ao device, e o `seq` — que ancora a fronteira do Mark — reinicia a cada
+      // contexto JS: sem zerar, a marca feita no device que morreu passa a
+      // casar com as primeiras entradas do novo. Mesma regra do switchDevice.
+      //
+      // O reload comum não passa por aqui: ali o supersede em session.connected
+      // já moveu o foco e resetou, então `wasSelected` é falso e o que já
+      // chegou do contexto novo fica intacto. Quando não sobra device nenhum, o
+      // histórico do app que acabou de morrer também fica — é o que se quer ler.
+      if (wasSelected && after.selectedDeviceId !== null && after.selectedDeviceId !== goneId) {
+        useNetwork.getState().reset();
+        useLogs.getState().reset();
+      }
       if (after.devices.length === 0) {
         store.setPhase("waiting-app");
       } else if (wasSelected && !maybeContinue() && after.selectedDeviceId) {

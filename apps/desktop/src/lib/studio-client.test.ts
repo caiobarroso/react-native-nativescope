@@ -6,7 +6,7 @@
  * handshake na mão. Cada teste conversa pelo mesmo socket; os fatos assertados
  * são sempre observáveis de fora (a promise que o chamador recebeu).
  */
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fnv1a32 } from "@rnsi/runtime";
 
 /** Checksum que o device calcularia para esta sequência de chunks. */
@@ -106,6 +106,7 @@ const { connect, getFullValue, getFullCell, scanAllKeys, exportInstance, loadRow
   "./studio-client.ts"
 );
 const { useStudio } = await import("./store.ts");
+const { useLogs } = await import("./logs-store.ts");
 
 const EVENT = { kind: "event", protocolVersion: 1, timestamp: 0 } as const;
 const DEVICE_ID = "device-a";
@@ -122,16 +123,29 @@ function watch(promise: Promise<unknown>): { settled: boolean; value: unknown } 
   return box;
 }
 
-function connectDevice(deviceId: string): void {
+/**
+ * `platform` importa: um device com MESMO name+platform supersede o anterior
+ * (é o reload de bundle) e já reseta Network/Logs por esse caminho. Para testar
+ * a troca de foco por MORTE do device é preciso um device que não supersede.
+ */
+function connectDevice(deviceId: string, platform = "ios"): void {
   socket!.deliver({
     ...EVENT,
     type: "session.connected",
     payload: {
       sessionId: `s-${deviceId}`,
       deviceId,
-      client: { name: "playground", platform: "ios" },
+      client: { name: "playground", platform },
       providers: [],
     },
+  });
+}
+
+function disconnectDevice(deviceId: string): void {
+  socket!.deliver({
+    ...EVENT,
+    type: "session.disconnected",
+    payload: { sessionId: `s-${deviceId}`, deviceId },
   });
 }
 
@@ -217,6 +231,87 @@ describe("morte do device em foco", () => {
     connectDevice(DEVICE_ID);
     await tick();
     expect(useStudio.getState().selectedDeviceId).toBe(DEVICE_ID);
+  });
+});
+
+describe("foco pulando de device", () => {
+  function pushLog(message: string): void {
+    socket!.deliver({
+      ...EVENT,
+      deviceId: useStudio.getState().selectedDeviceId,
+      type: "module.event",
+      payload: {
+        module: "logs",
+        event: "batch",
+        data: {
+          dropped: 0,
+          entries: [
+            {
+              id: `log-${message}`,
+              seq: 1, // seq REINICIA a cada contexto JS — é esse o ponto
+              ts: 1,
+              level: "log",
+              source: "console",
+              message,
+              namespace: null,
+              args: [],
+              stack: null,
+              repeat: 1,
+              truncated: false,
+            },
+          ],
+        },
+      },
+    });
+  }
+
+  /** Deixa exatamente os devices pedidos conectados, e nada mais. */
+  async function onlyDevices(...specs: Array<[string, string]>): Promise<void> {
+    for (const device of useStudio.getState().devices) disconnectDevice(device.deviceId);
+    await tick();
+    for (const [id, platform] of specs) connectDevice(id, platform);
+    await tick();
+    useLogs.getState().reset();
+  }
+
+  afterAll(async () => {
+    await onlyDevices([DEVICE_ID, "ios"]);
+  });
+
+  it("zera Logs e Network quando o foco cai para outro device", async () => {
+    // Plataformas diferentes de propósito: assim o android NÃO supersede o iOS
+    // (esse caminho já resetava sozinho) e o foco só se move quando o iOS morre.
+    await onlyDevices(["ios-velho", "ios"], ["android-novo", "android"]);
+    expect(useStudio.getState().selectedDeviceId).toBe("ios-velho");
+
+    pushLog("do device velho");
+    useLogs.getState().mark();
+    expect(useLogs.getState().entries).toHaveLength(1);
+    expect(useLogs.getState().markedSeq).toBe(1);
+
+    disconnectDevice("ios-velho");
+    await tick();
+
+    // Sem o reset, o markedSeq=1 do device morto passaria a casar com a
+    // primeira entrada do device que herdou o foco — a fronteira do Mark
+    // apontaria para o lugar errado, porque o seq reinicia por contexto JS.
+    expect(useStudio.getState().selectedDeviceId).not.toBe("ios-velho");
+    expect(useLogs.getState().entries).toEqual([]);
+    expect(useLogs.getState().markedSeq).toBe(null);
+  });
+
+  it("mas PRESERVA o histórico quando não sobra device nenhum", async () => {
+    await onlyDevices(["sozinho", "ios"]);
+    pushLog("último suspiro");
+    expect(useLogs.getState().entries).toHaveLength(1);
+
+    disconnectDevice("sozinho");
+    await tick();
+
+    // O app morreu e não há para onde pular: ler o que ele deixou é justamente
+    // o que se quer fazer nesse momento.
+    expect(useStudio.getState().selectedDeviceId).toBe(null);
+    expect(useLogs.getState().entries).toHaveLength(1);
   });
 });
 
