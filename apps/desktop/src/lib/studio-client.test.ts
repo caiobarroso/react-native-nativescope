@@ -7,6 +7,12 @@
  * são sempre observáveis de fora (a promise que o chamador recebeu).
  */
 import { beforeAll, describe, expect, it } from "vitest";
+import { fnv1a32 } from "@rnsi/runtime";
+
+/** Checksum que o device calcularia para esta sequência de chunks. */
+function checksumOf(...chunks: string[]): string {
+  return chunks.reduce((hash, chunk) => fnv1a32(chunk, hash), 0x811c9dc5).toString(16);
+}
 
 type Listener = ((event: { data: unknown }) => void) | (() => void);
 
@@ -185,7 +191,7 @@ describe("morte do device em foco", () => {
     socket!.deliver({
       ...EVENT,
       type: "stream.end",
-      payload: { streamId: nextStreamId, ok: true, chunkCount: 0 },
+      payload: { streamId: nextStreamId, ok: true, chunkCount: 0, checksum: checksumOf() },
     });
     await tick();
     expect(box.settled).toBe(true);
@@ -371,7 +377,7 @@ describe("export com o disco falhando", () => {
       ...EVENT,
       deviceId: DEVICE_ID,
       type: "stream.end",
-      payload: { streamId: nextStreamId, ok: true, chunkCount: 1 },
+      payload: { streamId: nextStreamId, ok: true, chunkCount: 1, checksum: checksumOf("linha\n") },
     });
     await tick();
 
@@ -390,12 +396,18 @@ describe("origem do chunk", () => {
     });
   }
 
-  function end(deviceId?: string): void {
+  /** `accepted` = os chunks que o Studio deveria ter deixado entrar. */
+  function end(deviceId: string | undefined, ...accepted: string[]): void {
     socket!.deliver({
       ...EVENT,
       ...(deviceId !== undefined ? { deviceId } : {}),
       type: "stream.end",
-      payload: { streamId: nextStreamId, ok: true, chunkCount: 1 },
+      payload: {
+        streamId: nextStreamId,
+        ok: true,
+        chunkCount: accepted.length,
+        checksum: checksumOf(...accepted),
+      },
     });
   }
 
@@ -404,7 +416,7 @@ describe("origem do chunk", () => {
 
     chunk("VEIO-DO-DEVICE-ERRADO", "device-intruso");
     chunk("legítimo", DEVICE_ID);
-    end(DEVICE_ID);
+    end(DEVICE_ID, "legítimo");
     await tick();
 
     expect(box.settled).toBe(true);
@@ -415,7 +427,7 @@ describe("origem do chunk", () => {
     const box = await openStream();
 
     chunk("sem-carimbo");
-    end();
+    end(undefined, "sem-carimbo");
     await tick();
 
     expect(box.settled).toBe(true);
@@ -430,8 +442,38 @@ describe("origem do chunk", () => {
     expect(box.settled).toBe(false);
 
     chunk("chegou depois", DEVICE_ID);
-    end(DEVICE_ID);
+    end(DEVICE_ID, "chegou depois");
     await tick();
     expect(box.value).toEqual({ type: "string", value: "chegou depois" });
+  });
+
+  it("recusa um stream.end sem checksum em vez de entregar dado não verificado", async () => {
+    const box = await openStream();
+
+    chunk("conteúdo", DEVICE_ID);
+    socket!.deliver({
+      ...EVENT,
+      deviceId: DEVICE_ID,
+      type: "stream.end",
+      payload: { streamId: nextStreamId, ok: true, chunkCount: 1 }, // sem checksum
+    });
+    await tick();
+
+    // O schema aceita checksum ausente, mas o único produtor (createStreamHub)
+    // sempre manda. Aceitar calado era pular a verificação justamente no
+    // caminho que existe para transportar 100% do valor.
+    expect((box.value as Error).message).toBe(
+      "stream ended without a checksum — transfer not verifiable",
+    );
+  });
+
+  it("recusa checksum que não bate", async () => {
+    const box = await openStream();
+
+    chunk("conteúdo", DEVICE_ID);
+    end(DEVICE_ID, "outra-coisa");
+    await tick();
+
+    expect((box.value as Error).message).toBe("checksum mismatch — corrupted transfer");
   });
 });

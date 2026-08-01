@@ -149,7 +149,16 @@ function handleStreamEnd(payload: {
     stream.reject(new Error(payload.error ?? "stream failed on device"));
     return;
   }
-  if (payload.checksum && payload.checksum !== stream.hash.toString(16)) {
+  // Checksum é OPCIONAL no schema (o protocolo tolera), mas o único produtor de
+  // stream.end é o createStreamHub do runtime, e ele sempre manda em ok:true.
+  // Ausência aqui significa produtor desconhecido ou frame adulterado — e
+  // aceitar calado seria entregar dado não verificado justamente no caminho que
+  // existe para transportar 100% do valor.
+  if (payload.checksum === undefined) {
+    stream.reject(new Error("stream ended without a checksum — transfer not verifiable"));
+    return;
+  }
+  if (payload.checksum !== stream.hash.toString(16)) {
     stream.reject(new Error("checksum mismatch — corrupted transfer"));
     return;
   }
