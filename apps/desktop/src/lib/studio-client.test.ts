@@ -71,6 +71,9 @@ function resultFor(type: string | undefined): unknown {
       return { streamId: nextStreamId, valueType: "string", totalSize: 0 };
     case "database.cell":
       return { streamId: nextStreamId, kind: "text", totalSize: 0 };
+    case "database.export":
+    case "key-value.export":
+      return { streamId: nextStreamId };
     case "key-value.list": {
       // Teto de páginas para que um abort quebrado falhe o teste por asserção,
       // e não por loop infinito.
@@ -93,7 +96,9 @@ g.window = {
   localStorage: { getItem: () => null, setItem: () => {} },
 };
 
-const { connect, getFullValue, getFullCell, scanAllKeys } = await import("./studio-client.ts");
+const { connect, getFullValue, getFullCell, scanAllKeys, exportInstance } = await import(
+  "./studio-client.ts"
+);
 const { useStudio } = await import("./store.ts");
 
 const EVENT = { kind: "event", protocolVersion: 1, timestamp: 0 } as const;
@@ -302,6 +307,76 @@ describe("contrato de cancelamento", () => {
 
     expect(isAbort(box.value)).toBe(false);
     expect((box.value as Error).message).toBe("disk read failed");
+  });
+});
+
+describe("export com o disco falhando", () => {
+  /** Sink que morre no write nº `dieAt`, como um disco que enche no meio. */
+  function dyingSink(dieAt: number) {
+    const written: string[] = [];
+    let failure: Error | null = null;
+    return {
+      written,
+      get failure() {
+        return failure;
+      },
+      write(chunk: string) {
+        if (failure) return;
+        written.push(chunk);
+        if (written.length === dieAt) failure = new Error("No space left on device");
+      },
+    };
+  }
+
+  it("para a transferência no primeiro write que falha, com o erro do disco", async () => {
+    const sink = dyingSink(2);
+    const box = watch(exportInstance({ kind: "database", providerId: "p", instanceId: "i", table: "t" }, sink));
+    await tick();
+
+    const chunk = (data: string): void => {
+      socket!.deliver({
+        ...EVENT,
+        deviceId: DEVICE_ID,
+        type: "stream.chunk",
+        payload: { streamId: nextStreamId, seq: 0, data },
+      });
+    };
+    chunk("linha 1\n");
+    chunk("linha 2\n"); // aqui o disco morre
+    chunk("linha 3\n"); // não deve nem chegar ao sink
+    await tick();
+
+    // O erro é o do sistema de arquivos, não um "cancelado" genérico: é isso
+    // que o usuário precisa ler para saber que faltou espaço.
+    expect((box.value as Error).message).toBe("No space left on device");
+    expect(sink.written).toEqual(["linha 1\n", "linha 2\n"]);
+
+    // E o device foi avisado para parar de ler — sem isto ele mandaria o GB
+    // inteiro para um arquivo que já morreu.
+    expect(socket!.sent.some((frame) => frame.type === "stream.cancel")).toBe(true);
+  });
+
+  it("export sadio segue até o fim", async () => {
+    const sink = dyingSink(Number.POSITIVE_INFINITY);
+    const box = watch(exportInstance({ kind: "database", providerId: "p", instanceId: "i", table: "t" }, sink));
+    await tick();
+
+    socket!.deliver({
+      ...EVENT,
+      deviceId: DEVICE_ID,
+      type: "stream.chunk",
+      payload: { streamId: nextStreamId, seq: 0, data: "linha\n" },
+    });
+    socket!.deliver({
+      ...EVENT,
+      deviceId: DEVICE_ID,
+      type: "stream.end",
+      payload: { streamId: nextStreamId, ok: true, chunkCount: 1 },
+    });
+    await tick();
+
+    expect(box.settled).toBe(true);
+    expect(sink.written).toEqual(["linha\n"]);
   });
 });
 

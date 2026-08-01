@@ -170,10 +170,15 @@ function abortError(): DOMException {
   return new DOMException("Aborted", "AbortError");
 }
 
-/** Cancela um stream: avisa o device (para de ler) e rejeita o lado local. */
-function cancelStream(streamId: string): void {
+/** Interrompe um stream: avisa o device (para de ler) e rejeita o lado local. */
+function stopStream(streamId: string, reason: Error): void {
   void sendCommand({ type: "stream.cancel", payload: { streamId } }).catch(() => {});
-  activeStreams.get(streamId)?.reject(abortError());
+  activeStreams.get(streamId)?.reject(reason);
+}
+
+/** Cancelamento pedido pelo usuário — sempre AbortError (ver abortError). */
+function cancelStream(streamId: string): void {
+  stopStream(streamId, abortError());
 }
 
 function sessionToken(): string | null {
@@ -985,6 +990,10 @@ export async function searchDatabase(
 /**
  * Export integral NDJSON via stream: chunks vão direto ao sink (arquivo),
  * nunca acumulados na aba. GB fluem device → disco.
+ *
+ * Se o sink expõe `failure` e ele acende, a transferência é interrompida na
+ * hora e o erro do disco é propagado. Sem isto, um disco cheio no primeiro
+ * chunk só aparecia no close() — depois de o device ter mandado tudo.
  */
 export async function exportInstance(
   payload:
@@ -995,7 +1004,7 @@ export async function exportInstance(
         instanceId: string;
         table: string;
       },
-  sink: { write(chunk: string): void },
+  sink: { write(chunk: string): void; readonly failure?: Error | null },
   onProgress?: (receivedChars: number) => void,
 ): Promise<void> {
   const result = await sendCommand(
@@ -1018,8 +1027,15 @@ export async function exportInstance(
   );
   const parsed = exportResultSchema.safeParse(result);
   if (!parsed.success) throw new Error("invalid runtime response");
-  await awaitStream(parsed.data.streamId, 0, {
-    onChunk: (chunk) => sink.write(chunk),
+  const streamId = parsed.data.streamId;
+  await awaitStream(streamId, 0, {
+    onChunk: (chunk) => {
+      sink.write(chunk);
+      // O disco desistiu: não adianta seguir recebendo. Rejeita com o erro
+      // REAL do sistema de arquivos, não com um "cancelado" genérico — é o que
+      // o usuário precisa ler para saber que faltou espaço.
+      if (sink.failure) stopStream(streamId, sink.failure);
+    },
     ...(onProgress ? { onProgress: (received) => onProgress(received) } : {}),
   });
 }
