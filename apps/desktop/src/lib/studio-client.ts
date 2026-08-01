@@ -190,6 +190,23 @@ function cancelStream(streamId: string): void {
   stopStream(streamId, abortError());
 }
 
+/**
+ * O device respondeu fora do schema. Cada chamador degrada como faz sentido
+ * para a sua tela — lista vazia, null, valor default — e isso continua certo:
+ * uma violação de protocolo não deve derrubar a UI inteira.
+ *
+ * O que faltava era o rastro. Sem isto o usuário vê "esta tabela não tem
+ * linhas" / "não achei nada" e abre bug contra o lugar errado, porque o
+ * sintoma é idêntico ao caso legítimo. Sendo um devtool, o console do Studio é
+ * exatamente onde essa informação tem que estar.
+ */
+function offProtocol<T>(command: string, fallback: T): T {
+  console.warn(
+    `[nativescope] ${command}: resposta fora do protocolo — a tela vai parecer vazia`,
+  );
+  return fallback;
+}
+
 function sessionToken(): string | null {
   return new URLSearchParams(window.location.search).get("token");
 }
@@ -611,7 +628,8 @@ export async function getNetworkBody(
 ): Promise<NetworkBody | null> {
   const result = await sendModuleCommand("network", "get-body", { id, side });
   const parsed = networkGetBodyResultSchema.safeParse(result);
-  if (!parsed.success || !parsed.data.available) return null;
+  if (!parsed.success) return offProtocol("network.get-body", null);
+  if (!parsed.data.available) return null;
   return parsed.data.body;
 }
 
@@ -635,7 +653,7 @@ export async function replayRequest(
     ...(overrides ? { overrides } : {}),
   });
   const parsed = networkReplayResultSchema.safeParse(result);
-  return parsed.success ? parsed.data.id : null;
+  return parsed.success ? parsed.data.id : offProtocol("network.replay", null);
 }
 
 /**
@@ -671,6 +689,7 @@ export async function refreshProviders(): Promise<void> {
   const result = await sendCommand({ type: "provider.list", payload: {} });
   const parsed = providerListResultSchema.safeParse(result);
   if (parsed.success) useStudio.getState().setProviders(parsed.data.providers);
+  else offProtocol("provider.list", null);
 }
 
 /**
@@ -702,7 +721,7 @@ export async function loadKeys(providerId: string, instanceId: string): Promise<
   const parsed = keyValueListResultSchema.safeParse(result);
   if (parsed.success) {
     useStudio.getState().setKeys(providerId, instanceId, parsed.data, "replace");
-  }
+  } else offProtocol("key-value.list", null);
 }
 
 /** Próxima página, anexada à janela já carregada. No-op na última página. */
@@ -721,7 +740,7 @@ export async function loadMoreKeys(providerId: string, instanceId: string): Prom
   const parsed = keyValueListResultSchema.safeParse(result);
   if (parsed.success) {
     useStudio.getState().setKeys(providerId, instanceId, parsed.data, "append");
-  }
+  } else offProtocol("key-value.list", null);
 }
 
 export interface ValuePreview {
@@ -741,7 +760,9 @@ export async function getValue(
     payload: { providerId, instanceId, key },
   });
   const parsed = keyValueGetResultSchema.safeParse(result);
-  return parsed.success ? parsed.data : { value: null, truncated: false, totalSize: 0 };
+  return parsed.success
+    ? parsed.data
+    : offProtocol("key-value.get", { value: null, truncated: false, totalSize: 0 });
 }
 
 function materializeValue(type: StorageValue["type"], data: string): StorageValue {
@@ -863,7 +884,7 @@ export async function fetchAllKeys(
       },
     });
     const parsed = keyValueListResultSchema.safeParse(result);
-    if (!parsed.success) return { entries, complete: false, total };
+    if (!parsed.success) return offProtocol("key-value.list", { entries, complete: false, total });
     entries.push(...parsed.data.entries);
     total = parsed.data.total;
     if (parsed.data.nextAfterKey === null) return { entries, complete: true, total };
@@ -975,7 +996,9 @@ export async function searchKeys(
     payload: { providerId, instanceId, query, limit },
   });
   const parsed = keyValueSearchResultSchema.safeParse(result);
-  return parsed.success ? parsed.data : { entries: [], complete: false, scanned: 0 };
+  return parsed.success
+    ? parsed.data
+    : offProtocol("key-value.search", { entries: [], complete: false, scanned: 0 });
 }
 
 /** Busca LIKE nas tabelas SQLite, executada no device. */
@@ -993,7 +1016,9 @@ export async function searchDatabase(
     payload: { providerId, instanceId, query, limit },
   });
   const parsed = databaseSearchResultSchema.safeParse(result);
-  return parsed.success ? parsed.data : { matches: [], complete: false };
+  return parsed.success
+    ? parsed.data
+    : offProtocol("database.search", { matches: [], complete: false });
 }
 
 /**
@@ -1055,7 +1080,7 @@ export async function fetchAllTables(providerId: string, instanceId: string) {
     payload: { providerId, instanceId },
   });
   const parsed = databaseTablesResultSchema.safeParse(result);
-  return parsed.success ? parsed.data.tables : [];
+  return parsed.success ? parsed.data.tables : offProtocol("database.tables", []);
 }
 
 // ------------------------------------------------------------- database.*
@@ -1068,7 +1093,7 @@ export async function loadTables(providerId: string, instanceId: string): Promis
   const parsed = databaseTablesResultSchema.safeParse(result);
   if (parsed.success) {
     useStudio.getState().setTables(providerId, instanceId, parsed.data.tables);
-  }
+  } else offProtocol("database.tables", null);
 }
 
 export async function loadRows(
@@ -1089,7 +1114,7 @@ export async function loadRows(
     payload: { providerId, instanceId, table, ...options },
   });
   const parsed = databaseRowsResultSchema.safeParse(result);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? parsed.data : offProtocol("database.rows", null);
 }
 
 /**

@@ -6,7 +6,7 @@
  * handshake na mão. Cada teste conversa pelo mesmo socket; os fatos assertados
  * são sempre observáveis de fora (a promise que o chamador recebeu).
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { fnv1a32 } from "@rnsi/runtime";
 
 /** Checksum que o device calcularia para esta sequência de chunks. */
@@ -102,7 +102,7 @@ g.window = {
   localStorage: { getItem: () => null, setItem: () => {} },
 };
 
-const { connect, getFullValue, getFullCell, scanAllKeys, exportInstance } = await import(
+const { connect, getFullValue, getFullCell, scanAllKeys, exportInstance, loadRows } = await import(
   "./studio-client.ts"
 );
 const { useStudio } = await import("./store.ts");
@@ -313,6 +313,24 @@ describe("contrato de cancelamento", () => {
 
     expect(isAbort(box.value)).toBe(false);
     expect((box.value as Error).message).toBe("disk read failed");
+  });
+});
+
+describe("resposta fora do protocolo", () => {
+  it("degrada como antes, mas deixa rastro no console", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // O fake responde `{}` para database.rows — não casa com o schema.
+      const rows = await loadRows("p", "i", "tabela", { limit: 50, offset: 0 });
+
+      // O contrato do chamador não muda: null, a tela mostra "sem linhas".
+      expect(rows).toBe(null);
+      // Mas agora dá para saber POR QUÊ. Antes o sintoma era idêntico ao de uma
+      // tabela legitimamente vazia, e o bug ia parar no lugar errado.
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("database.rows"));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
