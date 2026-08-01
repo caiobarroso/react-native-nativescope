@@ -889,8 +889,11 @@ const SCAN_MAX_KEYS = 5_000_000;
  * sem nunca segurar 1M de objetos. O round-trip do WebSocket é o próprio yield
  * entre páginas — a main thread respira a cada resposta.
  *
- * Cancelável por AbortSignal: para de pedir páginas (a resposta em voo é
- * ignorada). Devolve `complete: false` quando cancelou ou bateu na trava.
+ * Cancelável por AbortSignal, com o MESMO contrato do getFullValue/getFullCell:
+ * cancelar rejeita com DOMException "AbortError". Antes o cancelamento voltava
+ * como `complete: false` — indistinguível de ter batido na trava de segurança,
+ * e um relatório parcial de uma varredura abortada tem cara de relatório
+ * legítimo de instância gigante. Agora `complete: false` só significa a trava.
  */
 export async function scanAllKeys(
   providerId: string,
@@ -902,7 +905,7 @@ export async function scanAllKeys(
   let scanned = 0;
   let total = 0;
   for (;;) {
-    if (options?.signal?.aborted) return { complete: false, scanned, total };
+    if (options?.signal?.aborted) throw abortError();
     const result = await sendCommand({
       type: "key-value.list",
       payload: {
@@ -913,7 +916,7 @@ export async function scanAllKeys(
         lean: true,
       },
     });
-    if (options?.signal?.aborted) return { complete: false, scanned, total };
+    if (options?.signal?.aborted) throw abortError();
 
     // Guarda de shape leve — sem Zod profundo (é o que mantém a página barata).
     const r = result as {

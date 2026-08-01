@@ -60,6 +60,9 @@ class FakeSocket {
   close(): void {}
 }
 
+/** Páginas restantes que o "device" ainda vai entregar numa varredura. */
+let scanPagesLeft = 0;
+
 function resultFor(type: string | undefined): unknown {
   switch (type) {
     case "provider.list":
@@ -68,6 +71,16 @@ function resultFor(type: string | undefined): unknown {
       return { streamId: nextStreamId, valueType: "string", totalSize: 0 };
     case "database.cell":
       return { streamId: nextStreamId, kind: "text", totalSize: 0 };
+    case "key-value.list": {
+      // Teto de páginas para que um abort quebrado falhe o teste por asserção,
+      // e não por loop infinito.
+      scanPagesLeft -= 1;
+      return {
+        entries: [{ key: `k-${scanPagesLeft}`, valueType: "string", approxSize: 10 }],
+        nextAfterKey: scanPagesLeft > 0 ? `k-${scanPagesLeft}` : null,
+        total: 100,
+      };
+    }
     default:
       return {};
   }
@@ -80,7 +93,7 @@ g.window = {
   localStorage: { getItem: () => null, setItem: () => {} },
 };
 
-const { connect, getFullValue, getFullCell } = await import("./studio-client.ts");
+const { connect, getFullValue, getFullCell, scanAllKeys } = await import("./studio-client.ts");
 const { useStudio } = await import("./store.ts");
 
 const EVENT = { kind: "event", protocolVersion: 1, timestamp: 0 } as const;
@@ -241,6 +254,39 @@ describe("contrato de cancelamento", () => {
 
     expect(isAbort(boxPre.value)).toBe(true);
     expect(isAbort(boxLive.value)).toBe(true);
+  });
+
+  it("scanAllKeys: cancelar rejeita em vez de devolver meio relatório", async () => {
+    scanPagesLeft = 20;
+    const controller = new AbortController();
+    let pages = 0;
+
+    const box = watch(
+      scanAllKeys(
+        "mmkv",
+        "default",
+        () => {
+          pages += 1;
+          if (pages === 2) controller.abort();
+        },
+        { signal: controller.signal },
+      ),
+    );
+    await tick();
+
+    // Antes voltava { complete: false } — a mesma forma de "bateu na trava de
+    // 5M chaves". Um relatório de 2 páginas ficava indistinguível do relatório
+    // legítimo de uma instância gigante.
+    expect(isAbort(box.value)).toBe(true);
+    expect(pages).toBe(2);
+  });
+
+  it("scanAllKeys: varredura que termina sozinha segue devolvendo complete", async () => {
+    scanPagesLeft = 3;
+    const box = watch(scanAllKeys("mmkv", "default", () => {}));
+    await tick();
+
+    expect(box.value).toEqual({ complete: true, scanned: 3, total: 100 });
   });
 
   it("falha de verdade continua sendo falha — não vira AbortError", async () => {

@@ -154,7 +154,8 @@ export function createStorageReducer(): StorageReducer {
 /**
  * Roda uma varredura completa e devolve o relatório agregado. O fold acontece
  * a cada página (barato, O(página)); o round-trip do WebSocket é o yield entre
- * páginas. Cancelável e com progresso.
+ * páginas. Com progresso, e cancelável: cancelar REJEITA com AbortError em vez
+ * de devolver relatório parcial — meio relatório não é relatório.
  */
 export async function runStorageScan(
   providerId: string,
