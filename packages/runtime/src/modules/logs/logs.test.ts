@@ -139,6 +139,25 @@ describe("logs capture — helpers puros", () => {
     expect(arg.json).toContain("«redacted»");
   });
 
+  it("objeto hostil degrada para «unserializable» em vez de sumir a entrada", () => {
+    // Regressão: o toPlain ficava FORA do try. Um Proxy cujo ownKeys lança
+    // subia até o catch do capture() e a entrada inteira desaparecia — o app
+    // não caía, mas o log nunca chegava e não havia rastro do porquê.
+    const hostil = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("ownKeys explodiu");
+        },
+      },
+    );
+
+    const arg = serializeArg(hostil, normalizeLogsOptions({}));
+    expect(arg.kind).toBe("unserializable");
+    expect(arg.preview).toBe("«unserializable»");
+    expect(arg.truncated).toBe(true);
+  });
+
   it("serializa objeto em JSON válido para o viewer", () => {
     const arg = serializeArg({ user: { id: 7, name: "Ana" } }, normalizeLogsOptions({}));
     expect(arg.kind).toBe("json");

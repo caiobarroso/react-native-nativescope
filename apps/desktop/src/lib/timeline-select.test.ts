@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { LogEntry, NetworkRequest } from "@rnsi/protocol";
 import type { ActivityItem } from "./store.ts";
 import {
+  EVENT_COUNT_OPTIONS,
   anchorWindow,
   buildTimeline,
   collectAnchors,
+  eventCountLabel,
   isAnchorRow,
   type TimelineAnchor,
 } from "./timeline-select.ts";
@@ -188,6 +190,43 @@ describe("buildTimeline", () => {
 
     expect(rows.map((row) => row.ts)).toEqual([9_100, 9_200, 10_000, 10_100, 10_200]);
     expect(isAnchorRow(rows[2]!, { ...anchor, id: "log:target" })).toBe(true);
+  });
+
+  it("no modo por eventos, descarta o que está a minutos da âncora antes de ordenar", () => {
+    // O corte grosso é performance, não semântica: nada a 5 min de distância
+    // caberia num recorte de N eventos. Mas precisa continuar SEM efeito no
+    // resultado — o vizinho real, mesmo a 1 min, tem que entrar.
+    const rows = buildTimeline({
+      logs: [
+        log({ ts: 10_000 - 10 * 60_000, message: "antigo demais" }),
+        log({ ts: 10_000 - 60_000, message: "vizinho de 1 min" }),
+        log({ id: "target", ts: 10_000 }),
+        log({ ts: 10_000 + 10 * 60_000, message: "futuro demais" }),
+      ],
+      requests: [],
+      activity: [],
+      anchor: { ...anchor, id: "log:target" },
+      windowMs: 1,
+      windowMode: "events",
+      eventCount: 5,
+      sources: [...ALL_SOURCES],
+    });
+
+    expect(rows.map((row) => (row.kind === "log" ? row.entry.message : ""))).toEqual([
+      "vizinho de 1 min",
+      "hello",
+    ]);
+  });
+});
+
+describe("eventCountLabel", () => {
+  it("marca não tem 'antes' — o rótulo não pode prometer", () => {
+    // buildTimeline sempre filtrou `ts >= anchor.ts` e cortou em N para marcas,
+    // mas o seletor prometia "5 before / 5 after" e entregava 5 no total.
+    const option = EVENT_COUNT_OPTIONS[0]!;
+    expect(eventCountLabel(option, { ...anchor, kind: "mark" })).toBe("5 after the mark");
+    expect(eventCountLabel(option, anchor)).toBe("5 before / 5 after");
+    expect(eventCountLabel(option, null)).toBe("5 before / 5 after");
   });
 });
 

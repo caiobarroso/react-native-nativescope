@@ -23,6 +23,7 @@ import {
   EVENT_COUNT_OPTIONS,
   WINDOW_OPTIONS,
   buildTimeline,
+  eventCountLabel,
   isAnchorRow,
   type TimelineAnchor,
   type TimelineRow,
@@ -268,7 +269,7 @@ export function TimelineView() {
           <optgroup label="By events">
             {EVENT_COUNT_OPTIONS.map((option) => (
               <option key={`events:${option.count}`} value={`events:${option.count}`}>
-                {option.label}
+                {eventCountLabel(option, anchor)}
               </option>
             ))}
           </optgroup>

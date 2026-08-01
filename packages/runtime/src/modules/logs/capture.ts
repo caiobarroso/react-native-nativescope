@@ -413,7 +413,19 @@ export function serializeArg(value: unknown, options: LogsOptions): LogArg {
 
   const errorLike = isError(value);
   const state: PlainState = { truncated: false };
-  let plain = toPlain(value, options, 0, new Set<unknown>(), state);
+
+  // O toPlain roda código do USUÁRIO: getters, traps de Proxy, iteradores de
+  // Map/Set. Qualquer um deles pode lançar de um jeito que os try internos não
+  // pegam — `ownKeys` de um Proxy hostil, por exemplo, explode no Object.keys.
+  // Fora do try, isso subia até o catch do capture() e a ENTRADA INTEIRA sumia
+  // sem rastro: o app não caía, mas o log nunca aparecia e ninguém sabia por quê.
+  let plain: unknown;
+  try {
+    plain = toPlain(value, options, 0, new Set<unknown>(), state);
+  } catch {
+    return { kind: "unserializable", preview: "«unserializable»", json: null, truncated: true };
+  }
+
   let json: string;
   try {
     json = JSON.stringify(plain, null, 2) ?? "null";
@@ -426,8 +438,8 @@ export function serializeArg(value: unknown, options: LogsOptions): LogArg {
   if (json.length > options.maxArgLength) {
     const tight = tighten(options);
     state.truncated = true;
-    plain = toPlain(value, tight, 0, new Set<unknown>(), state);
     try {
+      plain = toPlain(value, tight, 0, new Set<unknown>(), state);
       json = JSON.stringify(plain, null, 2) ?? "null";
     } catch {
       json = "null";

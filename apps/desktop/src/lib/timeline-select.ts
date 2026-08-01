@@ -42,7 +42,28 @@ export const EVENT_COUNT_OPTIONS: readonly TimelineEventCountOption[] = [
   { count: 25, label: "25 before / 25 after" },
 ];
 
+/**
+ * Rótulo honesto para a contagem de eventos.
+ *
+ * Uma marca não tem "antes" — ela existe para dizer "a partir daqui". O
+ * buildTimeline sempre soube disso (filtra `ts >= anchor.ts` e corta em N), mas
+ * o seletor continuava prometendo "5 before / 5 after" e entregando 5 no total.
+ */
+export function eventCountLabel(
+  option: TimelineEventCountOption,
+  anchor: TimelineAnchor | null,
+): string {
+  return anchor?.kind === "mark" ? `${option.count} after the mark` : option.label;
+}
+
 export const DEFAULT_WINDOW_MS = 30_000;
+
+/**
+ * Corte grosso do modo por eventos: nada a mais de 5 min da âncora pode entrar
+ * num recorte de até 25 eventos ao redor dela. Existe só para o sort não
+ * percorrer o store inteiro a cada render — ver o comentário no buildTimeline.
+ */
+const EVENTS_MODE_GUARD_MS = 5 * 60_000;
 
 export interface TimelineAnchor {
   id: string;
@@ -168,12 +189,22 @@ export function buildTimeline({
 
   const rows: TimelineRow[] = [];
 
+  /**
+   * No modo por tempo, a janela é a própria pergunta. No modo por eventos ela
+   * não existe — mas empurrar TUDO significava ordenar ~7.200 linhas (5k logs +
+   * 2k requests + 200 de storage) a cada render, e a Timeline re-renderiza a
+   * cada lote de log, ~8×/s com stream vivo.
+   *
+   * O corte grosso resolve: quem está a mais de 5 minutos da âncora jamais
+   * entra num recorte de N eventos ao redor dela — e mesmo que entrasse, uma
+   * "vizinhança" a cinco minutos de distância não é vizinhança nenhuma.
+   */
+  const { from, to } =
+    windowMode === "events"
+      ? { from: anchor.ts - EVENTS_MODE_GUARD_MS, to: anchor.ts + EVENTS_MODE_GUARD_MS }
+      : anchorWindow(anchor, windowMs);
+
   const addIfIncluded = (row: TimelineRow): void => {
-    if (windowMode === "events") {
-      rows.push(row);
-      return;
-    }
-    const { from, to } = anchorWindow(anchor, windowMs);
     if (row.ts >= from && row.ts <= to) rows.push(row);
   };
 
