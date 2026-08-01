@@ -1,7 +1,10 @@
 # NativeScope — sistema de módulos (contrato de encaixe)
 
-NativeScope é modular e **opt-in**. Storage e **network** são módulos; ambos
-plugam no mesmo terreno sem tocar um no outro, no transporte nem no resolver.
+NativeScope é modular e **opt-in**. Storage, **network** e **logs** são módulos;
+todos plugam no mesmo terreno sem tocar um no outro, no transporte nem no resolver.
+
+O **Timeline** do Studio não é um quarto módulo nem uma linha de config: é uma lente desktop que
+mescla os eventos que Logs, Network e Storage já capturaram, sempre ancorada em um momento.
 
 Este doc é o contrato para adicionar um módulo novo. O módulo de **network** é a
 **implementação de referência** — cada passo abaixo aponta para o código real:
@@ -9,6 +12,17 @@ Este doc é o contrato para adicionar um módulo novo. O módulo de **network** 
 - Runtime: [`packages/runtime/src/modules/network`](../../../packages/runtime/src/modules/network) (patch de XHR, buffer, replay).
 - Desktop: [`apps/desktop/src/components/network`](../../desktop/src/components/network) (lista, detalhe, diff, storage-impact).
 - Payload: [`packages/protocol/src/network.ts`](../../../packages/protocol/src/network.ts).
+
+O módulo de **logs** é a segunda referência, e cobre dois problemas que o network
+não tem — vale olhar quando o seu módulo se parecer com ele:
+
+- **Volume.** Request é evento raro; log é rajada. A unidade de fio é o **lote**
+  (`createLogBatcher` em [`modules/logs/capture.ts`](../../../packages/runtime/src/modules/logs/capture.ts)),
+  com fusão de idênticas, teto por segundo e contagem honesta de descarte.
+- **Fatos vs. estado.** `sendEvent` descarta tudo antes do `hello-ack`, e todo
+  reconnect reabre essa janela. Storage sobrevive porque o hello-ack reanuncia os
+  providers; um módulo que emite fatos precisa bufferizar. É para isso que existe
+  `runtime.onReadyChange` — use-o em vez de perder o startup do app.
 
 ## Como o terreno funciona
 
@@ -85,8 +99,36 @@ lado do módulo. **Não** edite as uniões de storage (`key-value.*`, `database.
 
 ### 5. Desktop (UI)
 
-Assine `module.event` filtrando por `payload.module === "network"`. O envelope já
-garante que o evento chega ao Studio, carimbado com o `deviceId` de origem.
+O envelope já garante que o evento chega ao Studio carimbado com o `deviceId` de
+origem — mas o desktop é onde mais arquivo se toca, e nenhum deles quebra o build
+se você esquecer (todos os consumidores de `activeModule` são ternários, não
+`switch` exaustivo). O checklist real, na ordem:
+
+1. **Roteamento** — `lib/studio-client.ts`, `case "module.event"`: adicione um
+   branch filtrando `payload.module` e mande o `data` cru ao store do módulo.
+   Some também um `use<Mod>.getState().reset()` ao lado dos resets de
+   `useNetwork` (há dois: troca de device e contexto JS novo do app).
+2. **Store do módulo** — `lib/<mod>-store.ts` (zustand, separado do `useStudio`).
+   Valide com zod **na borda do store** (`safeParse`, descarta o inválido),
+   mantenha um anel limitado e resete no device switch. Molde: `network-store.ts`.
+3. **Derivação pura** — `lib/<mod>-select.ts`: filtro, agrupamento e o que mais
+   tiver regra. Fora do store porque é a parte testável sem React.
+4. **Superfície ativa** — `lib/store.ts`: adicione a chave em `ActiveModule` e
+   **audite à mão** os consumidores (`App.tsx`, `Header.tsx`, `Sidebar.tsx`); sem
+   isso o módulo novo cai silenciosamente nos painéis de storage.
+5. **UI** — `components/<mod>/`, com uma `<Mod>View` no topo. Se a lista tiver
+   painel redimensionável, registre o painel em `lib/layout.ts` (`PanelId` +
+   `PANELS`).
+6. **Registro visual** — `components/Sidebar.tsx`: uma `ModuleSection` nova.
+   A chrome do módulo (pause, clear, marcadores) vive **dentro da view**, na barra
+   de filtros — o `Header` é só do storage. Ver `NetworkCaptureControls`.
+
+Nada disso precisa de código no servidor: o relay de `module.event` é genérico.
+
+⚠️ **`.gitignore`**: a raiz ignora `logs/`, `dist/`, `out/`, `coverage/` — e esses
+padrões casam em **qualquer profundidade**. Um módulo cujo nome bata com um desses
+precisa de uma negação explícita (`!caminho/do/modulo/`), senão o código compila
+local e nunca chega ao repositório. Já aconteceu com o módulo de Logs.
 
 ## O que NÃO tocar
 

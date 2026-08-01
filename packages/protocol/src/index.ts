@@ -93,3 +93,15 @@ export {
   type NetworkReplayCommand,
   type NetworkReplayResult,
 } from "./network.ts";
+export {
+  LOGS_MODULE,
+  LOGS_EVENT,
+  logLevelSchema,
+  logArgSchema,
+  logEntrySchema,
+  logBatchSchema,
+  type LogLevel,
+  type LogArg,
+  type LogEntry,
+  type LogBatch,
+} from "./logs.ts";

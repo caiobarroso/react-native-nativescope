@@ -38,6 +38,16 @@ const MODULES = [
     available: true,
     configTemplate: "network: true,",
   },
+  {
+    key: "logs",
+    label: "Logs",
+    description: "console.*, exceptions e rejections",
+    // Precisa subir ANTES do app para instrumentar o `console` global e não
+    // perder os logs de startup — que são justamente os mais difíceis de ver.
+    earlyBoot: true,
+    available: true,
+    configTemplate: "logs: true,",
+  },
 ];
 
 const MODULE_KEYS = MODULES.map((m) => m.key);

@@ -47,8 +47,15 @@ export interface Selection {
   instanceId: string;
 }
 
-/** Módulo ativo na área principal. Preferência de UI, independente do device. */
-export type ActiveModule = "storage" | "network";
+/**
+ * Superfície ativa na área principal. Preferência de UI, independente do device.
+ *
+ * `storage`/`network`/`logs` são módulos de captura (cada um tem código no
+ * device e uma linha no config do usuário). `timeline` NÃO é módulo: é uma
+ * lente só-desktop sobre o que os módulos já produziram — zero runtime, zero
+ * protocolo, zero config.
+ */
+export type ActiveModule = "storage" | "network" | "logs" | "timeline";
 
 export interface Device {
   deviceId: string;

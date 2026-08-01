@@ -135,6 +135,10 @@ function fakeRuntime(): FakeRuntime {
         handler = null;
       };
     },
+    onReadyChange: (h: (ready: boolean) => void) => {
+      h(true);
+      return () => {};
+    },
     close: () => {},
   } satisfies Runtime;
   return {

@@ -12,6 +12,8 @@ import { ActivityStrip } from "./components/ActivityStrip.tsx";
 import { GlobalSearch } from "./components/GlobalSearch.tsx";
 import { StorageOverview } from "./components/StorageOverview.tsx";
 import { NetworkView } from "./components/network/NetworkView.tsx";
+import { LogsView } from "./components/logs/LogsView.tsx";
+import { TimelineView } from "./components/timeline/TimelineView.tsx";
 
 export default function App() {
   const phase = useStudio((s) => s.phase);
@@ -44,6 +46,10 @@ export default function App() {
             <main className="relative flex min-w-0 flex-1 overflow-hidden">
               {activeModule === "network" ? (
                 <NetworkView />
+              ) : activeModule === "logs" ? (
+                <LogsView />
+              ) : activeModule === "timeline" ? (
+                <TimelineView />
               ) : isDatabase ? (
                 <>
                   <TableList />

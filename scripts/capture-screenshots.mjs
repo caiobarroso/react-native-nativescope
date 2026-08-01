@@ -203,6 +203,8 @@ const needsPlain = [
   "sql-console-light",
   "sql-console-dark",
   "snapshot-diff-light",
+  "logs-inspector-light",
+  "logs-timeline-light",
   "network-inspector-light",
   "network-replay-light",
   "network-insights-light",
@@ -223,6 +225,45 @@ if (needsPlain) {
       await page.getByText("user.profile", { exact: true }).first().click();
       await page.waitForTimeout(1500);
       await shot("json-visual-light");
+    }
+
+    if (want("logs-inspector-light") || want("logs-timeline-light")) {
+      await freshStudio();
+      await page.setViewportSize({ width: 1440, height: 900 });
+      // The Console item may include a live count badge in its accessible name;
+      // target the visible label so the capture remains stable with or without
+      // captured errors.
+      await page.getByText("Console", { exact: true }).first().click();
+      await page
+        .getByPlaceholder("Search message, namespace, data…")
+        .waitFor({ timeout: 30_000 });
+      await page.waitForTimeout(1500);
+
+      // O módulo de Logs ganha o mesmo tratamento dos screenshots de Network:
+      // a navegação não compete com a leitura do produto.
+      await page.addStyleTag({
+        content: "aside:has(+ main){display:none !important}",
+      });
+
+      if (want("logs-inspector-light")) {
+        await page
+          .getByRole("button", { name: /\[Checkout\] user tapped pay/ })
+          .click();
+        await page.waitForTimeout(900);
+        await shot("logs-inspector-light");
+      }
+
+      if (want("logs-timeline-light")) {
+        await page
+          .getByRole("button", { name: /\[Sync\] queue flush failed/ })
+          .click();
+        await page.getByTitle(/Open the timeline centred/).click();
+        await page.getByText("Before this moment", { exact: true }).waitFor();
+        await page.waitForTimeout(900);
+        await shot("logs-timeline-light");
+      }
+
+      await page.setViewportSize({ width: 1280, height: 720 });
     }
 
     if (

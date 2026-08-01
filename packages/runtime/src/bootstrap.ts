@@ -53,6 +53,17 @@ export interface Runtime {
    * remoção. Comandos Studio→runtime chegam por aqui, roteados por `module`.
    */
   onModuleCommand(module: string, handler: ModuleCommandHandler): () => void;
+  /**
+   * Avisa quando a conexão fica pronta (hello-ack) ou cai. Retorna uma função
+   * de remoção; o handler é chamado uma vez no registro com o estado atual.
+   *
+   * Existe porque `sendEvent` descarta tudo antes do handshake. Para o storage
+   * isso é inofensivo — o estado é reconstruível, e o hello-ack reanuncia os
+   * providers. Um módulo que produz FATOS (logs) não tem esse luxo: o que foi
+   * descartado sumiu. Com isto o módulo bufferiza enquanto não está pronto e
+   * drena quando fica, inclusive a cada reconexão.
+   */
+  onReadyChange(handler: (ready: boolean) => void): () => void;
   close(): void;
 }
 
@@ -88,6 +99,36 @@ export function startRuntime(options: RuntimeOptions): Runtime {
 
   function sendEvent(event: EventMessage): void {
     if (handshakeDone) send(event);
+  }
+
+  // Sinal de prontidão para módulos (ver Runtime.onReadyChange). Separado de
+  // `handshakeDone` de propósito: este é o estado JÁ NOTIFICADO, para não
+  // disparar handler repetido em open/close consecutivos.
+  const readyHandlers = new Set<(ready: boolean) => void>();
+  let readyNotified = false;
+
+  function notifyReady(ready: boolean): void {
+    if (readyNotified === ready) return;
+    readyNotified = ready;
+    for (const handler of readyHandlers) {
+      try {
+        handler(ready);
+      } catch {
+        /* um módulo nunca derruba o runtime */
+      }
+    }
+  }
+
+  function onReadyChange(handler: (ready: boolean) => void): () => void {
+    readyHandlers.add(handler);
+    try {
+      handler(readyNotified); // estado atual, para quem registra depois de conectar
+    } catch {
+      /* nunca propaga */
+    }
+    return () => {
+      readyHandlers.delete(handler);
+    };
   }
 
   // Valores grandes saem em chunks — ver streams.ts.
@@ -272,6 +313,7 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     createWebSocket: options.createWebSocket,
     onOpen() {
       handshakeDone = false;
+      notifyReady(false);
       send({
         kind: "hello",
         protocolVersion: PROTOCOL_VERSION,
@@ -282,6 +324,7 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     },
     onClose() {
       handshakeDone = false;
+      notifyReady(false);
     },
     async onMessage(raw) {
       const parsed = parseMessage(raw);
@@ -309,6 +352,8 @@ export function startRuntime(options: RuntimeOptions): Runtime {
             payload: { provider },
           });
         }
+        // Depois do resync de storage: módulos que bufferizaram drenam agora.
+        notifyReady(true);
         return;
       }
       if (message.kind === "hello-reject") {
@@ -349,6 +394,7 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     registry,
     sendModuleEvent,
     onModuleCommand,
+    onReadyChange,
     close() {
       for (const unsubscribe of subscriptions) unsubscribe();
       transport.close();

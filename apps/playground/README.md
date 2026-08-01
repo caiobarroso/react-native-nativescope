@@ -4,7 +4,7 @@ A tiny Expo app that exercises the real NativeScope stack end to end — the
 Metro resolver, the injection seam, the shims, and the live Studio. Use it to
 verify changes on a real device (not the `--fake` simulated runtime).
 
-It has five bottom tabs. The storage screens are wired with React Query so
+It has six bottom tabs. The storage screens are wired with React Query so
 edits from the Studio show up live on screen:
 
 - 🦁 **Zoo** — MMKV (nested arrays, high volume)
@@ -12,6 +12,7 @@ edits from the Studio show up live on screen:
 - 🏆 **Scores** — expo-sqlite (a leaderboard, high volume)
 - 📸 **Photos** — op-sqlite (a BLOB column, inline UPDATE, high volume)
 - 🌐 **Request** — Network, divided into HTTP and GraphQL scenarios
+- 📝 **Logs** — console levels, structured values, errors, bursts and the Timeline flow
 
 The playground is intentionally **excluded from the pnpm workspace** and installs
 its own `node_modules` with `react-native-nativescope` linked as `file:../cli`.
@@ -86,9 +87,10 @@ http://127.0.0.1:4782/?token=<printed-token>
   Modules enabled:
     ✓ Storage inspector
     ✓ Network inspector
+    ✓ Logs
   ```
 
-- The app boots with the five tabs.
+- The app boots with the six tabs.
 - The Studio shows every storage (MMKV, AsyncStorage, SQLite, OP-SQLite) — ideally
   together, not one-at-a-time. The two SQLite drivers are separate providers.
 - **Nothing is logged when everything works** — that's the point. A
@@ -97,6 +99,8 @@ http://127.0.0.1:4782/?token=<printed-token>
   the Studio sidebar, not for a log line.
 - The Studio shows **Network → Requests** and records both HTTP and GraphQL in
   the same timeline.
+- The Studio shows **Logs → Console** and can open a selected log or Mark in the
+  shared Timeline, where Logs, Network and Storage line up.
 - Edit a value in the Studio → the app flashes the "Storage updated" toast and
   the affected screen refreshes (React Query invalidation).
 
@@ -152,7 +156,7 @@ use the real simulator flow above.
 
 ## Config
 
-`nativescope.config.js` enables both modules:
+`nativescope.config.js` enables the modules:
 
 ```js
 module.exports = {
@@ -162,6 +166,7 @@ module.exports = {
       reactQuery: true,
     },
     network: true,
+    logs: true,
   },
 };
 ```
@@ -170,3 +175,4 @@ Storage uses the in-app indicator (the coral "Storage updated" toast) and the
 React Query bridge installed by `installNativeScopeDevtools` in `App.js`.
 Network instruments the global development `fetch` and `XMLHttpRequest`
 surfaces. All of this is development-only.
+Logs instruments JavaScript `console.*` and global error handlers in development; the original console methods continue to work.

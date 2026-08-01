@@ -74,3 +74,4 @@ export {
   type OpSqliteUpdateEvent,
 } from "./adapters/op-sqlite.ts";
 export { installNetworkModule } from "./modules/network/index.ts";
+export { installLogsModule } from "./modules/logs/index.ts";

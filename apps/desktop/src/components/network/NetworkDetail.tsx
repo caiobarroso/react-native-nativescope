@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock,
   Copy,
   Database,
   Download,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import type { NetworkBody, NetworkRequest } from "@rnsi/protocol";
 import { useNetwork } from "../../lib/network-store.ts";
+import { useTimeline } from "../../lib/timeline-store.ts";
 import { groupKey } from "../../lib/network-select.ts";
 import { getNetworkBody } from "../../lib/studio-client.ts";
 import {
@@ -274,15 +276,16 @@ function RequestSummary({
             <CopyIconButton value={request.url} title="Copy URL" />
           </div>
         </div>
-        {impactCount > 0 ? (
-          <div className="shrink-0">
+        <div className="flex shrink-0 items-center gap-1.5">
+          <TimelineButton request={request} />
+          {impactCount > 0 ? (
             <StorageImpactButton
               active={impactActive}
               count={impactCount}
               onClick={onStorageImpact}
             />
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
       {request.error ? (
         <p className="mt-1 font-mono text-[11px] text-deleted">
@@ -602,6 +605,34 @@ function TabButton({
       }`}
     >
       {children}
+    </button>
+  );
+}
+
+/**
+ * Entrada para a Timeline escopada nesta request. O Storage impact ao lado
+ * responde "o que ESTA request mudou"; a Timeline responde a pergunta maior —
+ * "o que aconteceu em volta dela", incluindo os logs que o Storage impact não
+ * enxerga.
+ */
+function TimelineButton({ request }: { request: NetworkRequest }) {
+  const open = useTimeline((s) => s.open);
+  return (
+    <button
+      onClick={() =>
+        open({
+          id: `req:${request.id}`,
+          kind: "request",
+          ts: request.startedAt,
+          label: `${request.method} ${request.path}`,
+          detail: request.status === null ? request.error : String(request.status),
+        }, { module: "network" })
+      }
+      title="See logs and storage writes around this request"
+      className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11px] font-medium text-text-muted hover:border-accent hover:text-accent"
+    >
+      <Clock size={13} strokeWidth={1.5} />
+      Timeline
     </button>
   );
 }

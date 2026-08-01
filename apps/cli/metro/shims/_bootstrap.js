@@ -319,6 +319,9 @@ const MODULE_INSTALLERS = {
   network(runtime, config) {
     rnsi.installNetworkModule(runtime, config && config.modules && config.modules.network);
   },
+  logs(runtime, config) {
+    rnsi.installLogsModule(runtime, config && config.modules && config.modules.logs);
+  },
 };
 
 /**

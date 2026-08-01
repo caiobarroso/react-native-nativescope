@@ -155,6 +155,7 @@ const TABS = [
   { key: "scores", label: "Scores", icon: "🏆" },
   { key: "photos", label: "Photos", icon: "📸" },
   { key: "api", label: "Request", icon: "🌐" },
+  { key: "logs", label: "Logs", icon: "📝" },
 ];
 
 function Shell() {
@@ -168,6 +169,7 @@ function Shell() {
         {tab === "scores" && <ScoresScreen />}
         {tab === "photos" && <PhotosScreen />}
         {tab === "api" && <ApiScreen />}
+        {tab === "logs" && <LogsScreen />}
       </View>
       <View style={styles.tabBar}>
         {TABS.map((t) => {
@@ -1091,6 +1093,178 @@ function ApiScreen() {
           💡 HTTP and GraphQL share one timeline. GraphQL operations are detected
           automatically and show their query, variables, data and errors. “Get
           user” and “Create post” also write to MMKV, so Storage impact lights up.
+        </Text>
+      </View>
+      <LiveHint />
+    </ScrollView>
+  );
+}
+
+// ============================================================ Logs (console)
+//
+// Cada botão aqui exercita UM comportamento do módulo de Logs, para dar pra
+// conferir na mão o que os testes cobrem. O último — "Run checkout flow" — é o
+// roteiro da Timeline: ele mistura log, request e escrita de storage de
+// propósito, em ordem, para a tela mostrar a história inteira.
+
+// Objeto fundo o bastante para o viewer valer a pena: no terminal do Metro
+// isto vira uma linha ilegível ou "[Object]".
+const DEMO_ORDER = {
+  id: "ord_8Fj2K",
+  customer: {
+    id: 42,
+    name: "Ana Ribeiro",
+    email: "ana@example.com",
+    tags: ["vip", "recurring"],
+    address: { city: "São Paulo", state: "SP", zip: "01310-100" },
+  },
+  items: [
+    { sku: "TSH-001", title: "T-shirt", qty: 2, price: 79.9 },
+    { sku: "MUG-114", title: "Mug", qty: 1, price: 39.9 },
+    { sku: "STK-007", title: "Sticker pack", qty: 3, price: 12.5 },
+  ],
+  totals: { subtotal: 236.2, shipping: 19.9, discount: -26.2, total: 229.9 },
+  meta: { device: "ios", appVersion: "1.2.0", experiments: { checkoutV2: true } },
+};
+
+function logAllLevels() {
+  console.debug("[Render] cheapest level, usually noise");
+  console.log("plain log with no namespace");
+  console.info("[Auth] session token refreshed");
+  console.warn("payment: card expires in 14 days");
+  console.error("[Sync] could not reach the queue");
+}
+
+// Três defesas de volume de uma vez: as idênticas viram UMA linha com ×N; as
+// distintas passam do teto por segundo e o excedente vira "dropped" na barra.
+function spamLogs() {
+  for (let i = 0; i < 300; i += 1) console.log("[Render] tick");
+  for (let i = 0; i < 900; i += 1) console.log(`[Render] frame ${i}`);
+}
+
+async function runCheckoutFlow() {
+  console.log("[Checkout] user tapped pay", DEMO_ORDER);
+
+  const data = await apiSignIn(); // request + escritas em AsyncStorage e MMKV
+  console.info("[Checkout] session established", {
+    user: data.username,
+    id: data.id,
+  });
+
+  session.set("checkout.stage", JSON.stringify({ stage: "paying", at: Date.now() }));
+  console.log("[Checkout] stage saved to MMKV");
+
+  const status = await apiTriggerError(); // 404 de propósito
+  console.warn("payment: gateway answered", { status, retryable: false });
+
+  const failure = new Error(`Checkout failed with HTTP ${status}`);
+  console.error("[Checkout] aborting", failure);
+  throw failure;
+}
+
+function LogsScreen() {
+  const [note, setNote] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const checkout = async () => {
+    setBusy(true);
+    setNote("Running…");
+    try {
+      await runCheckoutFlow();
+    } catch (error) {
+      setNote(`Flow finished with a failure (on purpose): ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <Header
+        emoji="📝"
+        title="Logs Playground"
+        subtitle="console.*, crashes and one flow that tells a story"
+      />
+
+      <View style={styles.buttonRow}>
+        <BigButton
+          label="Log an object"
+          emoji="🧱"
+          onPress={() => {
+            console.log("[Order] created", DEMO_ORDER);
+            setNote("Open it in Logs — the object expands in the same viewer as Storage");
+          }}
+        />
+        <BigButton
+          label="All levels"
+          emoji="🎚️"
+          onPress={() => {
+            logAllLevels();
+            setNote("One line per level — check the counters in the filter bar");
+          }}
+        />
+      </View>
+
+      <View style={styles.buttonRow}>
+        <BigButton
+          label="Log an error"
+          emoji="🧨"
+          onPress={() => {
+            console.error("[Sync] queue flush failed", new Error("connection reset by peer"));
+            setNote("The stack rides along — open the log and expand Stack");
+          }}
+        />
+        <BigButton
+          label="Unhandled rejection"
+          emoji="🕳️"
+          onPress={() => {
+            Promise.reject(new Error("nobody catches me"));
+            setNote("Shows up tagged “unhandled rejection”, not as a plain warn");
+          }}
+        />
+      </View>
+
+      <View style={styles.buttonRow}>
+        <BigButton
+          label="Spam 1200 logs"
+          emoji="🌊"
+          onPress={() => {
+            spamLogs();
+            setNote("Identical ones collapse into ×N; over the ceiling turns into “dropped”");
+          }}
+        />
+        <BigButton
+          label="Crash (redbox)"
+          emoji="💥"
+          onPress={() => {
+            setNote("Dismiss the red box — the log stays captured in Studio");
+            setTimeout(() => {
+              throw new Error("Uncaught error thrown from a timer");
+            }, 0);
+          }}
+        />
+      </View>
+
+      <View style={styles.buttonRow}>
+        <BigButton
+          label={busy ? "Running…" : "Run checkout flow"}
+          emoji="🧾"
+          onPress={checkout}
+          disabled={busy}
+        />
+      </View>
+
+      {note ? (
+        <View style={styles.card}>
+          <Text style={styles.empty}>{note}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.impactHint}>
+        <Text style={styles.impactHintText}>
+          💡 “Run checkout flow” logs, calls the API and writes to storage — in that
+          order, on purpose. Hit Mark in Logs before running it, then open Timeline:
+          the three tracks line up and the whole failure reads top to bottom.
         </Text>
       </View>
       <LiveHint />

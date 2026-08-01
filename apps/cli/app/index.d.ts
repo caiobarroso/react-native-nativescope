@@ -124,6 +124,43 @@ export interface NativeScopeNetworkModuleConfig {
   redactHeaders?: string[];
 }
 
+/**
+ * Módulo de Logs. Instrumenta `console.*` (com passthrough — o Metro continua
+ * recebendo tudo) e as falhas globais do JS em desenvolvimento. `logs: true`
+ * liga com os padrões; um objeto abaixo ajusta o comportamento.
+ */
+export interface NativeScopeLogsModuleConfig {
+  /**
+   * Níveis capturados. Fora desta lista o console segue intacto e nada é
+   * emitido. Default: ["debug", "log", "info", "warn", "error"].
+   */
+  levels?: Array<"debug" | "log" | "info" | "warn" | "error">;
+  /**
+   * Teto de chars do JSON de UM argumento enviado ao Studio. Acima disto o
+   * objeto é reserializado com cortes (o JSON que chega é sempre válido).
+   * Default: 8192.
+   */
+  maxArgLength?: number;
+  /** Profundidade máxima ao serializar objetos. Default: 6. */
+  maxDepth?: number;
+  /** Máximo de entradas por lote enviado ao Studio. Default: 200. */
+  maxBatchEntries?: number;
+  /** Janela de acúmulo antes de enviar um lote, em ms. Default: 120. */
+  flushMs?: number;
+  /**
+   * Teto duro de logs por segundo. O excedente é descartado e contabilizado —
+   * o Studio mostra quantos caíram. Default: 500.
+   */
+  maxPerSecond?: number;
+  /**
+   * Quantas entradas reter enquanto o Studio ainda não conectou. É o que salva
+   * os logs de startup. Default: 500.
+   */
+  preReadyBuffer?: number;
+  /** Mensagens a ignorar (match por substring). */
+  ignorePatterns?: string[];
+}
+
 export interface NativeScopeModulesConfig {
   /**
    * Módulo de Storage (AsyncStorage, MMKV, expo-sqlite, op-sqlite). `true` liga com os
@@ -135,6 +172,11 @@ export interface NativeScopeModulesConfig {
    * `true` liga o slot; as opções vêm com o módulo.
    */
   network?: boolean | NativeScopeNetworkModuleConfig;
+  /**
+   * Módulo de Logs (console.*, exceptions, rejections) — opt-in. `true` liga o
+   * slot com os padrões; um objeto ajusta captura e volume.
+   */
+  logs?: boolean | NativeScopeLogsModuleConfig;
 }
 
 export interface NativeScopeConfig {

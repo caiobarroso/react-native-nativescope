@@ -109,9 +109,13 @@ function createFakePhotos(): { db: SQLiteDatabaseLike; raw: DatabaseSync } {
       likes INTEGER NOT NULL DEFAULT 0
     );
   `);
-  const insert = raw.prepare("INSERT INTO photos (title, thumb, likes) VALUES (?, ?, ?)");
+  const insert = raw.prepare(
+    "INSERT INTO photos (title, thumb, likes) VALUES (?, ?, ?)",
+  );
   const thumb = (seed: number, size: number): Uint8Array =>
-    new Uint8Array(Array.from({ length: size }, (_, i) => (i * seed + 7) % 256));
+    new Uint8Array(
+      Array.from({ length: size }, (_, i) => (i * seed + 7) % 256),
+    );
   insert.run("praia", thumb(3, 96), 12);
   insert.run("serra", thumb(5, 8_000), 4); // grande: trunca no preview
   insert.run("sem thumb", null, 0);
@@ -124,7 +128,9 @@ function createFakePhotos(): { db: SQLiteDatabaseLike; raw: DatabaseSync } {
         .map((row) => ({ ...(row as Record<string, unknown>) }));
     },
     async runAsync(sql, params = []) {
-      const result = raw.prepare(sql).run(...(params as Array<string | number | null>));
+      const result = raw
+        .prepare(sql)
+        .run(...(params as Array<string | number | null>));
       return {
         changes: Number(result.changes),
         lastInsertRowId: Number(result.lastInsertRowid),
@@ -234,6 +240,117 @@ export function startFakeRuntime(options: {
   runtime.registry.register(mmkv);
   runtime.registry.register(sqlite);
   runtime.registry.register(opSqlite);
+
+  // Logs simulado: o fake também precisa contar a história que a Timeline
+  // promete. As entradas ficam próximas do primeiro burst de Network (abaixo)
+  // para que os screenshots e o `--fake` mostrem Logs, requests e Storage no
+  // mesmo eixo, sem depender de um app real.
+  let fakeLogSeq = 1;
+  const emitDemoLogs = (): void => {
+    const base = Date.now();
+    const entry = (input: {
+      level: "log" | "info" | "warn" | "error";
+      source?: "console" | "exception" | "rejection";
+      message: string;
+      namespace?: string | null;
+      args?: Array<{
+        kind: "text" | "json" | "error" | "unserializable";
+        preview: string;
+        json: string | null;
+        truncated: boolean;
+      }>;
+      stack?: string | null;
+      offset: number;
+    }) => ({
+      id: `fake-log-${fakeLogSeq}`,
+      seq: fakeLogSeq++,
+      ts: base + input.offset,
+      level: input.level,
+      source: input.source ?? "console",
+      message: input.message,
+      namespace: input.namespace ?? null,
+      args: input.args ?? [],
+      stack: input.stack ?? null,
+      repeat: 1,
+      truncated: false,
+    });
+
+    runtime.sendModuleEvent("logs", "batch", {
+      entries: [
+        entry({
+          level: "log",
+          message: "[Checkout] user tapped pay",
+          namespace: "Checkout",
+          args: [
+            {
+              kind: "json",
+              preview: '{ id: "ord_8Fj2K", total: 229.9 }',
+              json: JSON.stringify({
+                id: "ord_8Fj2K",
+                customer: "Ana Ribeiro",
+                total: 229.9,
+                items: 3,
+              }),
+              truncated: false,
+            },
+          ],
+          offset: -440,
+        }),
+        entry({
+          level: "info",
+          message: "[Auth] token saved",
+          namespace: "Auth",
+          args: [
+            {
+              kind: "json",
+              preview: '{ provider: "AsyncStorage", key: "auth.token" }',
+              json: JSON.stringify({
+                provider: "AsyncStorage",
+                key: "auth.token",
+              }),
+              truncated: false,
+            },
+          ],
+          offset: -120,
+        }),
+        entry({
+          level: "error",
+          source: "exception",
+          message: "[Sync] queue flush failed",
+          namespace: "Sync",
+          args: [
+            {
+              kind: "error",
+              preview: "Error: connection reset by peer",
+              json: JSON.stringify({
+                name: "Error",
+                message: "connection reset by peer",
+              }),
+              truncated: false,
+            },
+          ],
+          stack:
+            "Error: connection reset by peer\n    at flushQueue (sync.ts:84:11)\n    at checkout.ts:142:7",
+          offset: 0,
+        }),
+        entry({
+          level: "warn",
+          message: "[Checkout] retrying payment",
+          namespace: "Checkout",
+          args: [
+            {
+              kind: "json",
+              preview: "{ attempt: 2, backoffMs: 500 }",
+              json: JSON.stringify({ attempt: 2, backoffMs: 500 }),
+              truncated: false,
+            },
+          ],
+          offset: 260,
+        }),
+      ],
+      dropped: 0,
+    });
+  };
 
   // Network simulado (envelope L3) — popula a aba Network do Studio sem device.
   type NetSpec = {
@@ -702,8 +819,12 @@ export function startFakeRuntime(options: {
     setInterval(() => {
       const rows = photosRaw.prepare("SELECT id FROM photos ORDER BY id").all();
       if (rows.length > 0 && Math.random() > 0.4) {
-        const target = rows[Math.floor(Math.random() * rows.length)] as { id: number };
-        photosRaw.prepare("UPDATE photos SET likes = likes + 1 WHERE id = ?").run(target.id);
+        const target = rows[Math.floor(Math.random() * rows.length)] as {
+          id: number;
+        };
+        photosRaw
+          .prepare("UPDATE photos SET likes = likes + 1 WHERE id = ?")
+          .run(target.id);
         opSqlite.notifyNativeChange("photos.db", "photos", target.id, "UPDATE");
         return;
       }
@@ -721,6 +842,7 @@ export function startFakeRuntime(options: {
 
     // Network: burst inicial (após o handshake) + tráfego contínuo determinístico
     // (round-robin) — cada reload do Studio reenche rápido e previsível.
+    setTimeout(emitDemoLogs, 1100),
     setTimeout(() => {
       for (const spec of netSpecs) emitRequest(spec);
     }, 900),

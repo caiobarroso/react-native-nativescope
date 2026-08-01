@@ -28,6 +28,7 @@ import {
 import { createTransport, fnv1a32, type Transport } from "@rnsi/runtime";
 import { useStudio, keysId, type Device, type Selection } from "./store.ts";
 import { useNetwork } from "./network-store.ts";
+import { useLogs } from "./logs-store.ts";
 
 /**
  * Cliente do Studio. Único ponto da UI que toca o WebSocket — nenhum
@@ -447,6 +448,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       if (supersedesPrevious) {
         useStudio.getState().selectDevice(device.deviceId);
         useNetwork.getState().reset(); // contexto JS novo do app: captura recomeça
+        useLogs.getState().reset();
       }
 
       // Continuidade de reload primeiro; senão, se este é o foco, busca providers.
@@ -567,6 +569,9 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       // segue nos seus próprios cases acima — este é o canal genérico.
       if (event.payload.module === "network" && event.payload.event === "request") {
         useNetwork.getState().addRequest(event.payload.data);
+      }
+      if (event.payload.module === "logs" && event.payload.event === "batch") {
+        useLogs.getState().addBatch(event.payload.data);
       }
       return;
     }
@@ -705,8 +710,9 @@ export function switchDevice(deviceId: string): void {
   failInFlight("device switched");
   store.beginProviderSync();
   store.selectDevice(deviceId);
-  // Network é escopado ao device: a captura do device anterior não vale aqui.
+  // Network e Logs são escopados ao device: a captura do anterior não vale aqui.
   useNetwork.getState().reset();
+  useLogs.getState().reset();
   void refreshProviders();
 }
 
