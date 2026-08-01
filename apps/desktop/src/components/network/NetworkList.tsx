@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ChevronDown,
@@ -13,7 +13,12 @@ import {
 } from "lucide-react";
 import { useNetwork } from "../../lib/network-store.ts";
 import { useStorageAttribution } from "../../lib/use-storage-impact.ts";
-import { buildDisplayRows, type DisplayRow } from "../../lib/network-select.ts";
+import {
+  buildDisplayRows,
+  groupKey,
+  matchesFilters,
+  type DisplayRow,
+} from "../../lib/network-select.ts";
 import { ConfirmDialog } from "../ConfirmDialog.tsx";
 import {
   getGraphQLRequestInfo,
@@ -126,6 +131,65 @@ export function NetworkList() {
     onSelect: select,
     scrollToIndex: (index) => virtualizer.scrollToIndex(index),
   });
+
+  // A request opened from Timeline may be inside a collapsed group. Reveal
+  // that group once for the current selection so the highlighted row is
+  // actually visible when Network opens. Do not keep reopening it if the user
+  // deliberately collapses the group afterwards.
+  const revealContext = `${selectedId ?? ""}|${filters.grouped}|${filters.methods.join(",")}|${filters.statusClasses.join(",")}|${filters.search}|${filters.slowerThanMs ?? ""}|${filters.protocol}|${filters.graphQLOperation}|${sessionStartedAt ?? ""}|${showEarlier}`;
+  const lastRevealContext = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedId === null || lastRevealContext.current === revealContext) return;
+
+    const selectedRequest = requests.find((request) => request.id === selectedId);
+    if (!selectedRequest || !matchesFilters(selectedRequest, filters)) return;
+
+    if (sessionStartedAt !== null && sessionEarlierIds.includes(selectedId) && !showEarlier) {
+      lastRevealContext.current = revealContext;
+      setShowEarlier(true);
+      return;
+    }
+
+    const key = groupKey(selectedRequest);
+    const groupMembers = requests.filter(
+      (request) => matchesFilters(request, filters) && groupKey(request) === key,
+    );
+    lastRevealContext.current = revealContext;
+    if (filters.grouped && groupMembers.length > 1 && !expandedGroups.includes(key)) {
+      toggleGroup(key);
+    }
+  }, [
+    expandedGroups,
+    filters,
+    revealContext,
+    requests,
+    sessionEarlierIds,
+    selectedId,
+    sessionStartedAt,
+    setShowEarlier,
+    showEarlier,
+    toggleGroup,
+  ]);
+
+  const selectionContext = `${selectedId ?? ""}|${revealContext}`;
+  const lastScrolledSelection = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedId === null) {
+      lastScrolledSelection.current = null;
+      return;
+    }
+
+    const selectedIndex = rows.findIndex(
+      (row) => row.kind === "request" && row.request.id === selectedId,
+    );
+    if (selectedIndex < 0 || lastScrolledSelection.current === selectionContext) return;
+
+    lastScrolledSelection.current = selectionContext;
+    const frame = requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(selectedIndex, { align: "center" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [rows, selectedId, selectionContext, virtualizer]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">

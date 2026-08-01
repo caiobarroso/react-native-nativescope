@@ -17,6 +17,7 @@ import {
 import { useStudio } from "../../lib/store.ts";
 import { useLogs } from "../../lib/logs-store.ts";
 import { useNetwork } from "../../lib/network-store.ts";
+import { openInStorage } from "../../lib/studio-client.ts";
 import { useTimeline } from "../../lib/timeline-store.ts";
 import {
   TIMELINE_SOURCES,
@@ -93,6 +94,7 @@ export function TimelineView() {
   const toggleSource = useTimeline((s) => s.toggleSource);
   const setActiveModule = useStudio((s) => s.setActiveModule);
   const selectLog = useLogs((s) => s.select);
+  const selectRequest = useNetwork((s) => s.select);
   const [showStory, setShowStory] = useState(false);
   const [expandedBefore, setExpandedBefore] = useState(false);
   const [expandedAfter, setExpandedAfter] = useState(false);
@@ -352,30 +354,37 @@ export function TimelineView() {
                   if (displayItem.kind === "anchor") {
                     return <TimelineAnchorRow anchor={displayItem.anchor} />;
                   }
+                  const row = displayItem.row;
+                  const canExpand = isTimelineRowExpandable(row);
+                  const onOpen =
+                    row.kind === "log"
+                      ? () => {
+                          selectLog(row.id);
+                          setActiveModule("logs");
+                        }
+                      : row.kind === "request"
+                        ? () => {
+                            selectRequest(row.id);
+                            setActiveModule("network");
+                          }
+                        : () => openInStorage(row.item);
                   return (
                     <TimelineRowView
-                      row={displayItem.row}
+                      row={row}
                       anchorTs={anchor.ts}
                       isAnchor={displayItem.isAnchor}
-                      expanded={expandedRowIds.has(displayItem.row.id)}
-                      canExpand={isTimelineRowExpandable(displayItem.row)}
-                      onOpenLog={
-                        displayItem.row.kind === "log"
-                          ? () => {
-                              selectLog(displayItem.row.id);
-                              setActiveModule("logs");
-                            }
-                          : undefined
-                      }
+                      expanded={expandedRowIds.has(row.id)}
+                      canExpand={canExpand}
+                      onOpen={onOpen}
                       onToggle={
-                        isTimelineRowExpandable(displayItem.row)
+                        canExpand
                           ? () =>
                               setExpandedRowIds((current) => {
                                 const next = new Set(current);
-                                if (next.has(displayItem.row.id)) {
-                                  next.delete(displayItem.row.id);
+                                if (next.has(row.id)) {
+                                  next.delete(row.id);
                                 } else {
-                                  next.add(displayItem.row.id);
+                                  next.add(row.id);
                                 }
                                 return next;
                               })
@@ -495,7 +504,7 @@ function TimelineRowView({
   isAnchor,
   expanded,
   canExpand,
-  onOpenLog,
+  onOpen,
   onToggle,
 }: {
   row: TimelineRow;
@@ -503,7 +512,7 @@ function TimelineRowView({
   isAnchor: boolean;
   expanded: boolean;
   canExpand: boolean;
-  onOpenLog?: () => void;
+  onOpen?: () => void;
   onToggle?: () => void;
 }) {
   const offset = row.ts - anchorTs;
@@ -558,16 +567,16 @@ function TimelineRowView({
       )}
       <span className={`flex shrink-0 items-center gap-1 ${expanded ? "self-start" : ""}`}>
         {row.kind === "log" && <CopyLogButton entry={row.entry} />}
-        {onOpenLog && (
+        {onOpen && (
           <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              onOpenLog();
+              onOpen();
             }}
             onKeyDown={(event) => event.stopPropagation()}
-            aria-label="Open this log in Logs"
-            title="Open this log in Logs"
+            aria-label={`Open this ${timelineRowLabel(row)} in ${timelineRowDestination(row)}`}
+            title={`Open this ${timelineRowLabel(row)} in ${timelineRowDestination(row)}`}
             className="inline-flex h-5 w-5 items-center justify-center rounded text-text-subtle transition-colors hover:bg-surface-hover hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             <ExternalLink size={12} strokeWidth={1.5} aria-hidden />
@@ -591,6 +600,22 @@ function TimelineRowView({
       </span>
     </div>
   );
+}
+
+function timelineRowDestination(row: TimelineRow): string {
+  return row.kind === "log"
+    ? "Logs"
+    : row.kind === "request"
+      ? "Network"
+      : "Storage";
+}
+
+function timelineRowLabel(row: TimelineRow): string {
+  return row.kind === "log"
+    ? "log"
+    : row.kind === "request"
+      ? "request"
+      : "storage change";
 }
 
 function CopyLogButton({ entry }: { entry: LogEntry }) {
