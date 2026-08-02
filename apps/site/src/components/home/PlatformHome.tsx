@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Braces,
   CheckCircle2,
+  Clock3,
   Database,
   Github,
   Layers3,
@@ -13,6 +14,7 @@ import {
   Repeat2,
   Search,
   ShieldCheck,
+  ScrollText,
   Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -26,6 +28,7 @@ export default defineNativeScopeConfig({
   modules: {
     storage: true,
     network: true,
+    logs: true,
   },
 })`;
 
@@ -48,7 +51,7 @@ const principles = [
   [
     Layers3,
     "Context travels",
-    "A network response can lead directly to the storage values it changed.",
+    "A log can lead directly to the request and storage values around the moment that matters.",
   ],
 ] as const;
 
@@ -58,13 +61,13 @@ export function PlatformHome() {
       <section data-platform-hero>
         <div data-platform-hero-copy>
           <p data-hero-eyebrow>
-            <span aria-hidden /> Open source · fully local · two modules live
+            <span aria-hidden /> Open source · fully local · three modules live
           </p>
-          <h1>One local Studio for what your React Native app is doing.</h1>
+          <h1>One local Studio for what your React Native app is doing — and why.</h1>
           <p>
             NativeScope is a modular debugging environment with no account and no cloud. Inspect
-            storage, understand HTTP and GraphQL traffic and move between both without rebuilding
-            your workflow around another platform.
+            storage, understand HTTP and GraphQL traffic, capture JavaScript logs and connect the
+            evidence in Timeline without rebuilding your workflow around another platform.
           </p>
           <div data-platform-actions>
             <Button href="/docs/storage/quickstart" size="lg">
@@ -141,7 +144,7 @@ export function PlatformHome() {
 
       <section data-platform-signals aria-label="NativeScope in numbers">
         <p>
-          <strong>2</strong>
+          <strong>3</strong>
           <span>modules available now</span>
         </p>
         <p>
@@ -163,14 +166,14 @@ export function PlatformHome() {
           <div>
             <p data-section-kicker>Available now</p>
             <h2>
-              Two hard debugging problems.
+              Three hard debugging problems.
               <br />
               One calm interface.
             </h2>
           </div>
           <p>
             Each module goes deep on its own job. Together they preserve the context that usually
-            disappears between tools.
+            disappears between tools, with Timeline as the shared lens.
           </p>
         </header>
 
@@ -251,6 +254,45 @@ export function PlatformHome() {
             />
           </div>
         </article>
+
+        <article data-module-feature="logs">
+          <div data-module-copy>
+            <span>
+              <ScrollText size={17} aria-hidden /> Module 03 · Logs
+            </span>
+            <h3>A log is a clue. Timeline shows the story.</h3>
+            <p>
+              Capture JavaScript console output from boot, inspect structured values and connect a
+              failed line to the requests and storage writes around it.
+            </p>
+            <ul>
+              <li>
+                <Search size={14} aria-hidden />
+                Search, levels and namespaces
+              </li>
+              <li>
+                <Braces size={14} aria-hidden />
+                Expand real structured values
+              </li>
+              <li>
+                <Clock3 size={14} aria-hidden />
+                Timeline across Logs, Network and Storage
+              </li>
+            </ul>
+            <Link href="/modules/logs">
+              Explore Logs <ArrowRight size={15} aria-hidden />
+            </Link>
+          </div>
+          <div data-module-shot>
+            <Image
+              src="/screenshots/logs-inspector-light.png"
+              width={1440}
+              height={900}
+              quality={95}
+              alt="NativeScope Logs showing a selected structured value and its detail viewer"
+            />
+          </div>
+        </article>
       </section>
 
       <section data-platform-config>
@@ -279,7 +321,8 @@ export function PlatformHome() {
           <footer>
             <span>Storage</span>
             <span>Network</span>
-            <em>more modules, same contract</em>
+            <span>Logs</span>
+            <em>Timeline connects them</em>
           </footer>
         </div>
       </section>

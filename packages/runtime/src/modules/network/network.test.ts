@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { NetworkRequest } from "@rnsi/protocol";
-import type { Runtime } from "../../bootstrap.ts";
+import {
+  NETWORK_BODY_INLINE_LIMIT,
+  exceedsWireBudget,
+  serializeMessage,
+  type NetworkRequest,
+} from "@rnsi/protocol";
+import type { ModuleCommandHandler, Runtime } from "../../bootstrap.ts";
 import { installNetworkModule } from "./install.ts";
 import {
   captureRequestBody,
@@ -119,30 +124,44 @@ class FakeXHR {
 interface FakeRuntime {
   runtime: Runtime;
   events: Array<{ module: string; event: string; data: unknown }>;
+  /** O que o módulo mandou por stream, na ordem — chave para os testes de corpo grande. */
+  streams: Array<{ streamId: string; data: string }>;
   invoke: (command: string, data: unknown) => unknown | Promise<unknown>;
 }
 
 function fakeRuntime(): FakeRuntime {
   const events: FakeRuntime["events"] = [];
-  let handler: ((command: string, data: unknown) => unknown) | null = null;
+  const streams: FakeRuntime["streams"] = [];
+  let handler: ModuleCommandHandler | null = null;
   const runtime = {
     registry: {} as Runtime["registry"],
     sendModuleEvent: (module: string, event: string, data?: unknown) =>
       events.push({ module, event, data }),
-    onModuleCommand: (_module: string, h: (command: string, data: unknown) => unknown) => {
+    onModuleCommand: (_module: string, h: ModuleCommandHandler) => {
       handler = h;
       return () => {
         handler = null;
       };
+    },
+    onReadyChange: (h: (ready: boolean) => void) => {
+      h(true);
+      return () => {};
     },
     close: () => {},
   } satisfies Runtime;
   return {
     runtime,
     events,
+    streams,
     invoke: (command, data) => {
       if (!handler) throw new Error("nenhum handler registrado");
-      return handler(command, data);
+      return handler(command, data, {
+        streamText: (text: string) => {
+          const streamId = `s-${streams.length + 1}`;
+          streams.push({ streamId, data: text });
+          return streamId;
+        },
+      });
     },
   };
 }
@@ -230,6 +249,64 @@ describe("network module — patch de XMLHttpRequest", () => {
     };
     expect(result.available).toBe(true);
     expect(result.body?.text).toBe('{"items":[1,2,3]}');
+  });
+
+  it("corpo pequeno vem inline, sem stream", () => {
+    const fake = setup({ maxBodyPreview: 4 });
+    const Ctor = (globalThis as unknown as { XMLHttpRequest: new () => FakeXHR }).XMLHttpRequest;
+    const xhr = new Ctor();
+    xhr.open("GET", "https://api.app.com/small");
+    xhr.send();
+    xhr.respond(200, '{"ok":true}', "content-type: application/json");
+
+    const record = fake.events[0]!.data as NetworkRequest;
+    const result = fake.invoke("get-body", { id: record.id, side: "response" }) as {
+      body: { text: string } | null;
+      streamId?: string | null;
+    };
+    expect(result.body?.text).toBe('{"ok":true}');
+    expect(result.streamId).toBeUndefined();
+    expect(fake.streams).toHaveLength(0);
+  });
+
+  it("corpo acima do limite inline sai por stream, não no command-result", () => {
+    const fake = setup({ maxBodyPreview: 4 });
+    const Ctor = (globalThis as unknown as { XMLHttpRequest: new () => FakeXHR }).XMLHttpRequest;
+    const xhr = new Ctor();
+    xhr.open("GET", "https://api.app.com/huge");
+    xhr.send();
+    // Acima de NETWORK_BODY_INLINE_LIMIT: era este caso que estourava o
+    // orçamento de fio e fazia o runtime gritar no terminal do app.
+    const huge = `{"blob":"${"x".repeat(NETWORK_BODY_INLINE_LIMIT + 1000)}"}`;
+    xhr.respond(200, huge, "content-type: application/json");
+
+    const record = fake.events[0]!.data as NetworkRequest;
+    const result = fake.invoke("get-body", { id: record.id, side: "response" }) as {
+      available: boolean;
+      body: { text: string; size: number; truncated: boolean } | null;
+      streamId?: string | null;
+      totalSize?: number;
+    };
+
+    expect(result.available).toBe(true);
+    // O command-result não carrega o corpo: só metadados.
+    expect(result.body?.text).toBe("");
+    expect(result.body?.size).toBe(huge.length);
+    expect(result.streamId).toBe("s-1");
+    expect(result.totalSize).toBe(huge.length);
+    // E o conteúdo íntegro foi para o stream, sem perder um byte.
+    expect(fake.streams).toHaveLength(1);
+    expect(fake.streams[0]?.data).toBe(huge);
+
+    // A propriedade que o bug violava: o frame do command-result cabe no
+    // orçamento de fio. Mesmo predicado que o guard do transporte usa.
+    const frame = serializeMessage({
+      kind: "command-result",
+      requestId: "r-1",
+      ok: true,
+      result,
+    });
+    expect(exceedsWireBudget(frame)).toBe(false);
   });
 
   it("get-body de id inexistente → available:false", () => {

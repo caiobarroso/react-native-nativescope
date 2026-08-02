@@ -1,0 +1,65 @@
+---
+title: Quickstart
+description: Enable Logs with one config line, start NativeScope and inspect the first useful signal from your React Native app.
+---
+
+## 1. Enable Logs
+
+If your project already has `nativescope.config.ts` or `nativescope.config.js`, add `logs: true`
+to the existing `modules` object. Keep the modules you already use:
+
+```ts
+import { defineNativeScopeConfig } from "react-native-nativescope/app";
+
+export default defineNativeScopeConfig({
+  modules: {
+    storage: true,
+    network: true,
+    logs: true,
+  },
+});
+```
+
+Logs is opt-in when a config file exists. Without a config file, the legacy default remains Storage
+only, so adding the file is what tells NativeScope to install Logs.
+
+## 2. Start the local Studio
+
+Run NativeScope instead of starting Metro directly:
+
+```bash
+npx nativescope
+```
+
+Open your app normally. The module installs before the app code runs, so logs emitted during boot
+can reach the Studio after the connection becomes ready.
+
+## 3. Open the stream
+
+Choose **Logs → Console** in the Studio sidebar. The list is chronological by default:
+
+- the clock shows the absolute local time;
+- `Δ` shows the time since the previous visible line;
+- level and namespace filters narrow the stream without losing their counts;
+- repeated lines collapse into `×N`.
+
+Select a row to inspect its arguments. Structured values open in the same viewer used by Storage;
+errors also expose their stack.
+
+## 4. Move from a line to its context
+
+There are two quick ways to investigate what happened around a log:
+
+- Select a log and press **Timeline** in the detail panel.
+- Press **Mark** before reproducing a flow, then open the Timeline from the marker row.
+
+Timeline keeps the selected moment visible between **Before this moment** and **After this moment**
+and lets you choose a time window or an event count. Read the complete model in
+[Timeline](/docs/logs/timeline).
+
+## If no logs appear
+
+Check that the app is running through the NativeScope CLI, that `logs: true` is inside
+`modules`, and that the app has reconnected after the config change. A log filtered by level,
+namespace or search can also be present but outside the current view; use **Clear** in the filter
+bar to return to the full stream.

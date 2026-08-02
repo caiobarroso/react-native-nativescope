@@ -1,4 +1,5 @@
 import {
+  NETWORK_BODY_INLINE_LIMIT,
   NETWORK_COMMAND,
   NETWORK_EVENT,
   NETWORK_MODULE,
@@ -645,8 +646,8 @@ export function installNetworkModule(runtime: Runtime, config?: unknown): () => 
 
   const removeFetch = installFetchCapture();
 
-  const removeCommand = runtime.onModuleCommand(NETWORK_MODULE, (command, data) => {
-    if (command === NETWORK_COMMAND.getBody) return handleGetBody(data, buffer);
+  const removeCommand = runtime.onModuleCommand(NETWORK_MODULE, (command, data, context) => {
+    if (command === NETWORK_COMMAND.getBody) return handleGetBody(data, buffer, context);
     if (command === NETWORK_COMMAND.replay) return handleReplay(data);
     throw new Error(`unknown network command: ${command}`);
   });
@@ -665,6 +666,7 @@ export function installNetworkModule(runtime: Runtime, config?: unknown): () => 
 function handleGetBody(
   data: unknown,
   buffer: { get(id: string): RequestBufferEntry | undefined },
+  context: { streamText(data: string): string },
 ): NetworkGetBodyResult {
   const input = (data && typeof data === "object" ? data : {}) as {
     id?: unknown;
@@ -676,5 +678,16 @@ function handleGetBody(
   if (!entry) return { available: false, body: null };
   const full = side === "request" ? entry.requestFull : entry.responseFull;
   if (full === null) return { available: false, body: null };
-  return { available: true, body: fullBody(full) };
+  const body = fullBody(full);
+  if (full.length <= NETWORK_BODY_INLINE_LIMIT) return { available: true, body };
+  // Corpo grande sai por stream, igual a database.cell: o command-result leva só
+  // os metadados (com `text` vazio) e o conteúdo vem em chunks de 64 KB. Devolver
+  // 1,1 M de chars aqui estourava o orçamento de fio e o guard gritava no
+  // terminal do app — o valor chegava, mas por um caminho que não escala.
+  return {
+    available: true,
+    body: { ...body, text: "" },
+    streamId: context.streamText(full),
+    totalSize: full.length,
+  };
 }

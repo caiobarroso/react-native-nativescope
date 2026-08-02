@@ -11,7 +11,7 @@
 export interface DocGroup {
   title: string;
   product?: string;
-  module: "storage" | "network";
+  module: "storage" | "network" | "logs";
   items: { slug: string; title: string }[];
 }
 
@@ -94,7 +94,47 @@ export const networkDocsNav: DocGroup[] = [
   },
 ];
 
-export const docsNav: DocGroup[] = [...storageDocsNav, ...networkDocsNav];
+export const logsDocsNav: DocGroup[] = [
+  {
+    module: "logs",
+    product: "Logs",
+    title: "Getting started",
+    items: [
+      { slug: "logs/introduction", title: "Introduction" },
+      { slug: "logs/quickstart", title: "Quickstart" },
+    ],
+  },
+  {
+    module: "logs",
+    product: "Logs",
+    title: "Inspect",
+    items: [
+      { slug: "logs/reading-logs", title: "Reading logs" },
+      { slug: "logs/structured-data", title: "Structured data" },
+      { slug: "logs/namespaces", title: "Namespaces & levels" },
+    ],
+  },
+  {
+    module: "logs",
+    product: "Logs",
+    title: "Workflows",
+    items: [
+      { slug: "logs/mark", title: "Mark a moment" },
+      { slug: "logs/timeline", title: "Timeline" },
+    ],
+  },
+  {
+    module: "logs",
+    product: "Logs",
+    title: "Reference",
+    items: [
+      { slug: "logs/configuration", title: "Configuration" },
+      { slug: "logs/safety", title: "Safety & limits" },
+    ],
+  },
+];
+
+export const docsNav: DocGroup[] = [...storageDocsNav, ...networkDocsNav, ...logsDocsNav];
 
 /** Ordem linear achatada — alimenta os links de anterior/próximo. */
 export const docsOrder: string[] = docsNav.flatMap((group) => group.items.map((item) => item.slug));

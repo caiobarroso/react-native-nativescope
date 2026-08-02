@@ -73,7 +73,11 @@ function titleOf(slug: string): string {
 export function getNeighbours(slug: string): DocNeighbours {
   // Cada módulo tem seu próprio prev/next: os slugs são namespaced por módulo
   // (storage/… e network/…), então o scopo é só o prefixo do slug atual.
-  const modulePrefix = slug.startsWith("network/") ? "network/" : "storage/";
+  const modulePrefix = slug.startsWith("logs/")
+    ? "logs/"
+    : slug.startsWith("network/")
+      ? "network/"
+      : "storage/";
   const scopedOrder = docsOrder.filter((candidate) => candidate.startsWith(modulePrefix));
   const index = scopedOrder.indexOf(slug);
   if (index === -1) return { previous: null, next: null };

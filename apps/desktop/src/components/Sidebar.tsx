@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   ChevronRight,
+  Clock,
   Database,
   Globe,
   KeyRound,
@@ -8,6 +9,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  ScrollText,
   Sun,
   SunMoon,
   type LucideIcon,
@@ -15,6 +17,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { useStudio } from "../lib/store.ts";
 import { useNetwork } from "../lib/network-store.ts";
+import { useLogs } from "../lib/logs-store.ts";
 import { useLayout } from "../lib/layout.ts";
 import { useTheme } from "../lib/theme.ts";
 import { loadKeys, loadTables } from "../lib/studio-client.ts";
@@ -91,6 +94,12 @@ export function Sidebar() {
   const activeModule = useStudio((s) => s.activeModule);
   const setActiveModule = useStudio((s) => s.setActiveModule);
   const requestCount = useNetwork((s) => s.requests.length);
+  const logCount = useLogs((s) => s.entries.length);
+  // Erro é o que faz alguém abrir a aba — o badge conta erro quando há erro, e
+  // só cai no total quando não há.
+  const logErrorCount = useLogs((s) =>
+    s.entries.reduce((total, entry) => (entry.level === "error" ? total + entry.repeat : total), 0),
+  );
   const size = useLayout((s) => s.panels.sidebar.size);
   const collapsed = useLayout((s) => s.panels.sidebar.collapsed);
   const toggleCollapsed = useLayout((s) => s.toggleCollapsed);
@@ -199,6 +208,60 @@ export function Sidebar() {
             )}
           </button>
         </ModuleSection>
+
+        <ModuleSection
+          label="Logs"
+          icon={ScrollText}
+          active={activeModule === "logs"}
+          onActivate={() => setActiveModule("logs")}
+        >
+          <button
+            onClick={() => setActiveModule("logs")}
+            className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-5 pr-2 text-left font-mono text-[12px] transition-colors ${
+              activeModule === "logs"
+                ? "bg-accent-wash font-medium text-accent"
+                : "text-text-muted hover:bg-surface-hover hover:text-text"
+            }`}
+          >
+            <span className="min-w-0 flex-1">Console</span>
+            {logErrorCount > 0 ? (
+              <span className="shrink-0 rounded border border-deleted/50 bg-deleted-wash px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-deleted">
+                {logErrorCount > 999 ? "999+" : logErrorCount}
+              </span>
+            ) : (
+              logCount > 0 && (
+                <span className="shrink-0 rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] tabular-nums text-text-subtle">
+                  {logCount > 999 ? "999+" : logCount}
+                </span>
+              )
+            )}
+          </button>
+        </ModuleSection>
+
+        {/*
+          Timeline NÃO é uma ModuleSection de propósito: não tem código no
+          device, não tem linha no config, não tem device/provider embaixo dela.
+          É uma lente sobre o que os módulos acima já produziram — e precisa
+          parecer outra categoria de coisa, senão vira "mais um módulo".
+        */}
+        <div className="mt-3 border-t border-border pt-2">
+          <button
+            onClick={() => setActiveModule("timeline")}
+            title="Logs, requests and storage writes on one scoped timeline"
+            className={`flex h-9 w-full items-center gap-2 rounded-md border px-2 text-left text-[12px] font-semibold transition-colors ${
+              activeModule === "timeline"
+                ? "border-border bg-surface-raised text-text"
+                : "border-transparent bg-transparent text-text-muted hover:border-border hover:bg-surface-hover hover:text-text"
+            }`}
+          >
+            <Clock
+              size={14}
+              strokeWidth={1.5}
+              className={activeModule === "timeline" ? "text-accent" : ""}
+            />
+            Timeline
+          </button>
+        </div>
       </nav>
 
       <footer className="border-t border-border p-2">

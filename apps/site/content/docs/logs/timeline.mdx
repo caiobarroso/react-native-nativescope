@@ -1,0 +1,88 @@
+---
+title: Timeline
+description: Put Logs, Network and Storage on one scoped clock so the cause around a moment becomes readable at a glance.
+---
+
+Timeline is the product surface that turns a useful log into an investigation. It is not another
+device module and it is not a firehose of every event ever captured. It is a desktop lens over the
+data that Logs, Network and Storage already collected, always centered on one anchor.
+
+<Callout title="The mental model">
+  Read it as a sandwich: **Before this moment**, the highlighted current row, then **After this
+  moment**. The selected row is marked with “You are here” so you never have to infer which event
+  is being compared.
+</Callout>
+
+## Choose an anchor
+
+You can open Timeline from:
+
+- a Mark in Logs;
+- any selected log, including a regular non-error log;
+- a recent uncaught error or unhandled rejection;
+- a failed Network request;
+- the Timeline sidebar, which lists recent moments worth investigating.
+
+The anchor determines the question. A Mark looks forward from the boundary. A log, error or failed
+request looks both backward and forward around its exact timestamp.
+
+## Read the sandwich
+
+The main list is chronological and divided into three readable parts:
+
+```text
+BEFORE THIS MOMENT
+  nearby events
+  [ highlighted anchor · You are here ]
+AFTER THIS MOMENT
+  nearby events
+```
+
+Context groups show a small number of nearby events first. When more exist, the group tells you
+exactly how many are hidden and exposes **Show earlier** or **Show later**. The context is compressed,
+not silently removed.
+
+The anchor row has its own background, left rail, top and bottom edge and “You are here” label. That
+visual treatment is intentionally stronger than a text color: it is the reference point for the
+whole investigation.
+
+## Control the scope
+
+Use the scope selector to choose either:
+
+- a time window: `±5s`, `±30s` or `±2min`;
+- an event window: `5 before / 5 after`, `10 before / 10 after` or `25 before / 25 after`.
+
+The event mode is useful when a noisy app produces many entries in a small time span. The time mode
+is useful when the relationship is temporal — for example, a storage write immediately before a
+`401` request.
+
+Toggle **Logs**, **Network** and **Storage** in the source control. The list reorders itself on one
+clock, and each source keeps a distinct icon and color so you can scan the tracks without reading
+every label.
+
+## Inspect and navigate
+
+Rows with long messages or values show an expand affordance. Expand as many rows as you need; the
+other rows remain open. A selected log also has:
+
+- **Copy log** for a readable evidence snippet;
+- **Open in Logs** for the full detail panel and structured viewer;
+- the same level, namespace and stack information as the source row.
+
+That keeps Timeline focused on relationship while Logs remains the place for deep inspection.
+
+## A concrete investigation
+
+Suppose the app reports a `401` from `/me`. Instead of opening the request and a storage provider
+in separate tabs, open Timeline around the failed request. The list can show the auth token write,
+the request, and the log that triggered a refresh in the order they happened. The causal clue is
+visible without comparing three timestamps by hand.
+
+Timeline does not claim that proximity proves causality. It makes the evidence legible enough for
+you to decide what caused the failure.
+
+## Where the data lives
+
+Timeline uses the current in-memory Studio session. It does not add persistence, a new config line,
+or a separate transport. Enable the source modules you need, then use Timeline as the shared lens.

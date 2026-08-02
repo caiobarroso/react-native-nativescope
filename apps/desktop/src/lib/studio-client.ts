@@ -28,6 +28,7 @@ import {
 import { createTransport, fnv1a32, type Transport } from "@rnsi/runtime";
 import { useStudio, keysId, type Device, type Selection } from "./store.ts";
 import { useNetwork } from "./network-store.ts";
+import { useLogs } from "./logs-store.ts";
 
 /**
  * Cliente do Studio. Único ponto da UI que toca o WebSocket — nenhum
@@ -149,17 +150,62 @@ function handleStreamEnd(payload: {
     stream.reject(new Error(payload.error ?? "stream failed on device"));
     return;
   }
-  if (payload.checksum && payload.checksum !== stream.hash.toString(16)) {
+  // Checksum é OPCIONAL no schema (o protocolo tolera), mas o único produtor de
+  // stream.end é o createStreamHub do runtime, e ele sempre manda em ok:true.
+  // Ausência aqui significa produtor desconhecido ou frame adulterado — e
+  // aceitar calado seria entregar dado não verificado justamente no caminho que
+  // existe para transportar 100% do valor.
+  if (payload.checksum === undefined) {
+    stream.reject(new Error("stream ended without a checksum — transfer not verifiable"));
+    return;
+  }
+  if (payload.checksum !== stream.hash.toString(16)) {
     stream.reject(new Error("checksum mismatch — corrupted transfer"));
     return;
   }
   stream.resolve(stream.parts.join(""));
 }
 
-/** Cancela um stream: avisa o device (para de ler) e rejeita o lado local. */
-export function cancelStream(streamId: string): void {
+/**
+ * Erro de cancelamento — UM tipo só para os dois caminhos (signal já abortado
+ * na entrada e abort disparado em voo).
+ *
+ * O contrato é o mesmo do fetch, de propósito: quem cancela recebe uma
+ * DOMException "AbortError", então `error.name === "AbortError"` basta para
+ * separar "eu cancelei" de "falhou de verdade". Antes o caminho de entrada
+ * lançava AbortError e o de voo rejeitava com Error("cancelled"), o que
+ * impedia justamente essa distinção.
+ */
+function abortError(): DOMException {
+  return new DOMException("Aborted", "AbortError");
+}
+
+/** Interrompe um stream: avisa o device (para de ler) e rejeita o lado local. */
+function stopStream(streamId: string, reason: Error): void {
   void sendCommand({ type: "stream.cancel", payload: { streamId } }).catch(() => {});
-  activeStreams.get(streamId)?.reject(new Error("cancelled"));
+  activeStreams.get(streamId)?.reject(reason);
+}
+
+/** Cancelamento pedido pelo usuário — sempre AbortError (ver abortError). */
+function cancelStream(streamId: string): void {
+  stopStream(streamId, abortError());
+}
+
+/**
+ * O device respondeu fora do schema. Cada chamador degrada como faz sentido
+ * para a sua tela — lista vazia, null, valor default — e isso continua certo:
+ * uma violação de protocolo não deve derrubar a UI inteira.
+ *
+ * O que faltava era o rastro. Sem isto o usuário vê "esta tabela não tem
+ * linhas" / "não achei nada" e abre bug contra o lugar errado, porque o
+ * sintoma é idêntico ao caso legítimo. Sendo um devtool, o console do Studio é
+ * exatamente onde essa informação tem que estar.
+ */
+function offProtocol<T>(command: string, fallback: T): T {
+  console.warn(
+    `[nativescope] ${command}: resposta fora do protocolo — a tela vai parecer vazia`,
+  );
+  return fallback;
 }
 
 function sessionToken(): string | null {
@@ -402,6 +448,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       if (supersedesPrevious) {
         useStudio.getState().selectDevice(device.deviceId);
         useNetwork.getState().reset(); // contexto JS novo do app: captura recomeça
+        useLogs.getState().reset();
       }
 
       // Continuidade de reload primeiro; senão, se este é o foco, busca providers.
@@ -429,8 +476,30 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
           nav: snapshotNav(),
         };
       }
+      // O device em foco morreu (reload do bundle, crash, cabo). Comando e
+      // stream em voo não têm mais quem responda: o serviço já apagou as rotas
+      // deste device (clearRoutesForDevice), então nada mais chega — sobrava só
+      // esperar o timeout. Derrubar aqui troca 4s (comando) e 15s (stream) de
+      // espera morta por um erro imediato e honesto: o stream expirava dizendo
+      // "the app stopped responding", e o app não travou — ele reiniciou.
+      // switchDevice já fazia exatamente isto; aqui era omissão.
+      if (wasSelected) failInFlight("the app disconnected");
       store.removeDevice(goneId);
       const after = useStudio.getState();
+
+      // O foco pulou para OUTRO device. Network e Logs são capturas escopadas
+      // ao device, e o `seq` — que ancora a fronteira do Mark — reinicia a cada
+      // contexto JS: sem zerar, a marca feita no device que morreu passa a
+      // casar com as primeiras entradas do novo. Mesma regra do switchDevice.
+      //
+      // O reload comum não passa por aqui: ali o supersede em session.connected
+      // já moveu o foco e resetou, então `wasSelected` é falso e o que já
+      // chegou do contexto novo fica intacto. Quando não sobra device nenhum, o
+      // histórico do app que acabou de morrer também fica — é o que se quer ler.
+      if (wasSelected && after.selectedDeviceId !== null && after.selectedDeviceId !== goneId) {
+        useNetwork.getState().reset();
+        useLogs.getState().reset();
+      }
       if (after.devices.length === 0) {
         store.setPhase("waiting-app");
       } else if (wasSelected && !maybeContinue() && after.selectedDeviceId) {
@@ -469,11 +538,22 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       return;
     }
 
+    // Único par de eventos de device que não filtrava por origem. Hoje o
+    // serviço já reescreve o id local para um id global (`gstream-N`, único no
+    // processo) e entrega o chunk só ao Studio dono da rota — então isto é
+    // defesa em profundidade, não correção de bug observável. Vale mesmo assim:
+    // stream é o caminho de DADO, e costurar chunk de um device no buffer de
+    // outro passaria pelo checksum quando ele viesse ausente.
+    //
+    // Diferente dos vizinhos, tolera deviceId ausente em vez de descartar: aqui
+    // um falso negativo trunca um valor no meio, e a guarda é redundante.
     case "stream.chunk":
+      if (event.deviceId !== undefined && event.deviceId !== store.selectedDeviceId) return;
       handleStreamChunk(event.payload.streamId, event.payload.data);
       return;
 
     case "stream.end":
+      if (event.deviceId !== undefined && event.deviceId !== store.selectedDeviceId) return;
       handleStreamEnd(event.payload);
       return;
 
@@ -503,6 +583,9 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
       // segue nos seus próprios cases acima — este é o canal genérico.
       if (event.payload.module === "network" && event.payload.event === "request") {
         useNetwork.getState().addRequest(event.payload.data);
+      }
+      if (event.payload.module === "logs" && event.payload.event === "batch") {
+        useLogs.getState().addBatch(event.payload.data);
       }
       return;
     }
@@ -561,11 +644,31 @@ export async function sendModuleCommand(
 export async function getNetworkBody(
   id: string,
   side: "request" | "response",
+  options?: { onProgress?: (received: number, total: number) => void; signal?: AbortSignal },
 ): Promise<NetworkBody | null> {
   const result = await sendModuleCommand("network", "get-body", { id, side });
   const parsed = networkGetBodyResultSchema.safeParse(result);
-  if (!parsed.success || !parsed.data.available) return null;
-  return parsed.data.body;
+  if (!parsed.success) return offProtocol("network.get-body", null);
+  if (!parsed.data.available) return null;
+  const { body, streamId, totalSize } = parsed.data;
+  // Sem streamId o corpo já veio inline (caso comum). Com streamId, o device
+  // mandou só os metadados e o texto chega em chunks — corpo grande nunca vira
+  // uma mensagem WS grande.
+  if (!streamId || !body) return body;
+  if (options?.signal?.aborted) {
+    cancelStream(streamId);
+    throw abortError();
+  }
+  const onAbort = () => cancelStream(streamId);
+  options?.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const text = await awaitStream(streamId, totalSize ?? 0, {
+      ...(options?.onProgress ? { onProgress: options.onProgress } : {}),
+    });
+    return { ...body, text };
+  } finally {
+    options?.signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 /** Rede: reexecuta uma request no device. Devolve o id da nova request (ela
@@ -588,7 +691,7 @@ export async function replayRequest(
     ...(overrides ? { overrides } : {}),
   });
   const parsed = networkReplayResultSchema.safeParse(result);
-  return parsed.success ? parsed.data.id : null;
+  return parsed.success ? parsed.data.id : offProtocol("network.replay", null);
 }
 
 /**
@@ -624,6 +727,7 @@ export async function refreshProviders(): Promise<void> {
   const result = await sendCommand({ type: "provider.list", payload: {} });
   const parsed = providerListResultSchema.safeParse(result);
   if (parsed.success) useStudio.getState().setProviders(parsed.data.providers);
+  else offProtocol("provider.list", null);
 }
 
 /**
@@ -639,8 +743,9 @@ export function switchDevice(deviceId: string): void {
   failInFlight("device switched");
   store.beginProviderSync();
   store.selectDevice(deviceId);
-  // Network é escopado ao device: a captura do device anterior não vale aqui.
+  // Network e Logs são escopados ao device: a captura do anterior não vale aqui.
   useNetwork.getState().reset();
+  useLogs.getState().reset();
   void refreshProviders();
 }
 
@@ -655,7 +760,7 @@ export async function loadKeys(providerId: string, instanceId: string): Promise<
   const parsed = keyValueListResultSchema.safeParse(result);
   if (parsed.success) {
     useStudio.getState().setKeys(providerId, instanceId, parsed.data, "replace");
-  }
+  } else offProtocol("key-value.list", null);
 }
 
 /** Próxima página, anexada à janela já carregada. No-op na última página. */
@@ -674,7 +779,7 @@ export async function loadMoreKeys(providerId: string, instanceId: string): Prom
   const parsed = keyValueListResultSchema.safeParse(result);
   if (parsed.success) {
     useStudio.getState().setKeys(providerId, instanceId, parsed.data, "append");
-  }
+  } else offProtocol("key-value.list", null);
 }
 
 export interface ValuePreview {
@@ -694,7 +799,9 @@ export async function getValue(
     payload: { providerId, instanceId, key },
   });
   const parsed = keyValueGetResultSchema.safeParse(result);
-  return parsed.success ? parsed.data : { value: null, truncated: false, totalSize: 0 };
+  return parsed.success
+    ? parsed.data
+    : offProtocol("key-value.get", { value: null, truncated: false, totalSize: 0 });
 }
 
 function materializeValue(type: StorageValue["type"], data: string): StorageValue {
@@ -714,7 +821,10 @@ function materializeValue(type: StorageValue["type"], data: string): StorageValu
 
 /**
  * Valor COMPLETO de uma chave, por streaming chunked — o caminho de
- * "100% dos dados" para valores grandes. Cancelável via AbortSignal.
+ * "100% dos dados" para valores grandes.
+ *
+ * Cancelável via AbortSignal: cancelar rejeita com DOMException "AbortError",
+ * seja o signal já abortado na entrada ou abortado no meio da transferência.
  */
 export async function getFullValue(
   providerId: string,
@@ -737,7 +847,7 @@ export async function getFullValue(
   const onAbort = () => cancelStream(streamId);
   if (options?.signal?.aborted) {
     cancelStream(streamId);
-    throw new DOMException("Aborted", "AbortError");
+    throw abortError();
   }
   options?.signal?.addEventListener("abort", onAbort, { once: true });
   try {
@@ -813,7 +923,7 @@ export async function fetchAllKeys(
       },
     });
     const parsed = keyValueListResultSchema.safeParse(result);
-    if (!parsed.success) return { entries, complete: false, total };
+    if (!parsed.success) return offProtocol("key-value.list", { entries, complete: false, total });
     entries.push(...parsed.data.entries);
     total = parsed.data.total;
     if (parsed.data.nextAfterKey === null) return { entries, complete: true, total };
@@ -853,8 +963,11 @@ const SCAN_MAX_KEYS = 5_000_000;
  * sem nunca segurar 1M de objetos. O round-trip do WebSocket é o próprio yield
  * entre páginas — a main thread respira a cada resposta.
  *
- * Cancelável por AbortSignal: para de pedir páginas (a resposta em voo é
- * ignorada). Devolve `complete: false` quando cancelou ou bateu na trava.
+ * Cancelável por AbortSignal, com o MESMO contrato do getFullValue/getFullCell:
+ * cancelar rejeita com DOMException "AbortError". Antes o cancelamento voltava
+ * como `complete: false` — indistinguível de ter batido na trava de segurança,
+ * e um relatório parcial de uma varredura abortada tem cara de relatório
+ * legítimo de instância gigante. Agora `complete: false` só significa a trava.
  */
 export async function scanAllKeys(
   providerId: string,
@@ -866,7 +979,7 @@ export async function scanAllKeys(
   let scanned = 0;
   let total = 0;
   for (;;) {
-    if (options?.signal?.aborted) return { complete: false, scanned, total };
+    if (options?.signal?.aborted) throw abortError();
     const result = await sendCommand({
       type: "key-value.list",
       payload: {
@@ -877,7 +990,7 @@ export async function scanAllKeys(
         lean: true,
       },
     });
-    if (options?.signal?.aborted) return { complete: false, scanned, total };
+    if (options?.signal?.aborted) throw abortError();
 
     // Guarda de shape leve — sem Zod profundo (é o que mantém a página barata).
     const r = result as {
@@ -922,7 +1035,9 @@ export async function searchKeys(
     payload: { providerId, instanceId, query, limit },
   });
   const parsed = keyValueSearchResultSchema.safeParse(result);
-  return parsed.success ? parsed.data : { entries: [], complete: false, scanned: 0 };
+  return parsed.success
+    ? parsed.data
+    : offProtocol("key-value.search", { entries: [], complete: false, scanned: 0 });
 }
 
 /** Busca LIKE nas tabelas SQLite, executada no device. */
@@ -940,12 +1055,18 @@ export async function searchDatabase(
     payload: { providerId, instanceId, query, limit },
   });
   const parsed = databaseSearchResultSchema.safeParse(result);
-  return parsed.success ? parsed.data : { matches: [], complete: false };
+  return parsed.success
+    ? parsed.data
+    : offProtocol("database.search", { matches: [], complete: false });
 }
 
 /**
  * Export integral NDJSON via stream: chunks vão direto ao sink (arquivo),
  * nunca acumulados na aba. GB fluem device → disco.
+ *
+ * Se o sink expõe `failure` e ele acende, a transferência é interrompida na
+ * hora e o erro do disco é propagado. Sem isto, um disco cheio no primeiro
+ * chunk só aparecia no close() — depois de o device ter mandado tudo.
  */
 export async function exportInstance(
   payload:
@@ -956,7 +1077,7 @@ export async function exportInstance(
         instanceId: string;
         table: string;
       },
-  sink: { write(chunk: string): void },
+  sink: { write(chunk: string): void; readonly failure?: Error | null },
   onProgress?: (receivedChars: number) => void,
 ): Promise<void> {
   const result = await sendCommand(
@@ -979,8 +1100,15 @@ export async function exportInstance(
   );
   const parsed = exportResultSchema.safeParse(result);
   if (!parsed.success) throw new Error("invalid runtime response");
-  await awaitStream(parsed.data.streamId, 0, {
-    onChunk: (chunk) => sink.write(chunk),
+  const streamId = parsed.data.streamId;
+  await awaitStream(streamId, 0, {
+    onChunk: (chunk) => {
+      sink.write(chunk);
+      // O disco desistiu: não adianta seguir recebendo. Rejeita com o erro
+      // REAL do sistema de arquivos, não com um "cancelado" genérico — é o que
+      // o usuário precisa ler para saber que faltou espaço.
+      if (sink.failure) stopStream(streamId, sink.failure);
+    },
     ...(onProgress ? { onProgress: (received) => onProgress(received) } : {}),
   });
 }
@@ -991,7 +1119,7 @@ export async function fetchAllTables(providerId: string, instanceId: string) {
     payload: { providerId, instanceId },
   });
   const parsed = databaseTablesResultSchema.safeParse(result);
-  return parsed.success ? parsed.data.tables : [];
+  return parsed.success ? parsed.data.tables : offProtocol("database.tables", []);
 }
 
 // ------------------------------------------------------------- database.*
@@ -1004,7 +1132,7 @@ export async function loadTables(providerId: string, instanceId: string): Promis
   const parsed = databaseTablesResultSchema.safeParse(result);
   if (parsed.success) {
     useStudio.getState().setTables(providerId, instanceId, parsed.data.tables);
-  }
+  } else offProtocol("database.tables", null);
 }
 
 export async function loadRows(
@@ -1025,10 +1153,15 @@ export async function loadRows(
     payload: { providerId, instanceId, table, ...options },
   });
   const parsed = databaseRowsResultSchema.safeParse(result);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? parsed.data : offProtocol("database.rows", null);
 }
 
-/** Conteúdo COMPLETO de uma célula (BLOB/texto grande) via stream. */
+/**
+ * Conteúdo COMPLETO de uma célula (BLOB/texto grande) via stream.
+ *
+ * Mesmo contrato de cancelamento do getFullValue: DOMException "AbortError"
+ * nos dois caminhos.
+ */
 export async function getFullCell(
   providerId: string,
   instanceId: string,
@@ -1051,7 +1184,7 @@ export async function getFullCell(
   const onAbort = () => cancelStream(streamId);
   if (options?.signal?.aborted) {
     cancelStream(streamId);
-    throw new DOMException("Aborted", "AbortError");
+    throw abortError();
   }
   options?.signal?.addEventListener("abort", onAbort, { once: true });
   try {

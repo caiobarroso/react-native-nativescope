@@ -1,0 +1,80 @@
+---
+title: Safety & limits
+description: Understand JavaScript scope, local transport, bounded capture, release behavior and the limits of what Logs promises.
+---
+
+## JavaScript scope
+
+Logs captures `console.debug`, `console.log`, `console.info`, `console.warn` and `console.error`,
+plus global uncaught errors and unhandled promise rejections when the React Native environment
+exposes those handlers. It does not capture native device logs, replace Metro's terminal or become
+a crash-reporting service.
+
+## The original console still works
+
+Instrumentation is passthrough. The original console method is called even when serialization or
+transport fails, so enabling Logs does not make the app depend on the inspector to log normally.
+Capture failures are contained and do not become application exceptions.
+
+## Local transport
+
+Captured data travels from the development app to the local NativeScope service and Studio. There is
+no account system, telemetry pipeline or hosted log archive. A physical device may still use a
+network or adb route to reach the development machine; “local” describes where the service and data
+live, not a promise that every packet uses loopback.
+
+## Bounded memory and burst protection
+
+Logs has several finite boundaries:
+
+- a pre-ready buffer for startup output;
+- serialized argument and message limits;
+- batch entry and byte budgets;
+- a per-second ceiling;
+- a bounded Studio ring.
+
+Identical lines can be merged into `×N`. Entries above the per-second ceiling are dropped and the
+count is shown in the Logs toolbar. This is deliberate: a diagnostic tool should tell you when it
+could not retain everything.
+
+## Sensitive values
+
+Logs redacts secrets **by default**. When an object or `Map` key looks like a secret — `token`,
+`password`, `secret`, `authorization`, `apiKey`, `credential`, `privateKey`, `creditCard`,
+`cardNumber`, `cvv` — the value is replaced with `«redacted»` before it leaves the device. The
+getter is never even called.
+
+Matching is by substring on the normalized key (lowercased, `_`, `-` and `.` removed), so
+`accessToken`, `access_token` and `API-KEY` all match.
+
+```js
+console.log("auth", { userId: 7, accessToken: "eyJhbGciOi…" });
+// arrives as: { userId: 7, accessToken: "«redacted»" }
+```
+
+Add your own keys, or turn it off when you need to read the value:
+
+```js
+logs: { redactKeys: ["cpf", "deviceId"] }   // added to the defaults
+logs: { redact: false }                      // off entirely
+```
+
+**What redaction does not cover.** It matches keys, so a secret passed as a bare value has no key
+to match:
+
+```js
+console.log("token", accessToken);  // NOT redacted — there is no key
+console.log({ accessToken });       // redacted
+```
+
+It also does not read your strings: a token embedded in a URL or in a message is sent as written.
+Redaction is a safety net for the common shape, not a guarantee — the reliable rule is still to
+not log secrets.
+
+Be equally careful with screenshots and screen sharing. Closing the Studio discards the captured
+session; there is no cross-execution log database.
+
+## Release behavior
+
+The Metro integration installs Logs only in development. Release bundles resolve the original app
+path without the NativeScope shim, and the project checks the release boundary separately.

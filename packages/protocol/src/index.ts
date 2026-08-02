@@ -4,6 +4,7 @@ export {
   STREAM_CHUNK_SIZE,
   CELL_PREVIEW_LIMIT,
   BLOB_PREVIEW_BYTES,
+  NETWORK_BODY_INLINE_LIMIT,
   WIRE_MESSAGE_BUDGET,
   wireByteSize,
   exceedsWireBudget,
@@ -93,3 +94,15 @@ export {
   type NetworkReplayCommand,
   type NetworkReplayResult,
 } from "./network.ts";
+export {
+  LOGS_MODULE,
+  LOGS_EVENT,
+  logLevelSchema,
+  logArgSchema,
+  logEntrySchema,
+  logBatchSchema,
+  type LogLevel,
+  type LogArg,
+  type LogEntry,
+  type LogBatch,
+} from "./logs.ts";

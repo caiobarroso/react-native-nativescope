@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ChevronDown, Database, Github, Globe2, Menu, X } from "lucide-react";
+import { ChevronDown, Database, Github, Globe2, Menu, ScrollText, X } from "lucide-react";
 import { BrandLogo } from "@/components/site/BrandLogo";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
@@ -246,6 +246,13 @@ export function SiteHeader() {
                                 <span>
                                   <strong>Network</strong>
                                   <small>Capture, replay and compare</small>
+                                </span>
+                              </Link>
+                              <Link href="/modules/logs">
+                                <ScrollText size={16} aria-hidden />
+                                <span>
+                                  <strong>Logs</strong>
+                                  <small>Console context + Timeline</small>
                                 </span>
                               </Link>
                             </>

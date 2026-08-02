@@ -1,5 +1,14 @@
 # Logs
 logs/
+# ...menos o código-fonte do módulo de Logs, que a regra acima engoliria
+# inteiro (o padrão `logs/` casa em qualquer profundidade da árvore).
+!apps/desktop/src/components/logs/
+!packages/runtime/src/modules/logs/
+# A LP, a documentação e seus assets também são código/marketing versionado.
+!apps/site/src/app/modules/logs/
+!apps/site/src/app/modules/logs/page.tsx
+!apps/site/content/docs/logs/
+!apps/site/content/docs/logs/*.mdx
 *.log
 npm-debug.log*
 yarn-debug.log*

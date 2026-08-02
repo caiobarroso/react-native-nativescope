@@ -8,10 +8,14 @@
 
 NativeScope is a plug-and-play debug environment for React Native apps. It is designed to grow as a local Studio with focused modules, simple configuration, and no hosted data path.
 
-Two modules ship today:
+Three modules ship today:
 
 - **Storage** automatically discovers AsyncStorage, MMKV, expo-sqlite, and op-sqlite and adds professional inspection, editing, diff, restore, JSON, and SQL tooling.
 - **Network** captures HTTP and GraphQL operations in one timeline with structured replay, filters, capture sessions, performance insights, and automatic storage impact.
+- **Logs** captures JavaScript console output from boot, keeps structured values and stacks inspectable, protects the app from noisy bursts, and opens useful moments in Timeline.
+
+**Timeline** is the shared desktop lens across the modules. Start from a log, error, failed request or
+Mark, then see Logs, Network and Storage together around that moment.
 
 No account. No cloud. No provider. No root wrapper. Your development data stays on your machine.
 
@@ -30,6 +34,7 @@ Open your app normally. NativeScope composes Metro in development, maintains the
 - SQLite table tooling with tabs, sorting, selection, inline edits, inserts, bulk delete, and SQL execution.
 - Snapshots and diff to compare storage changes and restore safely.
 - HTTP and GraphQL inspection with structured replay, session insights, sound rules, and storage impact.
+- JavaScript log inspection with namespaces, structured values, stacks, repeat grouping, burst limits, Marks, and Timeline.
 - A local-first workflow over `127.0.0.1`, with no login, telemetry, or hosted data path.
 
 ## Optional modules and app reactivity
@@ -43,6 +48,7 @@ import { defineNativeScopeConfig } from "react-native-nativescope/app";
 export default defineNativeScopeConfig({
   modules: {
     network: true,
+    logs: true,
     storage: {
       reactQuery: true,
       indicator: true,
@@ -51,7 +57,7 @@ export default defineNativeScopeConfig({
 });
 ```
 
-`network: true` enables HTTP and GraphQL capture. `reactQuery: true` automatically finds QueryClient instances and invalidates them after Studio edits. `indicator: true` shows a small in-app confirmation when storage is updated from the Studio. Every option is development-only.
+`network: true` enables HTTP and GraphQL capture. `logs: true` captures JavaScript console output and global errors in development. `reactQuery: true` automatically finds QueryClient instances and invalidates them after Studio edits. `indicator: true` shows a small in-app confirmation when storage is updated from the Studio. Every option is development-only.
 
 ## Documentation
 

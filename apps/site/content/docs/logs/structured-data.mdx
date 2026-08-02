@@ -1,0 +1,54 @@
+---
+title: Structured data
+description: Inspect objects, arrays and Error values from console calls without flattening them into an unreadable string.
+---
+
+## The list is a preview; the detail is the evidence
+
+When a console call receives an object, array or `Error`, Logs serializes a bounded representation
+for the wire and keeps the structured argument available in the detail panel. Select the row and
+open **Data**, **Argument** or **Error** to inspect it.
+
+The detail panel matches the shape of the data. Flat data — a handful of scalar fields — reads as a
+plain key/value table, because tabs and a field search buy you nothing when there is nothing to
+navigate. Anything nested, long or capped opens in the same read-only JSON workspace used by
+Storage, with familiar search, tree navigation and readable nested values instead of a
+terminal-style `[Object]` placeholder. A **Viewer** button on the panel header opens the workspace
+for flat data too, when you want the raw JSON or the generated TypeScript types.
+
+```ts
+console.log("[Checkout] created", {
+  id: "ord_8Fj2K",
+  customer: { name: "Ana Ribeiro", tags: ["vip", "recurring"] },
+  totals: { total: 229.9 },
+});
+```
+
+The stream shows a one-line preview that degrades as the payload grows: the values inline when they
+fit, then a key silhouette like `{id, customer, totals}`, then just `{3 keys}`. The message line
+stays one line no matter how large the object is, and the detail panel lets you open the nested
+customer, tags and totals without logging the object again.
+
+Format specifiers work as they do in a browser console, so libraries that use them read correctly:
+
+```ts
+console.log("%s items in %s", 5, "cart"); // → 5 items in cart
+```
+
+## Errors carry their stack
+
+Passing an `Error` preserves its message and stack when the runtime provides one. Uncaught errors
+and unhandled rejections are captured with their source, so they remain distinguishable from an
+ordinary `console.error` call.
+
+The stack starts collapsed to keep the useful message visible. Expand it when the frame locations
+are the next clue, or use **Copy log** to include it in an issue.
+
+## Bounded values are explicit
+
+Serialization has finite depth, key, array and string limits. If a value is capped, Logs labels it
+as capped in the detail panel. A valid bounded JSON representation is more useful than allowing a
+cyclic or multi-megabyte object to block the app or the Studio.
+
+See [Configuration](/docs/logs/configuration) to tune the public limits and
+[Safety & limits](/docs/logs/safety) for the trade-offs.

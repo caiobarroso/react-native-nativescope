@@ -1,0 +1,67 @@
+---
+title: Logs
+description: Capture JavaScript logs from boot, inspect their values and connect them to the requests and storage writes around the moment that matters.
+---
+
+The Logs module captures the JavaScript console your React Native app already uses. It keeps the
+original console methods working, adds uncaught errors and unhandled rejections, and puts the
+result in the same local Studio as [Storage](/docs/storage/introduction) and
+[Network](/docs/network/introduction).
+
+<Callout title="The useful difference">
+  A log tells you what one part of the app said. Timeline shows what happened around it: the log,
+  the request and the storage write on one chronological axis. That shared context is the reason
+  Logs is more useful than another terminal pane.
+</Callout>
+
+## What you can do
+
+- Capture `console.debug`, `console.log`, `console.info`, `console.warn` and `console.error`.
+- See uncaught JavaScript errors and unhandled promise rejections with their stack.
+- Capture startup output with an early-boot installer and a finite pre-ready buffer.
+- Search messages, namespaces, stacks and serialized arguments.
+- Filter by level and inferred namespace, with counts that remain visible while filtering.
+- Open objects and arrays in the same visual JSON workspace used by Storage.
+- See repeated lines as `×N` instead of reading the same message hundreds of times.
+- Keep burst protection honest with a per-second ceiling and a visible dropped count.
+- Copy the rendered log or its JSON payload.
+- Drop a Mark before an action and inspect what follows.
+- Open Timeline from a log, error or request to see Logs, Network and Storage together.
+
+## What Logs captures
+
+Logs is a JavaScript diagnostic surface. It does not replace native device logs, Metro's terminal or
+a production crash-reporting service. The module is installed in development and bypassed in
+release builds, so your app keeps its normal console behavior when you ship it.
+
+The capture is fail-open: the original console method is called even if serialization or transport
+has a problem. Values are bounded before they travel to the Studio, so a huge object or a render
+burst cannot grow the inspector without a limit.
+
+## Why Timeline belongs here
+
+The most useful investigation usually starts with one moment rather than a module:
+
+> The request returned `401` right after the auth token was saved.
+
+Logs gives you the line. Network gives you the request. Storage gives you the write. Timeline lets
+you compare them without keeping three timestamps in your head. Read the full workflow in
+[Timeline](/docs/logs/timeline).
+
+## Start here
+
+Enable the module with one line in the root config:
+
+```ts
+modules: {
+  logs: true,
+}
+```
+
+Continue to the [Quickstart](/docs/logs/quickstart), then choose the path that matches the
+question you are asking:
+
+- [Read and filter the stream](/docs/logs/reading-logs)
+- [Inspect structured values](/docs/logs/structured-data)
+- [Mark a moment](/docs/logs/mark)
+- [See the complete Timeline](/docs/logs/timeline)

@@ -28,7 +28,9 @@ export const SOCIAL = {
 } as const;
 
 const DEFAULT_OG_IMAGE = {
-  url: "/og.png",
+  // Gerada por código em src/app/og/route.tsx (next/og) — plataforma inteira
+  // (Storage + Network). Trocar a copy é editar aquele arquivo.
+  url: "/og",
   width: 1200,
   height: 630,
   alt: "NativeScope local React Native debugging Studio",
@@ -156,7 +158,7 @@ export function softwareApplicationSchema() {
     applicationSubCategory: "React Native debugging and developer tools",
     operatingSystem: "macOS, Windows, Linux",
     description:
-      "A plug-and-play, fully local debugging environment for React Native. Inspect storage, capture HTTP and GraphQL traffic, replay requests and keep debugging context in one Studio.",
+      "A plug-and-play, fully local debugging environment for React Native. Inspect storage, capture HTTP and GraphQL traffic, read JavaScript logs and keep debugging context in one Studio with Timeline.",
     url: SITE_URL,
     downloadUrl: SOCIAL.repo,
     softwareVersion: "1.0.0",
@@ -214,7 +216,7 @@ export function techArticleSchema({
     description,
     url: absoluteUrl(path),
     mainEntityOfPage: absoluteUrl(path),
-    image: absoluteUrl("/og.png"),
+    image: absoluteUrl("/og"),
     datePublished: published,
     dateModified: modified ?? published,
     inLanguage: "en",

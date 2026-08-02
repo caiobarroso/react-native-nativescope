@@ -32,12 +32,23 @@ export interface RuntimeOptions {
 }
 
 /**
+ * Serviços do runtime disponíveis para o handler de um módulo. Hoje só o
+ * streaming: sem isto, um módulo só sabe devolver o valor inteiro no
+ * command-result — e o guard de fio existe justamente porque isso não escala.
+ */
+export interface ModuleCommandContext {
+  /** Transmite `data` em chunks e devolve o streamId imediatamente. */
+  streamText(data: string): string;
+}
+
+/**
  * Handler de comando de um módulo (ex.: network). Recebe o comando interno e o
  * payload; retorna o resultado (vira command-result ok) ou lança (vira ok:false).
  */
 export type ModuleCommandHandler = (
   command: string,
   data: unknown,
+  context: ModuleCommandContext,
 ) => unknown | Promise<unknown>;
 
 export interface Runtime {
@@ -53,6 +64,17 @@ export interface Runtime {
    * remoção. Comandos Studio→runtime chegam por aqui, roteados por `module`.
    */
   onModuleCommand(module: string, handler: ModuleCommandHandler): () => void;
+  /**
+   * Avisa quando a conexão fica pronta (hello-ack) ou cai. Retorna uma função
+   * de remoção; o handler é chamado uma vez no registro com o estado atual.
+   *
+   * Existe porque `sendEvent` descarta tudo antes do handshake. Para o storage
+   * isso é inofensivo — o estado é reconstruível, e o hello-ack reanuncia os
+   * providers. Um módulo que produz FATOS (logs) não tem esse luxo: o que foi
+   * descartado sumiu. Com isto o módulo bufferiza enquanto não está pronto e
+   * drena quando fica, inclusive a cada reconexão.
+   */
+  onReadyChange(handler: (ready: boolean) => void): () => void;
   close(): void;
 }
 
@@ -78,9 +100,10 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     // usuário por causa do inspector violaria a promessa central.
     if (exceedsWireBudget(raw)) {
       console.error(
-        `[rnsi] frame acima do orçamento de fio (${WIRE_MESSAGE_BUDGET} bytes): ` +
+        `[nativescope] frame exceeds the wire budget (${WIRE_MESSAGE_BUDGET} bytes): ` +
           `type=${message.kind === "event" || message.kind === "command" ? message.type : message.kind}, ` +
-          `~${raw.length} chars — deveria ir por stream.*`,
+          `~${raw.length} chars — this value should travel as stream.*. ` +
+          `Please report it: https://github.com/caiobarroso/react-native-nativescope/issues`,
       );
     }
     transport.send(raw);
@@ -88,6 +111,36 @@ export function startRuntime(options: RuntimeOptions): Runtime {
 
   function sendEvent(event: EventMessage): void {
     if (handshakeDone) send(event);
+  }
+
+  // Sinal de prontidão para módulos (ver Runtime.onReadyChange). Separado de
+  // `handshakeDone` de propósito: este é o estado JÁ NOTIFICADO, para não
+  // disparar handler repetido em open/close consecutivos.
+  const readyHandlers = new Set<(ready: boolean) => void>();
+  let readyNotified = false;
+
+  function notifyReady(ready: boolean): void {
+    if (readyNotified === ready) return;
+    readyNotified = ready;
+    for (const handler of readyHandlers) {
+      try {
+        handler(ready);
+      } catch {
+        /* um módulo nunca derruba o runtime */
+      }
+    }
+  }
+
+  function onReadyChange(handler: (ready: boolean) => void): () => void {
+    readyHandlers.add(handler);
+    try {
+      handler(readyNotified); // estado atual, para quem registra depois de conectar
+    } catch {
+      /* nunca propaga */
+    }
+    return () => {
+      readyHandlers.delete(handler);
+    };
   }
 
   // Valores grandes saem em chunks — ver streams.ts.
@@ -125,11 +178,18 @@ export function startRuntime(options: RuntimeOptions): Runtime {
         kind: "command-result",
         requestId: message.requestId,
         ok: false,
-        error: protocolError("unsupported-capability", `nenhum handler para o módulo "${module}"`),
+        // Chega até a UI do Studio como o erro do comando: inglês, como todo
+        // texto que o usuário lê.
+        error: protocolError(
+          "unsupported-capability",
+          `no handler registered for module "${module}"`,
+        ),
       };
     }
     try {
-      const result = await handler(command, data);
+      // O streamId é devolvido no result; o primeiro chunk sai num tick futuro,
+      // então o Studio sempre conhece o stream antes do primeiro chunk chegar.
+      const result = await handler(command, data, { streamText: streams.streamText });
       return { kind: "command-result", requestId: message.requestId, ok: true, result: result ?? null };
     } catch (error) {
       return {
@@ -272,6 +332,7 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     createWebSocket: options.createWebSocket,
     onOpen() {
       handshakeDone = false;
+      notifyReady(false);
       send({
         kind: "hello",
         protocolVersion: PROTOCOL_VERSION,
@@ -282,6 +343,7 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     },
     onClose() {
       handshakeDone = false;
+      notifyReady(false);
     },
     async onMessage(raw) {
       const parsed = parseMessage(raw);
@@ -309,6 +371,8 @@ export function startRuntime(options: RuntimeOptions): Runtime {
             payload: { provider },
           });
         }
+        // Depois do resync de storage: módulos que bufferizaram drenam agora.
+        notifyReady(true);
         return;
       }
       if (message.kind === "hello-reject") {
@@ -349,6 +413,7 @@ export function startRuntime(options: RuntimeOptions): Runtime {
     registry,
     sendModuleEvent,
     onModuleCommand,
+    onReadyChange,
     close() {
       for (const unsubscribe of subscriptions) unsubscribe();
       transport.close();

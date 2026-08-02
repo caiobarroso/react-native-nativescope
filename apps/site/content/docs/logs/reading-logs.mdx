@@ -1,0 +1,58 @@
+---
+title: Reading logs
+description: Use the chronological stream, filters, expansion, copy actions and Timeline links to turn a long console session into evidence.
+---
+
+## Read the stream in time order
+
+Open **Logs → Console**. Logs starts oldest-first because a debugging story is usually read as a
+sequence: setup, action, response, state change, failure. The time control can switch to newest-first
+when that better matches your investigation; the delta still describes the chronological gap.
+
+Each row gives you:
+
+- an absolute clock with millisecond precision;
+- the level badge and inferred namespace;
+- the rendered message, truncated only for the row layout;
+- the delta from the previous visible event;
+- a `×N` badge when identical consecutive entries were merged.
+
+The list is virtualized, so a long session does not require one DOM row for every retained entry.
+
+## Find the signal
+
+The filter bar combines three ways to reduce noise:
+
+- Search message text, namespace, stack text and serialized argument previews.
+- Toggle one or more levels. The counts remain visible even when a level is turned off.
+- Choose a namespace inferred from a prefix such as `[Checkout]` or `Auth:`.
+
+Filters apply to the visible scope. After a Mark, the default view focuses on entries captured
+after the marker; clear or expand the earlier context when the setup matters too.
+
+## Expand a line
+
+Long messages are shortened in the stream so neighboring events stay scannable. Rows with more to
+read show an expand affordance. Open as many rows as you need; expanding one does not close the
+others. The expanded value preserves line breaks and long text rather than forcing you to compare
+several clipped fragments.
+
+Select the row when you want the full detail panel. That panel can contain structured arguments,
+an error stack, the absolute timestamp, repeat information and direct actions for Timeline and
+copying.
+
+## Copy the evidence
+
+Use **Copy log** for a readable, timestamped version of the line plus its structured arguments and
+stack. Use **Copy JSON** when another tool needs the complete captured entry, including level,
+source, sequence and truncation metadata.
+
+Copying is local to the browser session. NativeScope does not upload the entry or maintain a remote
+log archive.
+
+## Go from a row to Timeline
+
+Press **Timeline** in the detail panel. NativeScope opens a scoped view centered on the exact
+timestamp of that entry, with the current row highlighted between its surrounding context. From
+there you can expand the earlier or later events, toggle tracks and open the log again in the Logs
+module. See [Timeline](/docs/logs/timeline) for the full workflow.

@@ -58,8 +58,8 @@ export default function OurGoalPage() {
           None of the usual friction.
         </h1>
         <span>
-          NativeScope is becoming an all-in-one React Native debugging environment: fully local,
-          account-free and simple enough to adopt in the middle of a difficult debugging session.
+          NativeScope is a modular React Native debugging environment: fully local, account-free and
+          simple enough to adopt in the middle of a difficult debugging session.
         </span>
         <div data-goal-signals aria-label="NativeScope product commitments">
           <p>
@@ -104,11 +104,12 @@ export default function OurGoalPage() {
       <section data-goal-proof>
         <header>
           <p data-section-kicker>The proof is growing</p>
-          <h2>Storage began the proof. Network extends it.</h2>
+          <h2>Storage began the proof. Logs puts the cause in context.</h2>
           <p>
             We started with storage because its problems are concrete: hidden app state, fragmented
-            providers, stale UI after edits and inspectors that collapse under real datasets. The
-            Network module now applies the same contract to capture, replay and request context.
+            providers, stale UI after edits and inspectors that collapse under real datasets.
+            Network extends the same contract to capture, replay and request context. Logs and
+            Timeline connect the line that failed to the request and state change around it.
           </p>
         </header>
         <div data-goal-evidence>
@@ -131,10 +132,10 @@ export default function OurGoalPage() {
           <p data-section-kicker>The environment</p>
           <h2>One Studio for the questions that interrupt your work.</h2>
           <p>
-            Storage and Network are live today. Future modules will follow real community needs:
-            structured logs, performance, state, navigation, files and device events. Familiar
-            capabilities can live beside deeper purpose-built tools without turning installation
-            into a platform migration.
+            Storage, Network and Logs are live today. Timeline is the shared lens that connects
+            them. Future modules will follow real community needs: performance, state, navigation,
+            files and device events. Familiar capabilities can live beside deeper purpose-built
+            tools without turning installation into a platform migration.
           </p>
         </header>
         <ModuleOrganism />
@@ -195,7 +196,7 @@ export default function OurGoalPage() {
       <section data-goal-closer>
         <div>
           <p data-section-kicker>Built in the open</p>
-          <h2>Two modules already share the contract.</h2>
+          <h2>Three modules already share the contract.</h2>
           <p>
             Inspect how they work, challenge the decisions and use the evidence to decide whether
             NativeScope belongs in your workflow.

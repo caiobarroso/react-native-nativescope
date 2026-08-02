@@ -15,6 +15,9 @@
  *
  * network: true instala o inspetor de rede no earlyBoot (patch de XHR, antes
  * do app). A aba "Request" no App.js faz HTTP e GraphQL reais para exercitá-lo.
+ *
+ * logs: true instrumenta console.* e as falhas globais, também no earlyBoot —
+ * é o que permite capturar o que o app loga durante o próprio boot.
  */
 module.exports = {
   modules: {
@@ -23,5 +26,6 @@ module.exports = {
       reactQuery: true,
     },
     network: true,
+    logs: true,
   },
 };
