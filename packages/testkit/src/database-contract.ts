@@ -328,6 +328,57 @@ export function describeDatabaseAdapterContract(options: {
       await expect(
         harness.adapter.update(harness.instanceId, "notes", { scan: { offset: 0 } }, { title: "x" }),
       ).rejects.toThrow(/positional reference/);
+      await expect(
+        harness.adapter.delete(harness.instanceId, "notes", { scan: { offset: 0 } }),
+      ).rejects.toThrow(/positional reference/);
+    });
+
+    /* ---------------------------------------------------------------- */
+    /* Ref posicional — ler o que não tem endereço                       */
+    /* ---------------------------------------------------------------- */
+
+    it("lê célula por posição numa view sem identidade nenhuma", async () => {
+      // items_readonly não tem trigger, então nenhuma linha dela tem ref. Sem
+      // a ref posicional o conteúdo completo de uma célula ali é simplesmente
+      // inalcançável — o botão de expandir nem aparece.
+      const harness = await setup();
+      const page = await harness.adapter.rows(harness.instanceId, "items_readonly", {
+        limit: 10,
+        offset: 0,
+      });
+      expect(page.rows[0]?.ref).toBeNull();
+
+      const cell = await harness.adapter.cell(
+        harness.instanceId,
+        "items_readonly",
+        { scan: { offset: 1 } },
+        "name",
+      );
+      expect(cell).toEqual({ data: "caderno", kind: "text" });
+    });
+
+    it("ref posicional respeita a ordenação que o grid está mostrando", async () => {
+      const harness = await setup();
+      const cell = await harness.adapter.cell(
+        harness.instanceId,
+        "items_readonly",
+        { scan: { offset: 0, orderBy: "name", direction: "asc" } },
+        "name",
+      );
+      // Sem o ORDER BY isto seria "caneta" (ordem natural de rowid).
+      expect(cell).toEqual({ data: "caderno", kind: "text" });
+    });
+
+    it("ref posicional valida a coluna de ordenação como o resto do adapter", async () => {
+      const harness = await setup();
+      await expect(
+        harness.adapter.cell(
+          harness.instanceId,
+          "items_readonly",
+          { scan: { offset: 0, orderBy: "name; DROP TABLE items" } },
+          "name",
+        ),
+      ).rejects.toThrow(/unknown column/);
     });
 
     /* ---------------------------------------------------------------- */

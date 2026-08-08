@@ -908,6 +908,12 @@ export function RowGrid() {
   }, [selection, selectedTable, schema, rows, showToast, refreshVisibleWindow]);
   const onCommitEdit = useCallback(() => void saveEdit(), [saveEdit]);
 
+  // Ordenação corrente, para a ref posicional apontar para a mesma linha que
+  // o grid está mostrando. `sorting` já é validado contra as colunas reais
+  // no caminho de loadRows.
+  const sortColumn = sorting[0]?.id;
+  const sortDirection: "asc" | "desc" = sorting[0]?.desc ? "desc" : "asc";
+
   const tableColumns = useMemo<ColumnDef<Row>[]>(
     () => {
       const dataColumns: ColumnDef<Row>[] = (schema?.columns ?? []).map((schemaColumn) => ({
@@ -922,6 +928,20 @@ export function RowGrid() {
         cell: ({ getValue, row }) => {
           const value = getValue<CellValue>() ?? null;
           const rowRef = row.original.ref;
+          // Sem identidade estável, a POSIÇÃO na ordenação corrente é o que
+          // sobra — e basta para ir buscar o conteúdo de uma célula agora.
+          // Só serve para ler: as escritas recusam esta referência, e é a
+          // recusa que a torna segura.
+          const readRef: RowRef =
+            rowRef ??
+            {
+              scan: {
+                offset: row.index,
+                ...(sortColumn !== undefined
+                  ? { orderBy: sortColumn, direction: sortDirection }
+                  : {}),
+              },
+            };
           const isTruncated =
             row.original.truncatedColumns?.includes(schemaColumn.name) ?? false;
           const isEditing =
@@ -952,14 +972,14 @@ export function RowGrid() {
            * dos bytes, e o runtime não tem como distinguir isso de um write de
            * texto legítimo. Abrimos o visualizador em vez da edição.
            */
-          const blob = isBlobCell(value) && rowRef !== null ? value : null;
+          const blob = isBlobCell(value) ? value : null;
           const openBlob =
-            blob === null || rowRef === null
+            blob === null
               ? undefined
               : () => {
                   setBlobError(null);
                   setBlobCell({
-                    ref: rowRef,
+                    ref: readRef,
                     column: schemaColumn.name,
                     table: selectedTable ?? "",
                     cell: blob,
@@ -972,12 +992,11 @@ export function RowGrid() {
               <button
                 type="button"
                 onDoubleClick={() => {
-                  if (rowRef === null) return;
                   if (openBlob) {
                     openBlob();
                     return;
                   }
-                  if (!permissions.update) return;
+                  if (!permissions.update || rowRef === null) return;
                   if (isTruncated) {
                     // Editar sobre preview truncado corromperia — carrega o
                     // conteúdo completo (stream) antes de abrir a edição.
@@ -1032,24 +1051,26 @@ export function RowGrid() {
               )}
               {/* BLOB não passa por aqui: este caminho terminava em
                   onStartEdit com o base64 completo dentro de um <input>. */}
-              {isTruncated && rowRef !== null && blob === null && (
+              {isTruncated && blob === null && (
                 <button
                   type="button"
                   onClick={() => {
-                    void loadFullCellText(rowRef, schemaColumn.name).then((full) => {
+                    void loadFullCellText(readRef, schemaColumn.name).then((full) => {
                       if (full === null) return;
                       try {
                         JSON.parse(full);
                         setJsonError(null);
                         setJsonCell({
-                          ref: rowRef,
+                          ref: readRef,
                           column: schemaColumn.name,
                           table: selectedTable ?? "",
                           original: full,
                           draft: jsonDraft(full),
                         });
                       } catch {
-                        if (permissions.update) onStartEdit(rowRef, schemaColumn.name, full);
+                        if (permissions.update && rowRef !== null) {
+                          onStartEdit(rowRef, schemaColumn.name, full);
+                        }
                       }
                     });
                   }}
@@ -1116,6 +1137,8 @@ export function RowGrid() {
       schema?.columns,
       selectedRows,
       selectedTable,
+      sortColumn,
+      sortDirection,
       toggleVisibleRows,
     ],
   );

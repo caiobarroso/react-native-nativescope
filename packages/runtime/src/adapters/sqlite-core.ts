@@ -1075,9 +1075,19 @@ export function createSqliteAdapter(identity: {
         if (identity === "rowid" && rowid !== null) {
           ref = { rowid };
         } else if (identity === "pk") {
-          const pk: Record<string, CellValue> = {};
-          for (const column of pkColumns) pk[column] = cells[column] ?? null;
-          ref = { pk };
+          // Uma chave que veio cortada no preview, ou que é BLOB, não serve de
+          // referência: o WHERE montado com ela casaria zero linhas. Devolver
+          // `null` faz o Studio dizer "sem referência estável", que é honesto
+          // — devolver a ref daria uma recusa confusa na hora de escrever.
+          const usable = pkColumns.every((column) => {
+            const value = cells[column];
+            return !truncatedColumns.includes(column) && (value === null || typeof value !== "object");
+          });
+          if (usable) {
+            const pk: Record<string, CellValue> = {};
+            for (const column of pkColumns) pk[column] = cells[column] ?? null;
+            ref = { pk };
+          }
         }
         return truncatedColumns.length > 0 ? { ref, cells, truncatedColumns } : { ref, cells };
       });
@@ -1091,11 +1101,33 @@ export function createSqliteAdapter(identity: {
       if (!columnNames.includes(column)) {
         throw new Error(`unknown column: ${column}`);
       }
-      const where = refToWhere(ref);
-      const raw = await t.db.getAllAsync(
-        `SELECT ${quoteIdent(column)} AS v FROM ${quoteIdent(table)} WHERE ${where.clause} LIMIT 1`,
-        where.params,
-      );
+      // Leitura aceita ref posicional; escrita não. Um objeto sem identidade
+      // (view só-leitura, tabela sem rowid nem PK) não tem como endereçar uma
+      // linha — mas a POSIÇÃO numa ordenação conhecida basta para buscar o
+      // conteúdo de uma célula agora, que é a única coisa que faltava ali.
+      let raw: Array<Record<string, unknown>>;
+      if ("scan" in ref) {
+        const { offset, orderBy, direction } = ref.scan;
+        // Mesma validação do rows(): a coluna vem do fio e nunca é
+        // interpolada sem passar pelas colunas reais.
+        if (orderBy !== undefined && !columnNames.includes(orderBy)) {
+          throw new Error(`unknown column: ${orderBy}`);
+        }
+        const orderClause =
+          orderBy !== undefined
+            ? ` ORDER BY ${quoteIdent(orderBy)} ${direction === "desc" ? "DESC" : "ASC"}`
+            : "";
+        raw = await t.db.getAllAsync(
+          `SELECT ${quoteIdent(column)} AS v FROM ${quoteIdent(table)}${orderClause} LIMIT 1 OFFSET ?`,
+          [offset],
+        );
+      } else {
+        const where = refToWhere(ref);
+        raw = await t.db.getAllAsync(
+          `SELECT ${quoteIdent(column)} AS v FROM ${quoteIdent(table)} WHERE ${where.clause} LIMIT 1`,
+          where.params,
+        );
+      }
       const value = raw[0]?.["v"];
       if (value === undefined || value === null) return null;
       const cell = toCell(value);
