@@ -691,7 +691,7 @@ export function createSqliteAdapter(identity: {
    * deixaria a exclusão pela metade — que é exatamente o que acontecia quando o
    * Studio apagava linha a linha.
    */
-  async function runInTransaction(t: Tracked, statements: BulkStatement[]): Promise<number> {
+  async function inTransaction<T>(t: Tracked, run: () => Promise<T>): Promise<T> {
     let owned = false;
     try {
       await t.db.runAsync("BEGIN IMMEDIATE");
@@ -700,13 +700,10 @@ export function createSqliteAdapter(identity: {
       // Já estamos dentro de uma transação (do app, ou de um ORM): seguimos sem
       // abrir a nossa, e a atomicidade fica sendo a de quem abriu.
     }
-    let affected = 0;
     try {
-      for (const statement of statements) {
-        const result = await t.db.runAsync(statement.sql, statement.params);
-        affected += Number(result.changes ?? 0);
-      }
+      const result = await run();
       if (owned) await t.db.runAsync("COMMIT");
+      return result;
     } catch (error) {
       if (owned) {
         try {
@@ -717,7 +714,69 @@ export function createSqliteAdapter(identity: {
       }
       throw error;
     }
-    return affected;
+  }
+
+  async function runInTransaction(t: Tracked, statements: BulkStatement[]): Promise<number> {
+    return inTransaction(t, async () => {
+      let affected = 0;
+      for (const statement of statements) {
+        const result = await t.db.runAsync(statement.sql, statement.params);
+        affected += Number(result.changes ?? 0);
+      }
+      return affected;
+    });
+  }
+
+  /**
+   * Prova, ANTES de escrever, que a referência seleciona exatamente uma linha
+   * da view.
+   *
+   * Verificação a posteriori é impossível aqui: numa view com trigger
+   * INSTEAD OF o `changes` do UPDATE/DELETE externo é sempre 0 — o statement
+   * de fora não altera linha nenhuma, quem altera é o trigger, e o contador
+   * não atravessa. Então não dá para escrever e conferir depois. A garantia
+   * tem que vir antes, e acaba sendo mais forte: provado que o WHERE casa uma
+   * linha só, o trigger dispara uma vez com o OLD/NEW certo, faça ele o que
+   * fizer nas tabelas-base.
+   *
+   * `LIMIT 2` porque a pergunta é "é uma ou é mais de uma" — contar o resto
+   * seria trabalho jogado fora.
+   *
+   * Roda dentro da transação de quem chama, senão outra escrita poderia entrar
+   * entre a prova e o uso.
+   */
+  async function assertSingleRow(
+    t: Tracked,
+    table: string,
+    where: { clause: string; params: Array<string | number | null> },
+  ): Promise<void> {
+    const probe = await t.db.getAllAsync(
+      `SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${quoteIdent(table)} WHERE ${where.clause} LIMIT 2)`,
+      where.params,
+    );
+    const matched = Number(probe[0]?.["n"] ?? 0);
+    if (matched === 1) return;
+    throw new Error(
+      matched === 0
+        ? `row no longer matches this reference in "${table}"`
+        : `reference matches more than one row in "${table}"`,
+    );
+  }
+
+  /**
+   * O SQLite recusa DML numa view sem o trigger INSTEAD OF correspondente,
+   * com "cannot modify x because it is a view". Recusar antes, nomeando o que
+   * falta, troca esse erro opaco por um que diz o que fazer.
+   */
+  function assertWritable(
+    info: TableInfo,
+    table: string,
+    operation: "insert" | "update" | "delete",
+  ): void {
+    if (info.kind !== "view" || info.writable[operation]) return;
+    throw new Error(
+      `view "${table}" has no INSTEAD OF ${operation.toUpperCase()} trigger, so SQLite cannot apply this change`,
+    );
   }
 
   /** `DELETE ... WHERE rowid IN (…)`, em blocos que respeitam o teto de variáveis. */
@@ -790,7 +849,14 @@ export function createSqliteAdapter(identity: {
     const columns = Object.keys(ref.pk);
     if (columns.length === 0) throw new Error("primary-key reference is empty");
     return {
-      clause: columns.map((c) => `${quoteIdent(c)} = ?`).join(" AND "),
+      // `IS ?` e não `= ?`: com parâmetro NULL a igualdade não casa NADA, e a
+      // linha fica ineditável e inapagável.
+      //
+      // Numa tabela isso é inalcançável (WITHOUT ROWID exige PK NOT NULL), mas
+      // numa view a chave sai de expressão — `json_extract` de campo ausente
+      // devolve NULL — e aí o caso é rotineiro. `IS` casa NULL e valor normal
+      // com o mesmo plano de índice, então não há o que pesar.
+      clause: columns.map((c) => `${quoteIdent(c)} IS ?`).join(" AND "),
       params: columns.map((c) => toParam(ref.pk[c] ?? null)),
     };
   }
@@ -1128,13 +1194,23 @@ export function createSqliteAdapter(identity: {
       const t = get(instanceId);
       const columns = Object.keys(set);
       if (columns.length === 0) return;
+      const info = await tableInfo(t, table);
+      assertWritable(info, table, "update");
       const where = refToWhere(ref);
+      const sql = `UPDATE ${quoteIdent(table)} SET ${columns.map((c) => `${quoteIdent(c)} = ?`).join(", ")} WHERE ${where.clause}`;
+      const params = [...columns.map((c) => toParam(set[c] ?? null)), ...where.params];
       markStudioMutation(t, table, "update", "rowid" in ref ? ref.rowid : null);
       try {
-        await t.db.runAsync(
-          `UPDATE ${quoteIdent(table)} SET ${columns.map((c) => `${quoteIdent(c)} = ?`).join(", ")} WHERE ${where.clause}`,
-          [...columns.map((c) => toParam(set[c] ?? null)), ...where.params],
-        );
+        if (info.kind === "view") {
+          // Prova e escrita na mesma transação: se a prova falhar, nada foi
+          // escrito; e nada entra entre uma e outra.
+          await inTransaction(t, async () => {
+            await assertSingleRow(t, table, where);
+            await t.db.runAsync(sql, params);
+          });
+        } else {
+          await t.db.runAsync(sql, params);
+        }
       } catch (error) {
         t.pendingStudioWrites.delete(table);
         throw error;
@@ -1145,6 +1221,7 @@ export function createSqliteAdapter(identity: {
       const t = get(instanceId);
       const columns = Object.keys(values);
       const info = await tableInfo(t, table);
+      assertWritable(info, table, "insert");
       markStudioMutation(t, table, "insert", null);
       let lastInsertRowId: number | null = null;
       try {
@@ -1162,7 +1239,11 @@ export function createSqliteAdapter(identity: {
         t.pendingStudioWrites.delete(table);
         throw error;
       }
-      if (info.identity === "rowid" && Number.isFinite(lastInsertRowId)) {
+      // `kind !== "view"` é cinto sobre suspensório: identity nunca é "rowid"
+      // numa view (o tipo vem do sqlite_master). O que o guarda documenta é o
+      // motivo — last_insert_rowid NÃO é atualizado por insert feito dentro de
+      // trigger, então numa view ele devolveria um id velho de outra escrita.
+      if (info.kind !== "view" && info.identity === "rowid" && Number.isFinite(lastInsertRowId)) {
         return { ref: { rowid: lastInsertRowId } };
       }
       if (info.identity === "pk" && info.pkColumns.every((column) => column in values)) {
@@ -1177,10 +1258,20 @@ export function createSqliteAdapter(identity: {
 
     async delete(instanceId, table, ref) {
       const t = get(instanceId);
+      const info = await tableInfo(t, table);
+      assertWritable(info, table, "delete");
       const where = refToWhere(ref);
+      const sql = `DELETE FROM ${quoteIdent(table)} WHERE ${where.clause}`;
       markStudioMutation(t, table, "delete", "rowid" in ref ? ref.rowid : null);
       try {
-        await t.db.runAsync(`DELETE FROM ${quoteIdent(table)} WHERE ${where.clause}`, where.params);
+        if (info.kind === "view") {
+          await inTransaction(t, async () => {
+            await assertSingleRow(t, table, where);
+            await t.db.runAsync(sql, where.params);
+          });
+        } else {
+          await t.db.runAsync(sql, where.params);
+        }
       } catch (error) {
         t.pendingStudioWrites.delete(table);
         throw error;
@@ -1190,6 +1281,17 @@ export function createSqliteAdapter(identity: {
     async deleteRows(instanceId, table, refs) {
       const t = get(instanceId);
       if (refs.length === 0) return { rowsAffected: 0 };
+      const info = await tableInfo(t, table);
+      // Recusa deliberada. O caminho em lote existe para fazer UM statement no
+      // lugar de N — e a única forma correta numa view seria N preflights
+      // seguidos de N deletes, que é exatamente o que ele evita. Some isso ao
+      // fato de o `IN` com row-value não ser NULL-safe e o lote deixa de ter
+      // razão de existir aqui. Apagar linha a linha continua funcionando.
+      if (info.kind === "view") {
+        throw new Error(
+          `"${table}" is a view — delete rows one at a time so each reference can be verified`,
+        );
+      }
 
       const rowids: number[] = [];
       const pks: Array<Record<string, CellValue>> = [];
@@ -1200,10 +1302,7 @@ export function createSqliteAdapter(identity: {
       }
 
       const statements: BulkStatement[] = rowidStatements(table, rowids);
-      if (pks.length > 0) {
-        const { pkColumns } = await tableInfo(t, table);
-        statements.push(...pkStatements(table, pkColumns, pks));
-      }
+      if (pks.length > 0) statements.push(...pkStatements(table, info.pkColumns, pks));
 
       invalidateCount(t, table);
       // Antes de rodar: o hook nativo vai disparar uma vez por linha.
@@ -1233,6 +1332,23 @@ export function createSqliteAdapter(identity: {
 
     async deleteAll(instanceId, table) {
       const t = get(instanceId);
+      const info = await tableInfo(t, table);
+      // Recusa dura, e esta é a mais importante do arquivo.
+      //
+      // Esta operação existe POR CAUSA da truncate optimization: um DELETE sem
+      // WHERE faz o SQLite descartar as páginas da tabela sem percorrer linha
+      // a linha. Numa view essa otimização não existe — o DELETE dispara o
+      // trigger INSTEAD OF uma vez POR LINHA.
+      //
+      // Medido numa view de 200k linhas em cima de uma base tipo PowerSync: o
+      // trigger rodou 200.000 vezes e enfileirou 200.000 operações na fila de
+      // upload, que o motor de sync então sobe para o servidor do cliente. Um
+      // botão de "esvaziar" no inspector não pode gerar tráfego de produção.
+      if (info.kind === "view") {
+        throw new Error(
+          `"${table}" is a view — DELETE FROM would fire its INSTEAD OF trigger once per row instead of truncating`,
+        );
+      }
       // Um único DELETE sem WHERE: é o caminho da truncate optimization, em que
       // o SQLite descarta as páginas da tabela em vez de percorrer linha a
       // linha. Também é o caminho em que o hook nativo NÃO dispara — por isso o
