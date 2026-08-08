@@ -506,7 +506,20 @@ export function createSqliteAdapter(identity: {
     return statements;
   }
 
+  /**
+   * Uma ref posicional aponta para "a n-ésima linha desta ordenação", e isso
+   * deixa de valer no instante em que o dado ao redor muda. Serve para LER uma
+   * célula grande agora; usar para escrever significaria mirar numa linha e
+   * acertar outra.
+   */
+  function rejectScanRef(ref: RowRef): asserts ref is Exclude<RowRef, { scan: unknown }> {
+    if ("scan" in ref) {
+      throw new Error("positional reference cannot be used for writes");
+    }
+  }
+
   function refToWhere(ref: RowRef): { clause: string; params: Array<string | number | null> } {
+    rejectScanRef(ref);
     if ("rowid" in ref) return { clause: "rowid = ?", params: [ref.rowid] };
     const columns = Object.keys(ref.pk);
     if (columns.length === 0) throw new Error("primary-key reference is empty");
@@ -868,6 +881,7 @@ export function createSqliteAdapter(identity: {
       const rowids: number[] = [];
       const pks: Array<Record<string, CellValue>> = [];
       for (const ref of refs) {
+        rejectScanRef(ref);
         if ("rowid" in ref) rowids.push(ref.rowid);
         else pks.push(ref.pk);
       }

@@ -45,13 +45,57 @@ export const tableSchema = z.object({
    * Sem identidade → a UI trata como somente leitura e diz o porquê.
    */
   identity: z.enum(["rowid", "pk", "none"]),
+  /**
+   * Ausente ⇒ "table" (runtime anterior a este campo). VIEW entra no mesmo
+   * contrato: o que muda não é como se lê, é o que se pode escrever.
+   *
+   * Ortogonal a `identity` de propósito. `identity` responde "como endereço
+   * uma linha"; uma view gravável genuinamente É `pk`. Fundir os dois faria
+   * todo consumidor tratar um valor que não carrega informação de endereço.
+   */
+  kind: z.enum(["table", "view"]).optional(),
+  /**
+   * Por operação, não booleano: o SQLite recusa DML numa view que não tenha o
+   * trigger INSTEAD OF correspondente, e uma view pode ter só o de INSERT. Um
+   * booleano faria a UI oferecer edição que sempre falha.
+   *
+   * Ausente ⇒ tabela física, tudo permitido (sujeito a `identity`).
+   */
+  writable: z
+    .object({ insert: z.boolean(), update: z.boolean(), delete: z.boolean() })
+    .optional(),
+  /** Objetos que esta view lê, transitivamente. Alimenta atribuição de mudança. */
+  dependsOn: z.array(z.string()).optional(),
+  /**
+   * View cuja base sumiu (comum no meio de uma migração): PRAGMA table_info
+   * lança. Guarda a mensagem do SQLite em vez de derrubar a listagem inteira.
+   */
+  unavailable: z.string().optional(),
 });
 export type TableSchema = z.infer<typeof tableSchema>;
 
-/** Referência estável de uma linha para update/delete. */
+/**
+ * Referência de uma linha.
+ *
+ * `rowid` e `pk` são ESTÁVEIS: continuam apontando para a mesma linha depois
+ * que o dado ao redor muda, e por isso servem para escrever.
+ *
+ * `scan` é POSICIONAL — "a n-ésima linha desta ordenação" — e vale só até o
+ * dado se mexer. Existe para um caso só: ler o conteúdo inteiro de uma célula
+ * grande num objeto que não tem identidade nenhuma (view só-leitura, tabela
+ * sem rowid nem PK), onde hoje o valor é simplesmente inalcançável. As
+ * escritas a recusam explicitamente — é essa assimetria que a torna segura.
+ */
 export const rowRefSchema = z.union([
   z.object({ rowid: z.number() }),
   z.object({ pk: z.record(cellValueSchema) }),
+  z.object({
+    scan: z.object({
+      offset: z.number().int().nonnegative(),
+      orderBy: z.string().optional(),
+      direction: z.enum(["asc", "desc"]).optional(),
+    }),
+  }),
 ]);
 export type RowRef = z.infer<typeof rowRefSchema>;
 
