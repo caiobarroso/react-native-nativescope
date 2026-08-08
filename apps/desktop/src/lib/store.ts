@@ -562,6 +562,13 @@ export const useStudio = create<StudioState>((set) => ({
 
   applyDatabaseChange: (input) =>
     set((state) => {
+      const prefix = keysId(input.providerId, input.instanceId);
+      // Uma escrita FEITA na view chega com o nome da view, e `views` traz as
+      // que leem dela. Aí o nome já é o que o dev reconhece, e trocá-lo pelo
+      // da view de cima ("editei notes" virando "pinned_notes") seria mentira.
+      const changedIsView = (state.tables[prefix] ?? []).some(
+        (table) => table.name === input.table && table.kind === "view",
+      );
       const item: ActivityItem = {
         id: nextActivityId++,
         timestamp: input.timestamp,
@@ -571,7 +578,7 @@ export const useStudio = create<StudioState>((set) => ({
         // Quando UMA view lê esta tabela, é o nome dela que o dev reconhece —
         // a tabela física costuma ser encanamento que ele nunca abriu. Com mais
         // de uma não dá para escolher, então fica o nome físico.
-        key: activityKey(input.table, input.views, input.rowId),
+        key: activityKey(input.table, changedIsView ? undefined : input.views, input.rowId),
         change:
           input.operation === "insert"
             ? "created"
@@ -593,7 +600,6 @@ export const useStudio = create<StudioState>((set) => ({
       // linha errada na sidebar: pisca a tabela física, que ninguém abriu, e
       // deixa parada a view que está na tela.
       const stamp = Date.now();
-      const prefix = keysId(input.providerId, input.instanceId);
       let recentChanges = state.recentChanges;
       for (const name of [input.table, ...(input.views ?? [])]) {
         recentChanges = withBoundedEntry(

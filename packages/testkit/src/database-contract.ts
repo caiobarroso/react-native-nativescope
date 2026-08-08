@@ -20,6 +20,14 @@ export interface DatabaseAdapterHarness {
   exec(sql: string): Promise<void>;
   /** Leitura crua, para conferir a tabela-base depois de escrever pela view. */
   query(sql: string): Promise<Array<Record<string, unknown>>>;
+  /**
+   * O que o shim daquele driver notificaria depois desse SQL do app.
+   *
+   * Fica no harness, e não no teste, porque é conhecimento de driver: qual
+   * nome o shim consegue extrair do SQL é justamente o que varia — e o que faz
+   * a invalidação acertar ou não o objeto certo.
+   */
+  notify(sql: string): void;
 }
 
 /**
@@ -48,10 +56,14 @@ export const DATABASE_CONTRACT_SETUP = `
     INSERT INTO ps_data__notes (id, data)
       VALUES (NEW.id, json_object('title', NEW.title, 'pinned', NEW.pinned));
   END;
+  -- A fila de upload: o trigger ESCREVE aqui, mas a view não lê daqui. É o que
+  -- separa "de onde a view depende" de "onde uma escrita nela cai".
+  CREATE TABLE notes_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, op TEXT);
   CREATE TRIGGER notes_update INSTEAD OF UPDATE ON notes BEGIN
     UPDATE ps_data__notes
        SET data = json_set(data, '$.title', NEW.title, '$.pinned', NEW.pinned)
      WHERE id = OLD.id;
+    INSERT INTO notes_outbox (op) VALUES ('PATCH');
   END;
   CREATE TRIGGER notes_delete INSTEAD OF DELETE ON notes BEGIN
     DELETE FROM ps_data__notes WHERE id = OLD.id;
@@ -488,6 +500,92 @@ export function describeDatabaseAdapterContract(options: {
         "items_names",
         "items_readonly",
       ]);
+    });
+
+    /**
+     * A trava do mecanismo. O eco de escrita do Studio é por NOME, e o
+     * `sqlite3_update_hook` nunca nomeia a view: ele nomeia `ps_data__notes` e
+     * `notes_outbox`, as tabelas que os triggers escreveram. Sem tratar isso,
+     * editar uma linha de `notes` no Studio aparecia como duas ou três
+     * mudanças feitas PELO APP — o oposto do que aconteceu.
+     */
+    it("escrita do Studio em view emite UM evento, atribuído ao studio", async () => {
+      const harness = await setup();
+      await harness.adapter.tables(harness.instanceId); // carrega o catálogo
+      harness.changes.length = 0;
+
+      await harness.adapter.update(
+        harness.instanceId,
+        "notes",
+        { pk: { id: "n_01" } },
+        { title: "editada" },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(harness.changes.map((c) => `${c.table}/${c.source}`)).toEqual(["notes/studio"]);
+    });
+
+    it("uma escrita recusada não emite evento nenhum", async () => {
+      const harness = await setup();
+      await harness.adapter.tables(harness.instanceId);
+      harness.changes.length = 0;
+
+      // Referência ambígua: o preflight recusa e o banco fica intacto — então
+      // não há mudança para anunciar. O evento saía ANTES da escrita.
+      await expect(
+        harness.adapter.update(harness.instanceId, "item_tags", { pk: { id: 1 } }, { name: "x" }),
+      ).rejects.toThrow(/more than one row/);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(harness.changes).toEqual([]);
+    });
+
+    /* ---------------------------------------------------------------- */
+    /* Invalidação de cache                                              */
+    /* ---------------------------------------------------------------- */
+
+    it("escrita na base derruba a contagem cacheada da view que a lê", async () => {
+      const harness = await setup();
+      const before = await harness.adapter.tables(harness.instanceId);
+      expect(before.find((t) => t.name === "notes")?.rowCount).toBe(2);
+
+      const sql = `INSERT INTO ps_data__notes VALUES ('n_03', '{"title":"terceira"}')`;
+      await harness.exec(sql);
+      harness.notify(sql);
+
+      const after = await harness.adapter.tables(harness.instanceId);
+      expect(after.find((t) => t.name === "notes")?.rowCount).toBe(3);
+    });
+
+    it("DROP da tabela-base marca as views que a liam, inclusive as transitivas", async () => {
+      const harness = await setup();
+      const before = await harness.adapter.tables(harness.instanceId);
+      expect(before.find((t) => t.name === "items_readonly")?.unavailable).toBeUndefined();
+
+      await harness.exec(`DROP TABLE items`);
+      harness.notify(`DROP TABLE items`);
+
+      const after = await harness.adapter.tables(harness.instanceId);
+      expect(after.find((t) => t.name === "items_readonly")?.unavailable).toBeTruthy();
+      // View sobre view: depende de `items` só pelo fecho transitivo.
+      expect(after.find((t) => t.name === "items_names")?.unavailable).toBeTruthy();
+    });
+
+    it("CREATE TRIGGER torna a view gravável sem esperar o app reiniciar", async () => {
+      const harness = await setup();
+      const before = await harness.adapter.tables(harness.instanceId);
+      expect(before.find((t) => t.name === "items_readonly")?.writable?.update).toBe(false);
+
+      const sql = `CREATE TRIGGER items_readonly_update INSTEAD OF UPDATE ON items_readonly BEGIN
+           UPDATE items SET name = NEW.name WHERE id = OLD.id;
+         END`;
+      await harness.exec(sql);
+      // O nome que o shim consegue extrair desse DDL é o do TRIGGER, não o da
+      // view — e é exatamente por isso que escopar por ele não bastava.
+      harness.notify(sql);
+
+      const after = await harness.adapter.tables(harness.instanceId);
+      expect(after.find((t) => t.name === "items_readonly")?.writable?.update).toBe(true);
     });
   });
 }

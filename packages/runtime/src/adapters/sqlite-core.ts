@@ -306,19 +306,73 @@ export function createSqliteAdapter(identity: {
     return false;
   }
 
-  /** Mutação vinda do Studio: marca pendente; se não há hook nativo, emite direto. */
-  function markStudioMutation(
+  /**
+   * Mutação do Studio, antes de tocar o banco.
+   *
+   * Em TABELA vale o eco: marcamos pendente e o evento que o hook devolver com
+   * o mesmo nome é reatribuído ao studio.
+   *
+   * Em VIEW o eco é o mecanismo errado, e não por descuido — por construção. O
+   * `sqlite3_update_hook` é a nível de VDBE: ele nunca nomeia a view, nomeia as
+   * tabelas FÍSICAS que os triggers INSTEAD OF escreveram. Editar uma linha de
+   * `notes` produzia `ps_data__notes updated (app)` e `ps_crud inserted (app)`
+   * — a edição do próprio usuário chegando como se o app tivesse feito — e no
+   * expo somava ainda o evento da view, três entradas para uma edição.
+   *
+   * Então em view fazemos o que o caminho de lote já fazia pelo mesmo motivo:
+   * silenciamos o footprint de escrita e emitimos UM evento autoritativo
+   * depois, em finishStudioMutation. Custo aceito: uma escrita do app numa
+   * dessas tabelas dentro da janela some da timeline (os dados não — a UI
+   * reconsulta a cada evento).
+   */
+  function beginStudioMutation(t: Tracked, table: string, info: TableInfo): void {
+    invalidateCount(t, table);
+    if (info.kind !== "view") {
+      if (t.hasChangeListener) t.pendingStudioWrites.set(table, Date.now() + ECHO_TTL_MS);
+      return;
+    }
+    // A própria view também entra: no expo o shim instrumenta o runAsync e
+    // notificaria a view pelo nome, duplicando o nosso evento.
+    suppressTableEvents(t, table, ECHO_TTL_MS);
+    for (const name of info.touches) {
+      invalidateCount(t, name);
+      suppressTableEvents(t, name, ECHO_TTL_MS);
+    }
+  }
+
+  /**
+   * A escrita passou. Só agora sai evento.
+   *
+   * Emitir antes era o padrão para tabela sem hook, e produzia evento fantasma
+   * sempre que a escrita falhava depois — uma constraint violada, ou o
+   * preflight de view recusando uma referência ambígua: o Studio anunciava uma
+   * mudança que o banco nunca teve.
+   */
+  function finishStudioMutation(
     t: Tracked,
     table: string,
+    info: TableInfo,
     operation: DatabaseChange["operation"],
     rowId: number | null,
   ): void {
-    invalidateCount(t, table);
-    if (t.hasChangeListener) {
-      t.pendingStudioWrites.set(table, Date.now() + ECHO_TTL_MS);
-    } else {
-      emit(t, { table, rowId, operation, source: "studio" });
+    if (info.kind === "view") {
+      // Renova a janela curta para o que o hook ainda entregar em atraso.
+      for (const name of [table, ...info.touches]) {
+        suppressTableEvents(t, name, RECENT_EVENT_TTL_MS);
+      }
+      // `emit` direto, não `emitOnce`: este é o evento autoritativo e não pode
+      // ser suprimido pela chave que nós mesmos acabamos de registrar.
+      emit(t, { table, rowId: null, operation, source: "studio" });
+      return;
     }
+    if (!t.hasChangeListener) emit(t, { table, rowId, operation, source: "studio" });
+  }
+
+  /** A escrita falhou: nada mudou, nada é emitido, nada fica silenciado. */
+  function abortStudioMutation(t: Tracked, table: string, info: TableInfo): void {
+    t.pendingStudioWrites.delete(table);
+    if (info.kind !== "view") return;
+    for (const name of [table, ...info.touches]) releaseTableEvents(t, name);
   }
 
   interface Catalog {
@@ -426,6 +480,23 @@ export function createSqliteAdapter(identity: {
   }
 
   /**
+   * Os nomes que uma escrita NESTA view pode alcançar.
+   *
+   * O que ela lê é onde o UPDATE/DELETE do trigger vai cair. Mas o trigger
+   * pode ir além disso: num motor de sync ele também enfileira numa tabela de
+   * upload que a view nunca lê. Os dois entram, porque o hook nativo vai
+   * disparar nos dois e é por este conjunto que sabemos que fomos nós.
+   */
+  function viewWriteFootprint(catalog: Catalog, view: string, dependsOn: string[]): string[] {
+    const names = new Set(dependsOn);
+    for (const sql of catalog.triggersByTable.get(view) ?? []) {
+      for (const name of referencedNames(sql, catalog.objects.keys())) names.add(name);
+    }
+    names.delete(view);
+    return [...names].sort();
+  }
+
+  /**
    * A chave de uma linha de view, lida do `OLD.*` dos triggers.
    *
    * É a declaração do próprio autor sobre o que identifica um registro, no
@@ -486,6 +557,8 @@ export function createSqliteAdapter(identity: {
     columns: TableSchema["columns"];
     writable: { insert: boolean; update: boolean; delete: boolean };
     dependsOn: string[];
+    /** Ver viewWriteFootprint. Vazio em tabela — ela escreve em si mesma. */
+    touches: string[];
     /** Mensagem do SQLite quando nem o PRAGMA respondeu (view órfã). */
     unavailable: string | null;
   }
@@ -522,6 +595,7 @@ export function createSqliteAdapter(identity: {
         columns: [],
         writable: { ...NO_WRITES },
         dependsOn: kind === "view" ? viewDependencies(catalog, table) : [],
+        touches: [],
         unavailable: error instanceof Error ? error.message : String(error),
       };
       t.schemaCache.set(table, info);
@@ -539,6 +613,7 @@ export function createSqliteAdapter(identity: {
     let info: TableInfo;
     if (kind === "view") {
       const keyColumns = viewKeyColumns(catalog, table, columnNames);
+      const dependsOn = viewDependencies(catalog, table);
       info = {
         kind,
         identity: keyColumns.length > 0 ? "pk" : "none",
@@ -552,7 +627,8 @@ export function createSqliteAdapter(identity: {
           return position === -1 ? column : { ...column, pkIndex: position + 1 };
         }),
         writable: viewWritability(catalog, table),
-        dependsOn: viewDependencies(catalog, table),
+        dependsOn,
+        touches: viewWriteFootprint(catalog, table, dependsOn),
         unavailable: null,
       };
     } else {
@@ -567,6 +643,7 @@ export function createSqliteAdapter(identity: {
         columns,
         writable: { ...ALL_WRITES },
         dependsOn: [],
+        touches: [],
         unavailable: null,
       };
     }
@@ -674,10 +751,22 @@ export function createSqliteAdapter(identity: {
     return { total: estimate, exact: false };
   }
 
-  /** Mudança na tabela: a contagem cacheada deixou de valer. */
+  /**
+   * Mudança na tabela: a contagem cacheada deixou de valer — a dela e a de quem
+   * a lê.
+   *
+   * Uma view não tem contagem própria: a dela é derivada. Sem invalidar os
+   * dependentes, uma inserção em `ps_data__notes` deixava a view `notes` com o
+   * número velho por até COUNT_TTL_MS — e o número na sidebar é justamente
+   * como se confere que a escrita pegou.
+   */
   function invalidateCount(t: Tracked, table: string): void {
-    if (table === "*") t.countCache.clear();
-    else t.countCache.delete(table);
+    if (table === "*") {
+      t.countCache.clear();
+      return;
+    }
+    t.countCache.delete(table);
+    for (const view of t.catalog?.dependents.get(table) ?? []) t.countCache.delete(view);
   }
 
   /**
@@ -937,25 +1026,41 @@ export function createSqliteAdapter(identity: {
     notifySchemaChanged(instanceId, table) {
       const t = tracked.get(instanceId);
       if (!t) return;
-      // DDL do app (CREATE/DROP/ALTER): invalida só a tabela afetada. A
-      // contagem cai junto — depois de um DROP/CREATE do mesmo nome, o que
-      // sabíamos sobre o tamanho da tabela não vale mais nada.
-      //
+      // Quem lê quem, LIDO ANTES de derrubar o catálogo — é ele que sabe.
+      const dependents = t.catalog?.dependents.get(table) ?? [];
+      const known = t.catalog?.objects.has(table) ?? false;
+
       // O catálogo cai INTEIRO em qualquer DDL: é uma query só para
       // reconstruir, DDL é raro, e um CREATE/DROP VIEW muda o grafo de
       // dependências de objetos que não são o alvo nomeado.
       t.catalog = null;
-      if (table === "*") {
-        // `delete("*")` era no-op — só invalidateCount tratava o coringa. Como
-        // `mutationTable` devolve null (logo "*") justamente para DDL que ele
-        // não sabe escopar, era o caso do CREATE VIEW que nunca invalidava.
+
+      // Dois casos em que não dá para escopar, e aí limpar tudo é a única
+      // resposta correta:
+      //
+      // "*" — DDL que o shim não soube nomear. (`delete("*")` era no-op: só
+      // invalidateCount tratava o coringa.)
+      //
+      // Nome que não é objeto conhecido — CREATE/DROP TRIGGER nomeia o
+      // TRIGGER, não a view em que ele está. Um trigger novo muda a
+      // gravabilidade da view, e escopar por esse nome invalidava um objeto
+      // que não existe enquanto a view seguia com `writable` congelado (o
+      // schemaCache não tem TTL: seria até o app reiniciar).
+      if (table === "*" || !known) {
         t.schemaCache.clear();
         t.lastExactCount.clear();
-      } else {
-        t.schemaCache.delete(table);
-        t.lastExactCount.delete(table);
+        t.countCache.clear();
+        return;
       }
-      invalidateCount(t, table);
+
+      // A tabela e as views que a leem. Sem os dependentes, um DROP da base
+      // deixava a view em cache marcada como disponível para sempre, com as
+      // colunas de antes.
+      for (const name of [table, ...dependents]) {
+        t.schemaCache.delete(name);
+        t.lastExactCount.delete(name);
+        t.countCache.delete(name);
+      }
     },
 
     async tables(instanceId) {
@@ -1255,7 +1360,8 @@ export function createSqliteAdapter(identity: {
       const where = refToWhere(ref);
       const sql = `UPDATE ${quoteIdent(table)} SET ${columns.map((c) => `${quoteIdent(c)} = ?`).join(", ")} WHERE ${where.clause}`;
       const params = [...columns.map((c) => toParam(set[c] ?? null)), ...where.params];
-      markStudioMutation(t, table, "update", "rowid" in ref ? ref.rowid : null);
+      const rowId = "rowid" in ref ? ref.rowid : null;
+      beginStudioMutation(t, table, info);
       try {
         if (info.kind === "view") {
           // Prova e escrita na mesma transação: se a prova falhar, nada foi
@@ -1268,9 +1374,10 @@ export function createSqliteAdapter(identity: {
           await t.db.runAsync(sql, params);
         }
       } catch (error) {
-        t.pendingStudioWrites.delete(table);
+        abortStudioMutation(t, table, info);
         throw error;
       }
+      finishStudioMutation(t, table, info, "update", rowId);
     },
 
     async insert(instanceId, table, values) {
@@ -1278,7 +1385,7 @@ export function createSqliteAdapter(identity: {
       const columns = Object.keys(values);
       const info = await tableInfo(t, table);
       assertWritable(info, table, "insert");
-      markStudioMutation(t, table, "insert", null);
+      beginStudioMutation(t, table, info);
       let lastInsertRowId: number | null = null;
       try {
         if (columns.length === 0) {
@@ -1292,9 +1399,10 @@ export function createSqliteAdapter(identity: {
           lastInsertRowId = Number(result.lastInsertRowId);
         }
       } catch (error) {
-        t.pendingStudioWrites.delete(table);
+        abortStudioMutation(t, table, info);
         throw error;
       }
+      finishStudioMutation(t, table, info, "insert", null);
       // `kind !== "view"` é cinto sobre suspensório: identity nunca é "rowid"
       // numa view (o tipo vem do sqlite_master). O que o guarda documenta é o
       // motivo — last_insert_rowid NÃO é atualizado por insert feito dentro de
@@ -1318,7 +1426,8 @@ export function createSqliteAdapter(identity: {
       assertWritable(info, table, "delete");
       const where = refToWhere(ref);
       const sql = `DELETE FROM ${quoteIdent(table)} WHERE ${where.clause}`;
-      markStudioMutation(t, table, "delete", "rowid" in ref ? ref.rowid : null);
+      const rowId = "rowid" in ref ? ref.rowid : null;
+      beginStudioMutation(t, table, info);
       try {
         if (info.kind === "view") {
           await inTransaction(t, async () => {
@@ -1329,9 +1438,10 @@ export function createSqliteAdapter(identity: {
           await t.db.runAsync(sql, where.params);
         }
       } catch (error) {
-        t.pendingStudioWrites.delete(table);
+        abortStudioMutation(t, table, info);
         throw error;
       }
+      finishStudioMutation(t, table, info, "delete", rowId);
     },
 
     async deleteRows(instanceId, table, refs) {

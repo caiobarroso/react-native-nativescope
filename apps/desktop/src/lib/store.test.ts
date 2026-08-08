@@ -64,7 +64,7 @@ describe("applyDatabaseChange", () => {
   const instance = "app.db";
 
   beforeEach(() => {
-    useStudio.setState({ recentChanges: {}, activity: [], selection: null });
+    useStudio.setState({ recentChanges: {}, activity: [], selection: null, tables: {} });
   });
 
   function change(table: string, views?: string[]) {
@@ -80,6 +80,24 @@ describe("applyDatabaseChange", () => {
       ...(views !== undefined ? { views } : {}),
     });
   }
+
+  it("não renomeia o evento quando a mudança foi feita NA view", () => {
+    // Editar uma linha de `notes` chega com table="notes" e views=["pinned_notes"]
+    // (as que leem dela). Aplicar a regra da view única aqui trocaria o nome do
+    // que o dev editou pelo de uma view que ele talvez nem tenha aberto.
+    useStudio.getState().setTables(provider, instance, [
+      { name: "notes", columns: [], rowCount: 2, identity: "pk" as const, kind: "view" as const },
+      {
+        name: "pinned_notes",
+        columns: [],
+        rowCount: 1,
+        identity: "none" as const,
+        kind: "view" as const,
+      },
+    ]);
+    change("notes", ["pinned_notes"]);
+    expect(useStudio.getState().activity[0]?.key).toBe("notes");
+  });
 
   it("carimba a tabela alterada E as views que a leem", () => {
     change("ps_data__notes", ["notes", "pinned_notes"]);
