@@ -88,6 +88,20 @@ const COUNT_TTL_MS = 3000;
  * errado. Acima disso a contagem vira estimativa + COUNT(*) em background.
  */
 const EXACT_COUNT_ROW_BUDGET = 50_000;
+/**
+ * O mesmo para VIEW, e menor de propósito.
+ *
+ * Numa tabela o orçamento é medido por MAX(rowid), que é leitura de metadado.
+ * Numa view não existe limite superior barato: descobrir o tamanho custa
+ * materializar linha, e a view pode ser um JOIN de três tabelas. Então o
+ * probe é `SELECT COUNT(*) FROM (SELECT 1 FROM v LIMIT n+1)` — o LIMIT dentro
+ * da subconsulta é o que garante que o trabalho pára.
+ *
+ * Medido numa view de 200k linhas: 0,42 ms com teto 50k contra 0,016 ms com
+ * teto 1k. Num Android médio, com 20 views, a cada tables() depois de cada
+ * escrita, 50k é travada visível na sidebar — daí 5k.
+ */
+const VIEW_COUNT_ROW_BUDGET = 5_000;
 
 /** Identificadores SQL sempre entre aspas duplas, escapadas. */
 function quoteIdent(name: string): string {
@@ -552,6 +566,48 @@ export function createSqliteAdapter(identity: {
     return { total, exact: true };
   }
 
+  /** Dispara o COUNT(*) exato fora do caminho crítico e esquece a promise. */
+  function refreshCountInBackground(t: Tracked, table: string): void {
+    void t.db
+      .getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`)
+      .then((row) => rememberExactCount(t, table, Number(row[0]?.["n"] ?? 0)))
+      .catch(() => {});
+  }
+
+  /**
+   * Contagem de VIEW, com trabalho limitado por construção.
+   *
+   * Numa tabela dá para perguntar "isso é grande?" barato, via MAX(rowid).
+   * Numa view não dá: não há metadado nenhum, e um COUNT(*) pode ser a
+   * materialização de um JOIN inteiro — no caminho crítico da sidebar, a cada
+   * refresh, por view. O truque é o LIMIT DENTRO da subconsulta: o SQLite pára
+   * de produzir linha ao atingir o teto, então o pior caso é o orçamento, não
+   * o tamanho da view.
+   *
+   * Abaixo do teto a contagem é exata e ninguém vê "≈"; acima vira estimativa
+   * e o COUNT(*) real vai para background, exatamente como no caminho de
+   * tabela grande.
+   */
+  async function viewCount(t: Tracked, view: string): Promise<{ total: number; exact: boolean }> {
+    const probe = await t.db.getAllAsync(
+      `SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${quoteIdent(view)} LIMIT ${VIEW_COUNT_ROW_BUDGET + 1})`,
+    );
+    const seen = Number(probe[0]?.["n"] ?? 0);
+    if (seen <= VIEW_COUNT_ROW_BUDGET) {
+      rememberExactCount(t, view, seen);
+      return { total: seen, exact: true };
+    }
+
+    const estimate = t.lastExactCount.get(view) ?? VIEW_COUNT_ROW_BUDGET;
+    t.countCache.set(view, {
+      value: estimate,
+      exact: false,
+      expiresAt: Date.now() + COUNT_TTL_MS,
+    });
+    refreshCountInBackground(t, view);
+    return { total: estimate, exact: false };
+  }
+
   /**
    * Contagem em duas fases, mas só quando a tabela é grande de verdade.
    *
@@ -566,13 +622,16 @@ export function createSqliteAdapter(identity: {
   async function tableCount(
     t: Tracked,
     table: string,
-    identity: TableSchema["identity"],
+    info: Pick<TableInfo, "identity" | "kind">,
   ): Promise<{ total: number; exact: boolean }> {
     const cached = t.countCache.get(table);
     if (cached && cached.expiresAt > Date.now()) {
       return { total: cached.value, exact: cached.exact };
     }
-    if (identity !== "rowid") return exactCount(t, table);
+    if (info.kind === "view") return viewCount(t, table);
+    // Tabela física sem rowid (WITHOUT ROWID): o COUNT(*) varre um índice
+    // de verdade, então continua barato e continua exato.
+    if (info.identity !== "rowid") return exactCount(t, table);
 
     const maxRow = await t.db.getAllAsync(`SELECT MAX(rowid) AS m FROM ${quoteIdent(table)}`);
     const maxRowid = Number(maxRow[0]?.["m"] ?? 0);
@@ -587,10 +646,7 @@ export function createSqliteAdapter(identity: {
       exact: false,
       expiresAt: Date.now() + COUNT_TTL_MS,
     });
-    void t.db
-      .getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`)
-      .then((row) => rememberExactCount(t, table, Number(row[0]?.["n"] ?? 0)))
-      .catch(() => {});
+    refreshCountInBackground(t, table);
     return { total: estimate, exact: false };
   }
 
@@ -837,7 +893,7 @@ export function createSqliteAdapter(identity: {
           continue;
         }
 
-        const count = await tableCount(t, name, info.identity);
+        const count = await tableCount(t, name, info);
         const entry: TableSchema = {
           name,
           columns: info.columns,
@@ -861,7 +917,8 @@ export function createSqliteAdapter(identity: {
     async rows(instanceId, table, options) {
       const t = get(instanceId);
       const { db } = t;
-      const { identity, columnNames, pkColumns } = await tableInfo(t, table);
+      const info = await tableInfo(t, table);
+      const { identity, columnNames, pkColumns } = info;
 
       // orderBy validado contra as colunas reais — nunca interpolado cru.
       let orderClause = "";
@@ -897,7 +954,7 @@ export function createSqliteAdapter(identity: {
           options.offset,
         ]);
       }
-      const count = await tableCount(t, table, identity);
+      const count = await tableCount(t, table, info);
 
       const rows: Row[] = raw.map((record) => {
         const cells: Record<string, CellValue> = {};

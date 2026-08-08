@@ -104,6 +104,52 @@ describe("expo-sqlite adapter", () => {
     expect(byName["rowid_view"]?.identity).toBe("none");
   });
 
+  it("contagem de view pequena é exata e não mostra ≈", async () => {
+    const { adapter } = setup();
+    const byName = Object.fromEntries((await adapter.tables("app.db")).map((t) => [t.name, t]));
+    expect(byName["plain_view"]?.rowCount).toBe(2);
+    expect(byName["plain_view"]?.rowCountIsEstimate).toBe(false);
+  });
+
+  it("view acima do orçamento vira estimativa e o exato chega depois", async () => {
+    // O teto real é 5.000; aqui a subconsulta com LIMIT é observada pelo SQL
+    // emitido, que é o que garante que o trabalho pára — numa view de JOIN o
+    // COUNT(*) direto materializaria a junção inteira, no caminho crítico da
+    // sidebar, a cada refresh, por view.
+    const node = createNodeSqlite(`
+      CREATE TABLE big (id INTEGER PRIMARY KEY, v TEXT);
+      INSERT INTO big (v) SELECT 'x' FROM (
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 6000)
+        SELECT i FROM n
+      );
+      CREATE VIEW big_view AS SELECT id, v FROM big;
+    `);
+    const seen: string[] = [];
+    const db = {
+      getAllAsync: (sql: string, params?: unknown[]) => {
+        seen.push(sql.replace(/\s+/g, " ").trim());
+        return node.getAllAsync(sql, params);
+      },
+      runAsync: node.runAsync,
+    };
+    const adapter = createExpoSqliteAdapter();
+    adapter.registerDatabase("big.db", db);
+
+    const byName = Object.fromEntries((await adapter.tables("big.db")).map((t) => [t.name, t]));
+    expect(byName["big_view"]?.rowCountIsEstimate).toBe(true);
+
+    // O probe limita o trabalho dentro da subconsulta, não depois.
+    expect(seen).toContain(
+      "SELECT COUNT(*) AS n FROM (SELECT 1 FROM \"big_view\" LIMIT 5001)",
+    );
+
+    // O COUNT(*) real roda em background e a próxima leitura já é exata.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const after = Object.fromEntries((await adapter.tables("big.db")).map((t) => [t.name, t]));
+    expect(after["big_view"]?.rowCount).toBe(6000);
+    expect(after["big_view"]?.rowCountIsEstimate).toBe(false);
+  });
+
   it("view órfã aparece com o motivo em vez de derrubar a listagem inteira", async () => {
     const { adapter } = setup();
     const tables = await adapter.tables("app.db");
