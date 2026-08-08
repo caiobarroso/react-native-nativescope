@@ -65,6 +65,13 @@ export {
   type SqliteAdapter,
   type SQLiteDatabaseLike,
 } from "./adapters/sqlite-core.ts";
+export {
+  scanSqlTokens,
+  triggerOperation,
+  triggerOldColumns,
+  referencedNames,
+  type SqlToken,
+} from "./adapters/sqlite-sql.ts";
 export { createExpoSqliteAdapter, type ExpoSqliteAdapter } from "./adapters/expo-sqlite.ts";
 export {
   createOpSqliteAdapter,
