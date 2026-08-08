@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { withNativeScope, SHIM_DIR, SESSION_MODULE, CONFIG_MODULE, BOOT_MODULE, APP_DIR } =
@@ -76,12 +76,19 @@ describe("withNativeScope", () => {
   });
 
   it("resolve React do /app a partir do projeto consumidor", () => {
-    const reactEntry = require.resolve("react");
-    const projectRoot = dirname(dirname(reactEntry));
-    const wrapped = withNativeScope({}, { projectRoot });
-    const { context } = fakeContext({ originModulePath: join(APP_DIR, "index.cjs") });
-    const result = wrapped.resolver.resolveRequest(context, "react", "android");
-    expect(result.filePath).toBe(reactEntry);
+    const projectRoot = mkdtempSync(join(tmpdir(), "rnsi-react-project-"));
+    const reactDir = join(projectRoot, "node_modules", "react");
+    const reactEntry = join(reactDir, "index.js");
+    mkdirSync(reactDir, { recursive: true });
+    writeFileSync(reactEntry, "module.exports = {};\n");
+    try {
+      const wrapped = withNativeScope({}, { projectRoot });
+      const { context } = fakeContext({ originModulePath: join(APP_DIR, "index.cjs") });
+      const result = wrapped.resolver.resolveRequest(context, "react", "android");
+      expect(result.filePath).toBe(realpathSync(reactEntry));
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it("estende watchFolders com a raiz do pacote e nodeModulesPaths com o do projeto", () => {
