@@ -226,7 +226,10 @@ async function searchEverywhere(
                 providerLabel: provider.label,
                 instanceId: instance.instanceId,
                 name: table.name,
-                preview: `${table.rowCountIsEstimate ? `≈ ${table.rowCount}` : table.rowCount} rows · ${table.columns.map((c) => c.name).join(", ")}`,
+                // O marcador importa quando a busca acha a MESMA linha na
+                // view e na tabela física: sem ele os dois resultados parecem
+                // duplicata sem explicação.
+                preview: `${table.kind === "view" ? "view · " : ""}${table.rowCountIsEstimate ? `≈ ${table.rowCount}` : table.rowCount} rows · ${table.columns.map((c) => c.name).join(", ")}`,
               })),
           ),
         );

@@ -80,7 +80,7 @@ export const landing: LandingContent = {
     {
       icon: "Database",
       title: "A real SQLite client",
-      body: "Browse schema, edit rows inline, run arbitrary SQL against the live database on the device, and export a table without pulling it through memory.",
+      body: "Browse schema, edit rows inline, run arbitrary SQL against the live database on the device, and export a table without pulling it through memory. Views count as first-class objects — including the INSTEAD OF trigger schemas sync engines generate.",
     },
     {
       icon: "RefreshCw",
@@ -133,6 +133,11 @@ export default defineNativeScopeConfig({
       question: "Which storage libraries are supported?",
       answer:
         "AsyncStorage, MMKV (including multiple named instances, discovered automatically), expo-sqlite and op-sqlite — the two SQLite drivers can even be used side by side in one app. The adapter layer is generic, so more providers can be added without protocol changes.",
+    },
+    {
+      question: "Does it work if my app queries SQL views instead of tables?",
+      answer:
+        "Yes. Views are listed as first-class objects, grouped separately and labelled with the tables they read, and they are read, counted, searched and exported like tables. Where SQLite accepts writes — a view with the matching INSTEAD OF trigger — you can edit rows too, with the row key derived from the trigger itself and every write proved to match exactly one row before it runs. This is what makes the inspector usable on a sync engine's local database, where the tables your app queries are views over opaque JSON.",
     },
     {
       question: "What happens if a value is enormous?",

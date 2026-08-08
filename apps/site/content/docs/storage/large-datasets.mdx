@@ -45,6 +45,12 @@ never shows an approximation. Above it, an estimate renders instantly, prefixed 
 `COUNT(*)` lands from the background. You never wait on `COUNT(*)` over a hundred million rows to see
 a table, and you never read `~ 20026` off a table that holds fourteen rows.
 
+A **view** has no such upper bound to read — no metadata at all, and its `COUNT(*)` may materialize
+a whole `JOIN`. So the budget moves inside the query: the limit sits in the subquery, which caps the
+work by construction instead of measuring first. Below the budget the count is exact, above it the
+`~` and the background pass behave as they do for a large table. The details are in
+[SQL views](/docs/storage/sql-views).
+
 **BLOBs are read-only, and sized.** A binary column reads as `(blob, 7.8 KB)` — the real size, even
 though only the first 3 KB travel with the page. Double-click opens a hex/ASCII viewer that can stream
 the complete value and copy it as base64. There is no write path: the row grid never opens a text
@@ -75,6 +81,12 @@ its *truncate optimization* and discards pages instead of walking rows. In the s
 100,001 rows are removed in under a second, and the cost barely moves with row count. The eraser
 button in the table toolbar does this; it asks you to type the table name first, and it cannot be
 undone — there is no snapshot of a million rows to restore.
+
+**Neither is offered on a view**, and that is a deliberate refusal rather than a missing feature.
+The truncate optimization does not apply to a view, so the same `DELETE FROM` fires its
+`INSTEAD OF` trigger once per row — on a sync engine's database that means one queued upload per
+row, sent to a production server. [SQL views](/docs/storage/sql-views) explains what stays available
+instead.
 
 <Callout kind="note">
 Selecting rows only ever selects the rows loaded in the current window, never the whole table. When a

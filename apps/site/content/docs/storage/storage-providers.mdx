@@ -43,6 +43,11 @@ Every database your app opens becomes an instance. For each one you get the tabl
 counts, a schema view, an editable row grid, and a SQL console that runs arbitrary statements against
 the live database on the device.
 
+**Views are listed too**, grouped separately and named with what they read. They are read, counted,
+searched, exported and — when they have the `INSTEAD OF` triggers SQLite requires — edited, exactly
+like tables. That is what makes the inspector usable on a sync engine's local database, where the
+app's tables are views over opaque JSON. See [SQL views](/docs/storage/sql-views).
+
 Both providers share the same engine-agnostic implementation, so every feature is identical between
 them. Two differences are inherent to the drivers:
 

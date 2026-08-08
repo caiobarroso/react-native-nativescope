@@ -385,6 +385,13 @@ export const eventMessageSchema = z.discriminatedUnion("type", [
       source: changeSourceSchema,
       /** >1 quando o runtime fundiu uma rajada de mudanças na tabela. */
       coalescedCount: z.number().int().positive().optional(),
+      /**
+       * Views que leem `table`. UM evento enriquecido, não N eventos: emitir
+       * um por view dependente leria como dois fatos distintos na Timeline
+       * ("ps_data__todos updated" E "todos updated") sem forma de saber que
+       * são a mesma escrita.
+       */
+      views: z.array(z.string()).optional(),
     }),
   }),
   // Streaming chunked (plano de grandes volumes §B): valores grandes nunca

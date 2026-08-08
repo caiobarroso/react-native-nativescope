@@ -8,6 +8,7 @@ import {
   type Row,
 } from "@rnsi/protocol";
 import type { DatabaseAdapter, DatabaseChange } from "../adapter.ts";
+import { referencedNames, triggerOldColumns, triggerOperation } from "./sqlite-sql.ts";
 
 /**
  * Interface mínima de um banco SQLite. É o SEAM do módulo: qualquer engine que
@@ -87,6 +88,20 @@ const COUNT_TTL_MS = 3000;
  * errado. Acima disso a contagem vira estimativa + COUNT(*) em background.
  */
 const EXACT_COUNT_ROW_BUDGET = 50_000;
+/**
+ * O mesmo para VIEW, e menor de propósito.
+ *
+ * Numa tabela o orçamento é medido por MAX(rowid), que é leitura de metadado.
+ * Numa view não existe limite superior barato: descobrir o tamanho custa
+ * materializar linha, e a view pode ser um JOIN de três tabelas. Então o
+ * probe é `SELECT COUNT(*) FROM (SELECT 1 FROM v LIMIT n+1)` — o LIMIT dentro
+ * da subconsulta é o que garante que o trabalho pára.
+ *
+ * Medido numa view de 200k linhas: 0,42 ms com teto 50k contra 0,016 ms com
+ * teto 1k. Num Android médio, com 20 views, a cada tables() depois de cada
+ * escrita, 50k é travada visível na sidebar — daí 5k.
+ */
+const VIEW_COUNT_ROW_BUDGET = 5_000;
 
 /** Identificadores SQL sempre entre aspas duplas, escapadas. */
 function quoteIdent(name: string): string {
@@ -210,6 +225,8 @@ export function createSqliteAdapter(identity: {
      * uma estimativa muito melhor que MAX(rowid) — ver tableCount.
      */
     lastExactCount: Map<string, number>;
+    /** Ver loadCatalog. null = ainda não lido ou invalidado por DDL. */
+    catalog: Catalog | null;
   }
 
   const tracked = new Map<string, Tracked>();
@@ -221,8 +238,32 @@ export function createSqliteAdapter(identity: {
     return t;
   }
 
+  /**
+   * Teto de nomes por evento. Um schema patológico (uma tabela lida por
+   * dezenas de views) não pode inflar o fio; acima disso a UI já não teria o
+   * que fazer com a lista de qualquer forma.
+   */
+  const MAX_DEPENDENT_VIEWS = 32;
+
+  /**
+   * Anexa as views que leem a tabela alterada.
+   *
+   * Aplicado DENTRO do emit de propósito: hook nativo, fallback JS, eco do
+   * Studio, exclusão em lote e esvaziamento passam todos por aqui, então
+   * nenhum caminho — nem um futuro — consegue esquecer a atribuição.
+   *
+   * Só usa catálogo já carregado: o emit é síncrono e está no caminho quente
+   * de um evento do banco. Sem catálogo, o evento sai sem views e o Studio se
+   * comporta como antes — nada quebra, só fica menos preciso até a próxima
+   * listagem, que é quando o catálogo chega.
+   */
   function emit(t: Tracked, change: DatabaseChange): void {
-    for (const listener of t.listeners) listener(change);
+    const dependents = t.catalog?.dependents.get(change.table);
+    const enriched: DatabaseChange =
+      dependents && dependents.length > 0
+        ? { ...change, views: dependents.slice(0, MAX_DEPENDENT_VIEWS) }
+        : change;
+    for (const listener of t.listeners) listener(enriched);
   }
 
   function recentKeys(table: string, rowId: number | null): string[] {
@@ -265,37 +306,261 @@ export function createSqliteAdapter(identity: {
     return false;
   }
 
-  /** Mutação vinda do Studio: marca pendente; se não há hook nativo, emite direto. */
-  function markStudioMutation(
-    t: Tracked,
-    table: string,
-    operation: DatabaseChange["operation"],
-    rowId: number | null,
-  ): void {
+  /**
+   * Mutação do Studio, antes de tocar o banco.
+   *
+   * Em TABELA vale o eco: marcamos pendente e o evento que o hook devolver com
+   * o mesmo nome é reatribuído ao studio.
+   *
+   * Em VIEW o eco é o mecanismo errado, e não por descuido — por construção. O
+   * `sqlite3_update_hook` é a nível de VDBE: ele nunca nomeia a view, nomeia as
+   * tabelas FÍSICAS que os triggers INSTEAD OF escreveram. Editar uma linha de
+   * `notes` produzia `ps_data__notes updated (app)` e `ps_crud inserted (app)`
+   * — a edição do próprio usuário chegando como se o app tivesse feito — e no
+   * expo somava ainda o evento da view, três entradas para uma edição.
+   *
+   * Então em view fazemos o que o caminho de lote já fazia pelo mesmo motivo:
+   * silenciamos o footprint de escrita e emitimos UM evento autoritativo
+   * depois, em finishStudioMutation. Custo aceito: uma escrita do app numa
+   * dessas tabelas dentro da janela some da timeline (os dados não — a UI
+   * reconsulta a cada evento).
+   */
+  function beginStudioMutation(t: Tracked, table: string, info: TableInfo): void {
     invalidateCount(t, table);
-    if (t.hasChangeListener) {
-      t.pendingStudioWrites.set(table, Date.now() + ECHO_TTL_MS);
-    } else {
-      emit(t, { table, rowId, operation, source: "studio" });
+    if (info.kind !== "view") {
+      if (t.hasChangeListener) t.pendingStudioWrites.set(table, Date.now() + ECHO_TTL_MS);
+      return;
+    }
+    // A própria view também entra: no expo o shim instrumenta o runAsync e
+    // notificaria a view pelo nome, duplicando o nosso evento.
+    suppressTableEvents(t, table, ECHO_TTL_MS);
+    for (const name of info.touches) {
+      invalidateCount(t, name);
+      suppressTableEvents(t, name, ECHO_TTL_MS);
     }
   }
 
-  async function tableIdentity(db: SQLiteDatabaseLike, table: string): Promise<TableSchema["identity"]> {
+  /**
+   * A escrita passou. Só agora sai evento.
+   *
+   * Emitir antes era o padrão para tabela sem hook, e produzia evento fantasma
+   * sempre que a escrita falhava depois — uma constraint violada, ou o
+   * preflight de view recusando uma referência ambígua: o Studio anunciava uma
+   * mudança que o banco nunca teve.
+   */
+  function finishStudioMutation(
+    t: Tracked,
+    table: string,
+    info: TableInfo,
+    operation: DatabaseChange["operation"],
+    rowId: number | null,
+  ): void {
+    if (info.kind === "view") {
+      // Renova a janela curta para o que o hook ainda entregar em atraso.
+      for (const name of [table, ...info.touches]) {
+        suppressTableEvents(t, name, RECENT_EVENT_TTL_MS);
+      }
+      // `emit` direto, não `emitOnce`: este é o evento autoritativo e não pode
+      // ser suprimido pela chave que nós mesmos acabamos de registrar.
+      emit(t, { table, rowId: null, operation, source: "studio" });
+      return;
+    }
+    if (!t.hasChangeListener) emit(t, { table, rowId, operation, source: "studio" });
+  }
+
+  /** A escrita falhou: nada mudou, nada é emitido, nada fica silenciado. */
+  function abortStudioMutation(t: Tracked, table: string, info: TableInfo): void {
+    t.pendingStudioWrites.delete(table);
+    if (info.kind !== "view") return;
+    for (const name of [table, ...info.touches]) releaseTableEvents(t, name);
+  }
+
+  interface Catalog {
+    /** Tabelas e views, na ordem em que o sqlite_master devolveu (por nome). */
+    objects: Map<string, { kind: "table" | "view"; sql: string }>;
+    /** tbl_name → SQL de cada trigger que aponta para ele. */
+    triggersByTable: Map<string, string[]>;
+    /** Objeto → views que leem dele, transitivamente. Alimenta a atribuição. */
+    dependents: Map<string, string[]>;
+  }
+
+  const NO_WRITES = { insert: false, update: false, delete: false } as const;
+  const ALL_WRITES = { insert: true, update: true, delete: true } as const;
+
+  /**
+   * Uma leitura do sqlite_master responde três perguntas de uma vez: quais
+   * objetos existem e de que tipo, o SQL de cada view (de onde saem as
+   * dependências) e o SQL de cada trigger (de onde saem gravabilidade e
+   * chave). Antes disso a listagem e a busca faziam a mesma query separada,
+   * cada uma cravando `type = 'table'`.
+   */
+  async function loadCatalog(t: Tracked): Promise<Catalog> {
+    if (t.catalog) return t.catalog;
+    const rows = await t.db.getAllAsync(
+      `SELECT type, name, tbl_name, sql FROM sqlite_master
+        WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%'
+        ORDER BY name`,
+    );
+
+    const objects = new Map<string, { kind: "table" | "view"; sql: string }>();
+    const triggersByTable = new Map<string, string[]>();
+    for (const row of rows) {
+      const type = String(row["type"]);
+      const sql = String(row["sql"] ?? "");
+      if (type === "trigger") {
+        const target = String(row["tbl_name"] ?? "");
+        if (target.length === 0) continue;
+        const existing = triggersByTable.get(target);
+        if (existing) existing.push(sql);
+        else triggersByTable.set(target, [sql]);
+        continue;
+      }
+      objects.set(String(row["name"]), { kind: type === "view" ? "view" : "table", sql });
+    }
+
+    const catalog: Catalog = { objects, triggersByTable, dependents: new Map() };
+    for (const [name, object] of objects) {
+      if (object.kind !== "view") continue;
+      for (const base of viewDependencies(catalog, name)) {
+        const existing = catalog.dependents.get(base);
+        if (existing) {
+          if (!existing.includes(name)) existing.push(name);
+        } else catalog.dependents.set(base, [name]);
+      }
+    }
+
+    t.catalog = catalog;
+    return catalog;
+  }
+
+  /** Objetos que a view lê diretamente. A própria view sai — ela aparece no CREATE. */
+  function directDependencies(catalog: Catalog, name: string): string[] {
+    const object = catalog.objects.get(name);
+    if (!object || object.kind !== "view") return [];
+    return referencedNames(object.sql, catalog.objects.keys()).filter((other) => other !== name);
+  }
+
+  /**
+   * Fecho transitivo: uma view sobre view depende também das tabelas da de
+   * baixo, senão uma escrita na base não marcaria a de cima. `seen` também
+   * protege de view auto-referente, que é criável e faria loop.
+   *
+   * Ordenado por nome — a saída vai para a UI e para teste, então precisa ser
+   * determinística, e a ordem não carrega significado.
+   */
+  function viewDependencies(catalog: Catalog, view: string): string[] {
+    const found: string[] = [];
+    const seen = new Set<string>([view]);
+    const queue = directDependencies(catalog, view);
+    while (queue.length > 0) {
+      const name = queue.shift() as string;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      found.push(name);
+      for (const next of directDependencies(catalog, name)) {
+        if (!seen.has(next)) queue.push(next);
+      }
+    }
+    return found.sort();
+  }
+
+  /**
+   * O SQLite recusa DML numa view que não tenha o trigger INSTEAD OF
+   * correspondente — e uma view pode ter só o de INSERT. Por isso a
+   * gravabilidade é por operação: um booleano faria a UI oferecer edição que
+   * sempre termina em "cannot modify x because it is a view".
+   */
+  function viewWritability(catalog: Catalog, view: string): TableInfo["writable"] {
+    const writable = { insert: false, update: false, delete: false };
+    for (const sql of catalog.triggersByTable.get(view) ?? []) {
+      const operation = triggerOperation(sql);
+      if (operation !== null) writable[operation] = true;
+    }
+    return writable;
+  }
+
+  /**
+   * Os nomes que uma escrita NESTA view pode alcançar.
+   *
+   * O que ela lê é onde o UPDATE/DELETE do trigger vai cair. Mas o trigger
+   * pode ir além disso: num motor de sync ele também enfileira numa tabela de
+   * upload que a view nunca lê. Os dois entram, porque o hook nativo vai
+   * disparar nos dois e é por este conjunto que sabemos que fomos nós.
+   */
+  function viewWriteFootprint(catalog: Catalog, view: string, dependsOn: string[]): string[] {
+    const names = new Set(dependsOn);
+    for (const sql of catalog.triggersByTable.get(view) ?? []) {
+      for (const name of referencedNames(sql, catalog.objects.keys())) names.add(name);
+    }
+    names.delete(view);
+    return [...names].sort();
+  }
+
+  /**
+   * A chave de uma linha de view, lida do `OLD.*` dos triggers.
+   *
+   * É a declaração do próprio autor sobre o que identifica um registro, no
+   * único lugar em que o SQLite permite declará-la: dentro do INSTEAD OF,
+   * `OLD` é a linha que estava lá, e o que o trigger usa dela para achar o
+   * registro na tabela-base é, por definição, a identidade.
+   *
+   * Descartados (e o motivo, porque cada um parece razoável de longe):
+   *  - "primeira coluna chamada id" — mágico, e erra calado num
+   *    `SELECT u.id, o.id FROM users u JOIN orders o`;
+   *  - a linha inteira como chave — `toParam` lança em BLOB, e uma célula que
+   *    veio truncada no preview nunca casaria no WHERE;
+   *  - `PRAGMA index_list` da tabela-base — só serve para view trivialmente
+   *    derivada, e não diz nada sobre uma view de `json_extract`.
+   *
+   * Super-aproximar aqui é seguro: coluna a mais só deixa o WHERE mais
+   * seletivo, e o preflight recusa se ainda assim ficar ambíguo.
+   */
+  function viewKeyColumns(catalog: Catalog, view: string, columnNames: string[]): string[] {
+    const byOperation = new Map<string, string>();
+    for (const sql of catalog.triggersByTable.get(view) ?? []) {
+      const operation = triggerOperation(sql);
+      if (operation !== null && !byOperation.has(operation)) byOperation.set(operation, sql);
+    }
+    // UPDATE primeiro: é o trigger que precisa achar a linha E reescrevê-la,
+    // então é o que declara a chave de forma mais completa.
+    const source = byOperation.get("update") ?? byOperation.get("delete");
+    if (source === undefined) return [];
+
+    const canonical = new Map(columnNames.map((name) => [name.toLowerCase(), name]));
+    const keys: string[] = [];
+    for (const column of triggerOldColumns(source)) {
+      const match = canonical.get(column.toLowerCase());
+      if (match !== undefined && !keys.includes(match)) keys.push(match);
+    }
+    return keys;
+  }
+
+  async function tableIdentity(
+    db: SQLiteDatabaseLike,
+    table: string,
+    columns: Array<Record<string, unknown>>,
+  ): Promise<TableSchema["identity"]> {
     try {
       await db.getAllAsync(`SELECT rowid FROM ${quoteIdent(table)} LIMIT 1`);
       return "rowid";
     } catch {
-      /* WITHOUT ROWID ou view */
+      /* WITHOUT ROWID */
     }
-    const columns = await db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
     return columns.some((c) => Number(c["pk"]) > 0) ? "pk" : "none";
   }
 
   interface TableInfo {
+    kind: "table" | "view";
     identity: TableSchema["identity"];
     columnNames: string[];
     pkColumns: string[];
     columns: TableSchema["columns"];
+    writable: { insert: boolean; update: boolean; delete: boolean };
+    dependsOn: string[];
+    /** Ver viewWriteFootprint. Vazio em tabela — ela escreve em si mesma. */
+    touches: string[];
+    /** Mensagem do SQLite quando nem o PRAGMA respondeu (view órfã). */
+    unavailable: string | null;
   }
 
   /**
@@ -307,22 +572,82 @@ export function createSqliteAdapter(identity: {
   async function tableInfo(t: Tracked, table: string): Promise<TableInfo> {
     const cached = t.schemaCache.get(table);
     if (cached) return cached;
-    const identity = await tableIdentity(t.db, table);
-    const columns = await t.db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
-    const info: TableInfo = {
-      identity,
-      columnNames: columns.map((c) => String(c["name"])),
-      pkColumns: columns
-        .filter((c) => Number(c["pk"]) > 0)
-        .sort((a, b) => Number(a["pk"]) - Number(b["pk"]))
-        .map((c) => String(c["name"])),
-      columns: columns.map((c) => ({
-        name: String(c["name"]),
-        declaredType: String(c["type"] ?? ""),
-        notNull: Number(c["notnull"]) === 1,
-        pkIndex: Number(c["pk"]),
-      })),
-    };
+
+    const catalog = await loadCatalog(t);
+    // O tipo vem do catálogo, NUNCA do probe de rowid: numa
+    // `CREATE VIEW v AS SELECT rowid, … FROM t` o probe passa, e daí sairia
+    // identity "rowid" numa view — com `DELETE … WHERE rowid IN (…)` quebrando
+    // na cara do usuário.
+    const kind = catalog.objects.get(table)?.kind ?? "table";
+
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = await t.db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
+    } catch (error) {
+      // View sobre tabela que sumiu — normal no meio de uma migração. Sem
+      // isto, uma view órfã derruba a listagem inteira e a sidebar fica em
+      // branco em vez de mostrar uma linha com problema.
+      const info: TableInfo = {
+        kind,
+        identity: "none",
+        columnNames: [],
+        pkColumns: [],
+        columns: [],
+        writable: { ...NO_WRITES },
+        dependsOn: kind === "view" ? viewDependencies(catalog, table) : [],
+        touches: [],
+        unavailable: error instanceof Error ? error.message : String(error),
+      };
+      t.schemaCache.set(table, info);
+      return info;
+    }
+
+    const columnNames = raw.map((c) => String(c["name"]));
+    const columns: TableSchema["columns"] = raw.map((c) => ({
+      name: String(c["name"]),
+      declaredType: String(c["type"] ?? ""),
+      notNull: Number(c["notnull"]) === 1,
+      pkIndex: Number(c["pk"]),
+    }));
+
+    let info: TableInfo;
+    if (kind === "view") {
+      const keyColumns = viewKeyColumns(catalog, table, columnNames);
+      const dependsOn = viewDependencies(catalog, table);
+      info = {
+        kind,
+        identity: keyColumns.length > 0 ? "pk" : "none",
+        columnNames,
+        pkColumns: keyColumns,
+        // pkIndex preenchido dá de brinde os templates do console SQL, que
+        // escolhem a primeira coluna com pkIndex > 0 e hoje caem em `rowid` —
+        // que não existe em view.
+        columns: columns.map((column) => {
+          const position = keyColumns.indexOf(column.name);
+          return position === -1 ? column : { ...column, pkIndex: position + 1 };
+        }),
+        writable: viewWritability(catalog, table),
+        dependsOn,
+        touches: viewWriteFootprint(catalog, table, dependsOn),
+        unavailable: null,
+      };
+    } else {
+      info = {
+        kind,
+        identity: await tableIdentity(t.db, table, raw),
+        columnNames,
+        pkColumns: raw
+          .filter((c) => Number(c["pk"]) > 0)
+          .sort((a, b) => Number(a["pk"]) - Number(b["pk"]))
+          .map((c) => String(c["name"])),
+        columns,
+        writable: { ...ALL_WRITES },
+        dependsOn: [],
+        touches: [],
+        unavailable: null,
+      };
+    }
+
     t.schemaCache.set(table, info);
     return info;
   }
@@ -342,6 +667,48 @@ export function createSqliteAdapter(identity: {
     return { total, exact: true };
   }
 
+  /** Dispara o COUNT(*) exato fora do caminho crítico e esquece a promise. */
+  function refreshCountInBackground(t: Tracked, table: string): void {
+    void t.db
+      .getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`)
+      .then((row) => rememberExactCount(t, table, Number(row[0]?.["n"] ?? 0)))
+      .catch(() => {});
+  }
+
+  /**
+   * Contagem de VIEW, com trabalho limitado por construção.
+   *
+   * Numa tabela dá para perguntar "isso é grande?" barato, via MAX(rowid).
+   * Numa view não dá: não há metadado nenhum, e um COUNT(*) pode ser a
+   * materialização de um JOIN inteiro — no caminho crítico da sidebar, a cada
+   * refresh, por view. O truque é o LIMIT DENTRO da subconsulta: o SQLite pára
+   * de produzir linha ao atingir o teto, então o pior caso é o orçamento, não
+   * o tamanho da view.
+   *
+   * Abaixo do teto a contagem é exata e ninguém vê "≈"; acima vira estimativa
+   * e o COUNT(*) real vai para background, exatamente como no caminho de
+   * tabela grande.
+   */
+  async function viewCount(t: Tracked, view: string): Promise<{ total: number; exact: boolean }> {
+    const probe = await t.db.getAllAsync(
+      `SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${quoteIdent(view)} LIMIT ${VIEW_COUNT_ROW_BUDGET + 1})`,
+    );
+    const seen = Number(probe[0]?.["n"] ?? 0);
+    if (seen <= VIEW_COUNT_ROW_BUDGET) {
+      rememberExactCount(t, view, seen);
+      return { total: seen, exact: true };
+    }
+
+    const estimate = t.lastExactCount.get(view) ?? VIEW_COUNT_ROW_BUDGET;
+    t.countCache.set(view, {
+      value: estimate,
+      exact: false,
+      expiresAt: Date.now() + COUNT_TTL_MS,
+    });
+    refreshCountInBackground(t, view);
+    return { total: estimate, exact: false };
+  }
+
   /**
    * Contagem em duas fases, mas só quando a tabela é grande de verdade.
    *
@@ -356,13 +723,16 @@ export function createSqliteAdapter(identity: {
   async function tableCount(
     t: Tracked,
     table: string,
-    identity: TableSchema["identity"],
+    info: Pick<TableInfo, "identity" | "kind">,
   ): Promise<{ total: number; exact: boolean }> {
     const cached = t.countCache.get(table);
     if (cached && cached.expiresAt > Date.now()) {
       return { total: cached.value, exact: cached.exact };
     }
-    if (identity !== "rowid") return exactCount(t, table);
+    if (info.kind === "view") return viewCount(t, table);
+    // Tabela física sem rowid (WITHOUT ROWID): o COUNT(*) varre um índice
+    // de verdade, então continua barato e continua exato.
+    if (info.identity !== "rowid") return exactCount(t, table);
 
     const maxRow = await t.db.getAllAsync(`SELECT MAX(rowid) AS m FROM ${quoteIdent(table)}`);
     const maxRowid = Number(maxRow[0]?.["m"] ?? 0);
@@ -377,17 +747,26 @@ export function createSqliteAdapter(identity: {
       exact: false,
       expiresAt: Date.now() + COUNT_TTL_MS,
     });
-    void t.db
-      .getAllAsync(`SELECT COUNT(*) AS n FROM ${quoteIdent(table)}`)
-      .then((row) => rememberExactCount(t, table, Number(row[0]?.["n"] ?? 0)))
-      .catch(() => {});
+    refreshCountInBackground(t, table);
     return { total: estimate, exact: false };
   }
 
-  /** Mudança na tabela: a contagem cacheada deixou de valer. */
+  /**
+   * Mudança na tabela: a contagem cacheada deixou de valer — a dela e a de quem
+   * a lê.
+   *
+   * Uma view não tem contagem própria: a dela é derivada. Sem invalidar os
+   * dependentes, uma inserção em `ps_data__notes` deixava a view `notes` com o
+   * número velho por até COUNT_TTL_MS — e o número na sidebar é justamente
+   * como se confere que a escrita pegou.
+   */
   function invalidateCount(t: Tracked, table: string): void {
-    if (table === "*") t.countCache.clear();
-    else t.countCache.delete(table);
+    if (table === "*") {
+      t.countCache.clear();
+      return;
+    }
+    t.countCache.delete(table);
+    for (const view of t.catalog?.dependents.get(table) ?? []) t.countCache.delete(view);
   }
 
   /**
@@ -425,7 +804,7 @@ export function createSqliteAdapter(identity: {
    * deixaria a exclusão pela metade — que é exatamente o que acontecia quando o
    * Studio apagava linha a linha.
    */
-  async function runInTransaction(t: Tracked, statements: BulkStatement[]): Promise<number> {
+  async function inTransaction<T>(t: Tracked, run: () => Promise<T>): Promise<T> {
     let owned = false;
     try {
       await t.db.runAsync("BEGIN IMMEDIATE");
@@ -434,13 +813,10 @@ export function createSqliteAdapter(identity: {
       // Já estamos dentro de uma transação (do app, ou de um ORM): seguimos sem
       // abrir a nossa, e a atomicidade fica sendo a de quem abriu.
     }
-    let affected = 0;
     try {
-      for (const statement of statements) {
-        const result = await t.db.runAsync(statement.sql, statement.params);
-        affected += Number(result.changes ?? 0);
-      }
+      const result = await run();
       if (owned) await t.db.runAsync("COMMIT");
+      return result;
     } catch (error) {
       if (owned) {
         try {
@@ -451,7 +827,69 @@ export function createSqliteAdapter(identity: {
       }
       throw error;
     }
-    return affected;
+  }
+
+  async function runInTransaction(t: Tracked, statements: BulkStatement[]): Promise<number> {
+    return inTransaction(t, async () => {
+      let affected = 0;
+      for (const statement of statements) {
+        const result = await t.db.runAsync(statement.sql, statement.params);
+        affected += Number(result.changes ?? 0);
+      }
+      return affected;
+    });
+  }
+
+  /**
+   * Prova, ANTES de escrever, que a referência seleciona exatamente uma linha
+   * da view.
+   *
+   * Verificação a posteriori é impossível aqui: numa view com trigger
+   * INSTEAD OF o `changes` do UPDATE/DELETE externo é sempre 0 — o statement
+   * de fora não altera linha nenhuma, quem altera é o trigger, e o contador
+   * não atravessa. Então não dá para escrever e conferir depois. A garantia
+   * tem que vir antes, e acaba sendo mais forte: provado que o WHERE casa uma
+   * linha só, o trigger dispara uma vez com o OLD/NEW certo, faça ele o que
+   * fizer nas tabelas-base.
+   *
+   * `LIMIT 2` porque a pergunta é "é uma ou é mais de uma" — contar o resto
+   * seria trabalho jogado fora.
+   *
+   * Roda dentro da transação de quem chama, senão outra escrita poderia entrar
+   * entre a prova e o uso.
+   */
+  async function assertSingleRow(
+    t: Tracked,
+    table: string,
+    where: { clause: string; params: Array<string | number | null> },
+  ): Promise<void> {
+    const probe = await t.db.getAllAsync(
+      `SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${quoteIdent(table)} WHERE ${where.clause} LIMIT 2)`,
+      where.params,
+    );
+    const matched = Number(probe[0]?.["n"] ?? 0);
+    if (matched === 1) return;
+    throw new Error(
+      matched === 0
+        ? `row no longer matches this reference in "${table}"`
+        : `reference matches more than one row in "${table}"`,
+    );
+  }
+
+  /**
+   * O SQLite recusa DML numa view sem o trigger INSTEAD OF correspondente,
+   * com "cannot modify x because it is a view". Recusar antes, nomeando o que
+   * falta, troca esse erro opaco por um que diz o que fazer.
+   */
+  function assertWritable(
+    info: TableInfo,
+    table: string,
+    operation: "insert" | "update" | "delete",
+  ): void {
+    if (info.kind !== "view" || info.writable[operation]) return;
+    throw new Error(
+      `view "${table}" has no INSTEAD OF ${operation.toUpperCase()} trigger, so SQLite cannot apply this change`,
+    );
   }
 
   /** `DELETE ... WHERE rowid IN (…)`, em blocos que respeitam o teto de variáveis. */
@@ -506,12 +944,32 @@ export function createSqliteAdapter(identity: {
     return statements;
   }
 
+  /**
+   * Uma ref posicional aponta para "a n-ésima linha desta ordenação", e isso
+   * deixa de valer no instante em que o dado ao redor muda. Serve para LER uma
+   * célula grande agora; usar para escrever significaria mirar numa linha e
+   * acertar outra.
+   */
+  function rejectScanRef(ref: RowRef): asserts ref is Exclude<RowRef, { scan: unknown }> {
+    if ("scan" in ref) {
+      throw new Error("positional reference cannot be used for writes");
+    }
+  }
+
   function refToWhere(ref: RowRef): { clause: string; params: Array<string | number | null> } {
+    rejectScanRef(ref);
     if ("rowid" in ref) return { clause: "rowid = ?", params: [ref.rowid] };
     const columns = Object.keys(ref.pk);
     if (columns.length === 0) throw new Error("primary-key reference is empty");
     return {
-      clause: columns.map((c) => `${quoteIdent(c)} = ?`).join(" AND "),
+      // `IS ?` e não `= ?`: com parâmetro NULL a igualdade não casa NADA, e a
+      // linha fica ineditável e inapagável.
+      //
+      // Numa tabela isso é inalcançável (WITHOUT ROWID exige PK NOT NULL), mas
+      // numa view a chave sai de expressão — `json_extract` de campo ausente
+      // devolve NULL — e aí o caso é rotineiro. `IS` casa NULL e valor normal
+      // com o mesmo plano de índice, então não há o que pesar.
+      clause: columns.map((c) => `${quoteIdent(c)} IS ?`).join(" AND "),
       params: columns.map((c) => toParam(ref.pk[c] ?? null)),
     };
   }
@@ -539,6 +997,7 @@ export function createSqliteAdapter(identity: {
         schemaCache: new Map(),
         countCache: new Map(),
         lastExactCount: new Map(),
+        catalog: null,
       });
       for (const listener of registrationListeners) listener();
     },
@@ -567,33 +1026,85 @@ export function createSqliteAdapter(identity: {
     notifySchemaChanged(instanceId, table) {
       const t = tracked.get(instanceId);
       if (!t) return;
-      // DDL do app (CREATE/DROP/ALTER): invalida só a tabela afetada. A
-      // contagem cai junto — depois de um DROP/CREATE do mesmo nome, o que
-      // sabíamos sobre o tamanho da tabela não vale mais nada.
-      t.schemaCache.delete(table);
-      invalidateCount(t, table);
-      t.lastExactCount.delete(table);
+      // Quem lê quem, LIDO ANTES de derrubar o catálogo — é ele que sabe.
+      const dependents = t.catalog?.dependents.get(table) ?? [];
+      const known = t.catalog?.objects.has(table) ?? false;
+
+      // O catálogo cai INTEIRO em qualquer DDL: é uma query só para
+      // reconstruir, DDL é raro, e um CREATE/DROP VIEW muda o grafo de
+      // dependências de objetos que não são o alvo nomeado.
+      t.catalog = null;
+
+      // Dois casos em que não dá para escopar, e aí limpar tudo é a única
+      // resposta correta:
+      //
+      // "*" — DDL que o shim não soube nomear. (`delete("*")` era no-op: só
+      // invalidateCount tratava o coringa.)
+      //
+      // Nome que não é objeto conhecido — CREATE/DROP TRIGGER nomeia o
+      // TRIGGER, não a view em que ele está. Um trigger novo muda a
+      // gravabilidade da view, e escopar por esse nome invalidava um objeto
+      // que não existe enquanto a view seguia com `writable` congelado (o
+      // schemaCache não tem TTL: seria até o app reiniciar).
+      if (table === "*" || !known) {
+        t.schemaCache.clear();
+        t.lastExactCount.clear();
+        t.countCache.clear();
+        return;
+      }
+
+      // A tabela e as views que a leem. Sem os dependentes, um DROP da base
+      // deixava a view em cache marcada como disponível para sempre, com as
+      // colunas de antes.
+      for (const name of [table, ...dependents]) {
+        t.schemaCache.delete(name);
+        t.lastExactCount.delete(name);
+        t.countCache.delete(name);
+      }
     },
 
     async tables(instanceId) {
       const t = get(instanceId);
-      const names = await t.db.getAllAsync(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
-      );
+      const catalog = await loadCatalog(t);
       const result: TableSchema[] = [];
-      for (const row of names) {
-        const name = String(row["name"]);
+
+      // Tabelas e views vêm intercaladas por nome. Agrupar é apresentação e
+      // mora no Studio — o adapter não escolhe ordem de exibição.
+      for (const [name, object] of catalog.objects) {
         // Colunas e identidade vêm do cache; contagem em duas fases — o
         // refresh de schema não custa um COUNT(*) full-scan por tabela.
         const info = await tableInfo(t, name);
-        const count = await tableCount(t, name, info.identity);
-        result.push({
+
+        if (info.unavailable !== null) {
+          result.push({
+            name,
+            columns: [],
+            rowCount: 0,
+            identity: "none",
+            kind: object.kind,
+            writable: { ...NO_WRITES },
+            unavailable: info.unavailable,
+          });
+          continue;
+        }
+
+        const count = await tableCount(t, name, info);
+        const entry: TableSchema = {
           name,
           columns: info.columns,
           rowCount: count.total,
           rowCountIsEstimate: !count.exact,
           identity: info.identity,
-        });
+        };
+        // `kind` e `writable` só saem para view: ausente já significa tabela
+        // física com tudo permitido, e não trafegar o óbvio mantém o payload
+        // do refresh igual ao de hoje em app que não usa view.
+        if (object.kind === "view") {
+          entry.kind = "view";
+          entry.writable = info.writable;
+          if (info.dependsOn.length > 0) entry.dependsOn = info.dependsOn;
+        }
+        result.push(entry);
       }
       return result;
     },
@@ -601,7 +1112,8 @@ export function createSqliteAdapter(identity: {
     async rows(instanceId, table, options) {
       const t = get(instanceId);
       const { db } = t;
-      const { identity, columnNames, pkColumns } = await tableInfo(t, table);
+      const info = await tableInfo(t, table);
+      const { identity, columnNames, pkColumns } = info;
 
       // orderBy validado contra as colunas reais — nunca interpolado cru.
       let orderClause = "";
@@ -637,7 +1149,7 @@ export function createSqliteAdapter(identity: {
           options.offset,
         ]);
       }
-      const count = await tableCount(t, table, identity);
+      const count = await tableCount(t, table, info);
 
       const rows: Row[] = raw.map((record) => {
         const cells: Record<string, CellValue> = {};
@@ -668,9 +1180,19 @@ export function createSqliteAdapter(identity: {
         if (identity === "rowid" && rowid !== null) {
           ref = { rowid };
         } else if (identity === "pk") {
-          const pk: Record<string, CellValue> = {};
-          for (const column of pkColumns) pk[column] = cells[column] ?? null;
-          ref = { pk };
+          // Uma chave que veio cortada no preview, ou que é BLOB, não serve de
+          // referência: o WHERE montado com ela casaria zero linhas. Devolver
+          // `null` faz o Studio dizer "sem referência estável", que é honesto
+          // — devolver a ref daria uma recusa confusa na hora de escrever.
+          const usable = pkColumns.every((column) => {
+            const value = cells[column];
+            return !truncatedColumns.includes(column) && (value === null || typeof value !== "object");
+          });
+          if (usable) {
+            const pk: Record<string, CellValue> = {};
+            for (const column of pkColumns) pk[column] = cells[column] ?? null;
+            ref = { pk };
+          }
         }
         return truncatedColumns.length > 0 ? { ref, cells, truncatedColumns } : { ref, cells };
       });
@@ -684,11 +1206,33 @@ export function createSqliteAdapter(identity: {
       if (!columnNames.includes(column)) {
         throw new Error(`unknown column: ${column}`);
       }
-      const where = refToWhere(ref);
-      const raw = await t.db.getAllAsync(
-        `SELECT ${quoteIdent(column)} AS v FROM ${quoteIdent(table)} WHERE ${where.clause} LIMIT 1`,
-        where.params,
-      );
+      // Leitura aceita ref posicional; escrita não. Um objeto sem identidade
+      // (view só-leitura, tabela sem rowid nem PK) não tem como endereçar uma
+      // linha — mas a POSIÇÃO numa ordenação conhecida basta para buscar o
+      // conteúdo de uma célula agora, que é a única coisa que faltava ali.
+      let raw: Array<Record<string, unknown>>;
+      if ("scan" in ref) {
+        const { offset, orderBy, direction } = ref.scan;
+        // Mesma validação do rows(): a coluna vem do fio e nunca é
+        // interpolada sem passar pelas colunas reais.
+        if (orderBy !== undefined && !columnNames.includes(orderBy)) {
+          throw new Error(`unknown column: ${orderBy}`);
+        }
+        const orderClause =
+          orderBy !== undefined
+            ? ` ORDER BY ${quoteIdent(orderBy)} ${direction === "desc" ? "DESC" : "ASC"}`
+            : "";
+        raw = await t.db.getAllAsync(
+          `SELECT ${quoteIdent(column)} AS v FROM ${quoteIdent(table)}${orderClause} LIMIT 1 OFFSET ?`,
+          [offset],
+        );
+      } else {
+        const where = refToWhere(ref);
+        raw = await t.db.getAllAsync(
+          `SELECT ${quoteIdent(column)} AS v FROM ${quoteIdent(table)} WHERE ${where.clause} LIMIT 1`,
+          where.params,
+        );
+      }
       const value = raw[0]?.["v"];
       if (value === undefined || value === null) return null;
       const cell = toCell(value);
@@ -700,18 +1244,19 @@ export function createSqliteAdapter(identity: {
 
     async search(instanceId, query, limit) {
       const t = get(instanceId);
-      const names = await t.db.getAllAsync(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
-      );
+      const catalog = await loadCatalog(t);
       const matches: Array<{ table: string; ref: RowRef | null; snippet: string }> = [];
       const pattern = `%${query.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
       let complete = true;
-      for (const row of names) {
+      // Views entram na busca. Num setup clássico isso devolve a mesma linha
+      // duas vezes (view e tabela), o que é chatice; excluí-las devolveria
+      // ZERO num setup onde a tabela física guarda JSON e a view é a única
+      // superfície legível. Errar para o lado de incluir.
+      for (const [table] of catalog.objects) {
         if (matches.length >= limit) {
           complete = false;
           break;
         }
-        const table = String(row["name"]);
         const info = await tableInfo(t, table);
         if (info.columnNames.length === 0) continue;
         // LIKE roda NO device (thread nativa do SQLite): buscar em milhões
@@ -725,10 +1270,18 @@ export function createSqliteAdapter(identity: {
             ? `SELECT rowid AS ${ROWID_ALIAS}, * FROM ${quoteIdent(table)}`
             : `SELECT * FROM ${quoteIdent(table)}`;
         const remaining = limit - matches.length;
-        const raw = await t.db.getAllAsync(`${select} WHERE ${where} LIMIT ?`, [
-          ...params,
-          remaining + 1,
-        ]);
+        // Uma view que quebra na execução (base sumiu entre o PRAGMA e agora)
+        // não pode zerar a busca inteira — mesmo motivo do try/catch da
+        // listagem, só que aqui o erro só aparece ao rodar a query.
+        let raw: Array<Record<string, unknown>>;
+        try {
+          raw = await t.db.getAllAsync(`${select} WHERE ${where} LIMIT ?`, [
+            ...params,
+            remaining + 1,
+          ]);
+        } catch {
+          continue;
+        }
         if (raw.length > remaining) complete = false;
         for (const record of raw.slice(0, remaining)) {
           let ref: RowRef | null = null;
@@ -802,24 +1355,37 @@ export function createSqliteAdapter(identity: {
       const t = get(instanceId);
       const columns = Object.keys(set);
       if (columns.length === 0) return;
+      const info = await tableInfo(t, table);
+      assertWritable(info, table, "update");
       const where = refToWhere(ref);
-      markStudioMutation(t, table, "update", "rowid" in ref ? ref.rowid : null);
+      const sql = `UPDATE ${quoteIdent(table)} SET ${columns.map((c) => `${quoteIdent(c)} = ?`).join(", ")} WHERE ${where.clause}`;
+      const params = [...columns.map((c) => toParam(set[c] ?? null)), ...where.params];
+      const rowId = "rowid" in ref ? ref.rowid : null;
+      beginStudioMutation(t, table, info);
       try {
-        await t.db.runAsync(
-          `UPDATE ${quoteIdent(table)} SET ${columns.map((c) => `${quoteIdent(c)} = ?`).join(", ")} WHERE ${where.clause}`,
-          [...columns.map((c) => toParam(set[c] ?? null)), ...where.params],
-        );
+        if (info.kind === "view") {
+          // Prova e escrita na mesma transação: se a prova falhar, nada foi
+          // escrito; e nada entra entre uma e outra.
+          await inTransaction(t, async () => {
+            await assertSingleRow(t, table, where);
+            await t.db.runAsync(sql, params);
+          });
+        } else {
+          await t.db.runAsync(sql, params);
+        }
       } catch (error) {
-        t.pendingStudioWrites.delete(table);
+        abortStudioMutation(t, table, info);
         throw error;
       }
+      finishStudioMutation(t, table, info, "update", rowId);
     },
 
     async insert(instanceId, table, values) {
       const t = get(instanceId);
       const columns = Object.keys(values);
       const info = await tableInfo(t, table);
-      markStudioMutation(t, table, "insert", null);
+      assertWritable(info, table, "insert");
+      beginStudioMutation(t, table, info);
       let lastInsertRowId: number | null = null;
       try {
         if (columns.length === 0) {
@@ -833,10 +1399,15 @@ export function createSqliteAdapter(identity: {
           lastInsertRowId = Number(result.lastInsertRowId);
         }
       } catch (error) {
-        t.pendingStudioWrites.delete(table);
+        abortStudioMutation(t, table, info);
         throw error;
       }
-      if (info.identity === "rowid" && Number.isFinite(lastInsertRowId)) {
+      finishStudioMutation(t, table, info, "insert", null);
+      // `kind !== "view"` é cinto sobre suspensório: identity nunca é "rowid"
+      // numa view (o tipo vem do sqlite_master). O que o guarda documenta é o
+      // motivo — last_insert_rowid NÃO é atualizado por insert feito dentro de
+      // trigger, então numa view ele devolveria um id velho de outra escrita.
+      if (info.kind !== "view" && info.identity === "rowid" && Number.isFinite(lastInsertRowId)) {
         return { ref: { rowid: lastInsertRowId } };
       }
       if (info.identity === "pk" && info.pkColumns.every((column) => column in values)) {
@@ -851,32 +1422,53 @@ export function createSqliteAdapter(identity: {
 
     async delete(instanceId, table, ref) {
       const t = get(instanceId);
+      const info = await tableInfo(t, table);
+      assertWritable(info, table, "delete");
       const where = refToWhere(ref);
-      markStudioMutation(t, table, "delete", "rowid" in ref ? ref.rowid : null);
+      const sql = `DELETE FROM ${quoteIdent(table)} WHERE ${where.clause}`;
+      const rowId = "rowid" in ref ? ref.rowid : null;
+      beginStudioMutation(t, table, info);
       try {
-        await t.db.runAsync(`DELETE FROM ${quoteIdent(table)} WHERE ${where.clause}`, where.params);
+        if (info.kind === "view") {
+          await inTransaction(t, async () => {
+            await assertSingleRow(t, table, where);
+            await t.db.runAsync(sql, where.params);
+          });
+        } else {
+          await t.db.runAsync(sql, where.params);
+        }
       } catch (error) {
-        t.pendingStudioWrites.delete(table);
+        abortStudioMutation(t, table, info);
         throw error;
       }
+      finishStudioMutation(t, table, info, "delete", rowId);
     },
 
     async deleteRows(instanceId, table, refs) {
       const t = get(instanceId);
       if (refs.length === 0) return { rowsAffected: 0 };
+      const info = await tableInfo(t, table);
+      // Recusa deliberada. O caminho em lote existe para fazer UM statement no
+      // lugar de N — e a única forma correta numa view seria N preflights
+      // seguidos de N deletes, que é exatamente o que ele evita. Some isso ao
+      // fato de o `IN` com row-value não ser NULL-safe e o lote deixa de ter
+      // razão de existir aqui. Apagar linha a linha continua funcionando.
+      if (info.kind === "view") {
+        throw new Error(
+          `"${table}" is a view — delete rows one at a time so each reference can be verified`,
+        );
+      }
 
       const rowids: number[] = [];
       const pks: Array<Record<string, CellValue>> = [];
       for (const ref of refs) {
+        rejectScanRef(ref);
         if ("rowid" in ref) rowids.push(ref.rowid);
         else pks.push(ref.pk);
       }
 
       const statements: BulkStatement[] = rowidStatements(table, rowids);
-      if (pks.length > 0) {
-        const { pkColumns } = await tableInfo(t, table);
-        statements.push(...pkStatements(table, pkColumns, pks));
-      }
+      if (pks.length > 0) statements.push(...pkStatements(table, info.pkColumns, pks));
 
       invalidateCount(t, table);
       // Antes de rodar: o hook nativo vai disparar uma vez por linha.
@@ -906,6 +1498,23 @@ export function createSqliteAdapter(identity: {
 
     async deleteAll(instanceId, table) {
       const t = get(instanceId);
+      const info = await tableInfo(t, table);
+      // Recusa dura, e esta é a mais importante do arquivo.
+      //
+      // Esta operação existe POR CAUSA da truncate optimization: um DELETE sem
+      // WHERE faz o SQLite descartar as páginas da tabela sem percorrer linha
+      // a linha. Numa view essa otimização não existe — o DELETE dispara o
+      // trigger INSTEAD OF uma vez POR LINHA.
+      //
+      // Medido numa view de 200k linhas em cima de uma base tipo PowerSync: o
+      // trigger rodou 200.000 vezes e enfileirou 200.000 operações na fila de
+      // upload, que o motor de sync então sobe para o servidor do cliente. Um
+      // botão de "esvaziar" no inspector não pode gerar tráfego de produção.
+      if (info.kind === "view") {
+        throw new Error(
+          `"${table}" is a view — DELETE FROM would fire its INSTEAD OF trigger once per row instead of truncating`,
+        );
+      }
       // Um único DELETE sem WHERE: é o caminho da truncate optimization, em que
       // o SQLite descarta as páginas da tabela em vez de percorrer linha a
       // linha. Também é o caminho em que o hook nativo NÃO dispara — por isso o
@@ -932,9 +1541,31 @@ export function createSqliteAdapter(identity: {
       const trimmed = sql.trim().replace(/;\s*$/, "");
       const isQuery = /^(select|pragma|with|explain)\b/i.test(trimmed);
       if (isQuery) {
-        // LIMIT implícito: console SQL nunca derruba a UI com 200k linhas.
+        /*
+         * `SELECT u.id, o.id FROM …` devolvia UMA coluna `id`, com o valor da
+         * SEGUNDA — o driver entrega cada linha como objeto JS e a chave
+         * repetida sobrescreve a anterior. Não é só coluna faltando: o que
+         * sobra tem o valor errado, sem aviso nenhum.
+         *
+         * Embrulhar em subconsulta resolve porque o SQLite desambigua nomes de
+         * saída ao materializar (`id`, `id:1`), e aí as chaves do objeto já
+         * chegam distintas. Sem parser, sem criar objeto no banco.
+         *
+         * Só SELECT/WITH: PRAGMA e EXPLAIN não são subconsultáveis. Verificado
+         * que o embrulho não muda resultado em ORDER BY, GROUP BY, window
+         * function, CTE, DISTINCT, UNION e subconsulta correlacionada.
+         */
+        const subqueryable = /^(select|with)\b/i.test(trimmed);
         const hasLimit = /\blimit\s+\d+/i.test(trimmed);
-        const final = hasLimit ? trimmed : `${trimmed} LIMIT ${DEFAULT_SELECT_LIMIT}`;
+        // LIMIT implícito: console SQL nunca derruba a UI com 200k linhas.
+        //
+        // Só em SELECT/WITH. `PRAGMA table_info(x) LIMIT 200` é erro de
+        // sintaxe — a cláusula não existe em PRAGMA nem em EXPLAIN —, então
+        // até aqui as duas só funcionavam no console se o usuário digitasse um
+        // LIMIT à mão. Elas devolvem saída limitada por natureza.
+        const final = subqueryable
+          ? `SELECT * FROM (${trimmed})${hasLimit ? "" : ` LIMIT ${DEFAULT_SELECT_LIMIT}`}`
+          : trimmed;
         const raw = await t.db.getAllAsync(final);
         const columns = raw.length > 0 ? Object.keys(raw[0]!) : [];
         return {
@@ -955,6 +1586,7 @@ export function createSqliteAdapter(identity: {
       t.schemaCache.clear();
       t.countCache.clear();
       t.lastExactCount.clear();
+      t.catalog = null;
       const result = await t.db.runAsync(trimmed);
       if (!t.hasChangeListener) {
         emit(t, { table: "*", rowId: null, operation: "unknown", source: "studio" });

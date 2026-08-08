@@ -11,6 +11,7 @@ edits from the Studio show up live on screen:
 - 🧸 **Toys** — AsyncStorage (a small CRUD)
 - 🏆 **Scores** — expo-sqlite (a leaderboard, high volume)
 - 📸 **Photos** — op-sqlite (a BLOB column, inline UPDATE, high volume)
+- 🔄 **Sync** — SQL views over an opaque JSON table, with `INSTEAD OF` triggers
 - 🌐 **Request** — Network, divided into HTTP and GraphQL scenarios
 - 📝 **Logs** — console levels, structured values, errors, bursts and the Timeline flow
 
@@ -103,6 +104,27 @@ http://127.0.0.1:4782/?token=<printed-token>
   shared Timeline, where Logs, Network and Storage line up.
 - Edit a value in the Studio → the app flashes the "Storage updated" toast and
   the affected screen refreshes (React Query invalidation).
+
+## Test SQL views
+
+Open the **Sync** tab. It reproduces, in miniature, how a sync engine lays out
+its local database: rows live as opaque JSON in `ps_data__notes`, the table the
+app actually reads is the **view** `notes` that unpacks it, and writes go back
+through `INSTEAD OF` triggers that also enqueue into `ps_crud`. The app never
+touches the physical table. Everything lives in `playground.db` alongside
+`players`, so tables and views share one instance.
+
+| Action                     | What it validates                                                             |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| **Open `playground.db`**   | Sidebar lists TABLES (`players`, `ps_crud`, `ps_data__notes`) and VIEWS (`notes`, `pinned_notes`) |
+| **Click `notes`**          | Readable columns instead of a wall of JSON; hover the row to see `reads: ps_data__notes` |
+| **Edit a title inline**    | The app list updates live **and** `ps_crud` gains a row — the write went through the sync path |
+| **Click `pinned_notes`**   | Lock icon, a banner naming the missing `INSTEAD OF` triggers, no Insert/Delete/eraser |
+| **Add a note in the app**  | `ps_data__notes` **and** `notes` both flash; the Timeline entry reads as the view |
+| **Insert a row on `notes`**| Works; the eraser and bulk delete are absent, because a view cannot be truncated |
+
+Then open any database with no views at all: the sidebar must look exactly as it
+did before, with no `VIEWS` header.
 
 ## Test the Network module
 

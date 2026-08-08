@@ -33,6 +33,7 @@ NativeScope composes your Metro config in development, opens the local Studio, a
 - **Bidirectional editing** so Studio changes can update the running app.
 - **Visual JSON navigation** for nested objects, arrays, inline edits, and TypeScript shape export.
 - **SQLite table tooling** with tabs, sorting, selection, inline edits, inserts, bulk delete, and SQL execution.
+- **SQL views as first-class objects**, listed with what they read and editable through their `INSTEAD OF` triggers — so a sync engine's local database reads as your app's tables, not as opaque JSON.
 - **Snapshots and diff** to freeze storage, compare later, highlight changes, and restore safely.
 - **HTTP and GraphQL inspection** with structured replay, session insights, sound rules, and storage impact.
 - **JavaScript log inspection** with boot capture, namespaces, structured values, stacks, repeat grouping, burst limits, Marks, and Timeline.

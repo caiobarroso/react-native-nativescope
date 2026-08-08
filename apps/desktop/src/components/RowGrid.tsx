@@ -51,6 +51,7 @@ import {
 } from "../lib/studio-client.ts";
 import { createFileSink } from "../lib/export.ts";
 import { cellText, isBlobCell, type BlobCell } from "../lib/cell-format.ts";
+import { tablePermissions } from "../lib/table-permissions.ts";
 import { AppToast, type AppToastState } from "./AppToast.tsx";
 import { BlobCellModal } from "./BlobCellModal.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
@@ -519,7 +520,10 @@ export function RowGrid() {
   const editingRef = useRef(editing);
   editingRef.current = editing;
 
-  const readOnly = schema?.identity === "none";
+  // Um objeto de permissões no lugar de um booleano: numa view a escrita é por
+  // operação (dá para inserir e não dar para apagar), e "não pode editar" tem
+  // motivos diferentes que o usuário precisa distinguir. Ver table-permissions.
+  const permissions = tablePermissions(schema);
   const selectableRows = rows.filter((row) => row.ref !== null);
   const selectedVisibleRows = selectableRows.filter((row) => {
     const key = refKey(row.ref);
@@ -528,6 +532,27 @@ export function RowGrid() {
   const allVisibleSelected =
     selectableRows.length > 0 &&
     selectedVisibleRows.length === selectableRows.length;
+
+  /**
+   * Identidade das colunas comparada por VALOR.
+   *
+   * `schema.columns` é um array recriado a cada setTables — o zod reparseia a
+   * resposta inteira —, então usá-lo como dependência fazia `refresh` e
+   * `refreshVisibleWindow` trocarem de identidade a cada evento do banco,
+   * mesmo quando nada no schema mudou. Cada troca disparava o efeito de
+   * refetch de novo: uma escrita em QUALQUER tabela da instância custava três
+   * `database.rows` na tabela aberta, e num app que escreve o tempo todo o
+   * inspector virava gerador de carga no device.
+   *
+   * As colunas em si continuam sendo lidas por referência lá dentro; o que
+   * muda é só o gatilho.
+   */
+  const columnsKey = useMemo(
+    () => (schema?.columns ?? []).map((column) => column.name).join("\u0000"),
+    [schema?.columns],
+  );
+  const columnsRef = useRef(schema?.columns);
+  columnsRef.current = schema?.columns;
 
   const showToast = useCallback((input: Omit<TableToastState, "id">) => {
     setToast({ id: nextToastId.current++, ...input });
@@ -542,7 +567,7 @@ export function RowGrid() {
       try {
         const sort = sorting[0];
         const orderBy = sort
-          ? schema?.columns.find((column) => column.name === sort.id)?.name
+          ? columnsRef.current?.find((column) => column.name === sort.id)?.name
           : undefined;
         const page = await loadRows(selection.providerId, selection.instanceId, selectedTable, {
           limit,
@@ -564,7 +589,7 @@ export function RowGrid() {
         endLoad();
       }
     },
-    [selection, selectedTable, sorting, schema?.columns, beginLoad, endLoad],
+    [selection, selectedTable, sorting, columnsKey, beginLoad, endLoad],
   );
 
   /**
@@ -580,7 +605,7 @@ export function RowGrid() {
     try {
       const sort = sorting[0];
       const orderBy = sort
-        ? schema?.columns.find((column) => column.name === sort.id)?.name
+        ? columnsRef.current?.find((column) => column.name === sort.id)?.name
         : undefined;
       const last = rows[rows.length - 1];
       const keysetCursor =
@@ -604,7 +629,7 @@ export function RowGrid() {
     } finally {
       setLoadingMore(false);
     }
-  }, [selection, selectedTable, sorting, schema?.columns, rows, loadingMore]);
+  }, [selection, selectedTable, sorting, columnsKey, rows, loadingMore]);
 
   /**
    * Refresh do REALTIME e pós-edição: re-consulta apenas a JANELA VISÍVEL
@@ -631,7 +656,7 @@ export function RowGrid() {
     const fetchCount = lastIdx - firstIdx + 1 + (atEnd ? PAGE : 0);
     const sort = sorting[0];
     const orderBy = sort
-      ? schema?.columns.find((column) => column.name === sort.id)?.name
+      ? columnsRef.current?.find((column) => column.name === sort.id)?.name
       : undefined;
     const before = firstIdx > 0 ? current[firstIdx - 1]?.ref : undefined;
     const keysetCursor = !orderBy && before && "rowid" in before ? before.rowid : undefined;
@@ -658,7 +683,7 @@ export function RowGrid() {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     }
-  }, [selection, selectedTable, sorting, schema?.columns]);
+  }, [selection, selectedTable, sorting, columnsKey]);
 
   /** Célula truncada: busca o conteúdo completo via stream antes de usar. */
   const loadFullCellText = useCallback(
@@ -791,6 +816,10 @@ export function RowGrid() {
   }, [toast]);
 
   useEffect(() => {
+    // O autosave só existe onde a escrita existe. Sem este gate, abrir o JSON
+    // numa tabela só-leitura disparava um updateCell 500 ms depois, que voltava
+    // com a mensagem crua do SQLite — sem o usuário ter pedido para salvar.
+    if (!permissions.update) return;
     if (!jsonCell || jsonCell.draft === jsonCell.original || jsonSaving) return;
     const seq = jsonSaveSeqRef.current + 1;
     jsonSaveSeqRef.current = seq;
@@ -799,7 +828,7 @@ export function RowGrid() {
       void saveJsonCell();
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [jsonCell?.draft, jsonCell?.original, jsonSaving]);
+  }, [jsonCell?.draft, jsonCell?.original, jsonSaving, permissions.update]);
 
   const onStartEdit = useCallback((ref: RowRef, column: string, draft: string) => {
     setEditing({ ref, column, draft });
@@ -879,6 +908,12 @@ export function RowGrid() {
   }, [selection, selectedTable, schema, rows, showToast, refreshVisibleWindow]);
   const onCommitEdit = useCallback(() => void saveEdit(), [saveEdit]);
 
+  // Ordenação corrente, para a ref posicional apontar para a mesma linha que
+  // o grid está mostrando. `sorting` já é validado contra as colunas reais
+  // no caminho de loadRows.
+  const sortColumn = sorting[0]?.id;
+  const sortDirection: "asc" | "desc" = sorting[0]?.desc ? "desc" : "asc";
+
   const tableColumns = useMemo<ColumnDef<Row>[]>(
     () => {
       const dataColumns: ColumnDef<Row>[] = (schema?.columns ?? []).map((schemaColumn) => ({
@@ -893,6 +928,20 @@ export function RowGrid() {
         cell: ({ getValue, row }) => {
           const value = getValue<CellValue>() ?? null;
           const rowRef = row.original.ref;
+          // Sem identidade estável, a POSIÇÃO na ordenação corrente é o que
+          // sobra — e basta para ir buscar o conteúdo de uma célula agora.
+          // Só serve para ler: as escritas recusam esta referência, e é a
+          // recusa que a torna segura.
+          const readRef: RowRef =
+            rowRef ??
+            {
+              scan: {
+                offset: row.index,
+                ...(sortColumn !== undefined
+                  ? { orderBy: sortColumn, direction: sortDirection }
+                  : {}),
+              },
+            };
           const isTruncated =
             row.original.truncatedColumns?.includes(schemaColumn.name) ?? false;
           const isEditing =
@@ -923,14 +972,14 @@ export function RowGrid() {
            * dos bytes, e o runtime não tem como distinguir isso de um write de
            * texto legítimo. Abrimos o visualizador em vez da edição.
            */
-          const blob = isBlobCell(value) && rowRef !== null ? value : null;
+          const blob = isBlobCell(value) ? value : null;
           const openBlob =
-            blob === null || rowRef === null
+            blob === null
               ? undefined
               : () => {
                   setBlobError(null);
                   setBlobCell({
-                    ref: rowRef,
+                    ref: readRef,
                     column: schemaColumn.name,
                     table: selectedTable ?? "",
                     cell: blob,
@@ -943,12 +992,11 @@ export function RowGrid() {
               <button
                 type="button"
                 onDoubleClick={() => {
-                  if (rowRef === null) return;
                   if (openBlob) {
                     openBlob();
                     return;
                   }
-                  if (readOnly) return;
+                  if (!permissions.update || rowRef === null) return;
                   if (isTruncated) {
                     // Editar sobre preview truncado corromperia — carrega o
                     // conteúdo completo (stream) antes de abrir a edição.
@@ -967,7 +1015,7 @@ export function RowGrid() {
                       : cellText(value)
                 }
                 className={`block h-full min-w-0 flex-1 truncate px-3 text-left ${
-                  readOnly || rowRef === null ? "cursor-default" : "cursor-text"
+                  !permissions.update || rowRef === null ? "cursor-default" : "cursor-text"
                 } ${value === null ? "text-text-subtle" : openBlob ? "text-text-muted" : "text-text"}`}
               >
                 {value === null ? "NULL" : cellText(value)}
@@ -1003,24 +1051,26 @@ export function RowGrid() {
               )}
               {/* BLOB não passa por aqui: este caminho terminava em
                   onStartEdit com o base64 completo dentro de um <input>. */}
-              {isTruncated && rowRef !== null && blob === null && (
+              {isTruncated && blob === null && (
                 <button
                   type="button"
                   onClick={() => {
-                    void loadFullCellText(rowRef, schemaColumn.name).then((full) => {
+                    void loadFullCellText(readRef, schemaColumn.name).then((full) => {
                       if (full === null) return;
                       try {
                         JSON.parse(full);
                         setJsonError(null);
                         setJsonCell({
-                          ref: rowRef,
+                          ref: readRef,
                           column: schemaColumn.name,
                           table: selectedTable ?? "",
                           original: full,
                           draft: jsonDraft(full),
                         });
                       } catch {
-                        if (!readOnly) onStartEdit(rowRef, schemaColumn.name, full);
+                        if (permissions.update && rowRef !== null) {
+                          onStartEdit(rowRef, schemaColumn.name, full);
+                        }
                       }
                     });
                   }}
@@ -1035,7 +1085,9 @@ export function RowGrid() {
         },
       }));
 
-      if (readOnly) return dataColumns;
+      // Sem exclusão em lote ou sem linhas selecionáveis, não há por que
+      // reservar uma coluna para seleção.
+      if (!permissions.bulkDelete || selectableRows.length === 0) return dataColumns;
 
       return [
         {
@@ -1082,10 +1134,13 @@ export function RowGrid() {
       onDraftChange,
       onStartEdit,
       onToggleRow,
-      readOnly,
+      permissions,
       schema?.columns,
+      selectableRows.length,
       selectedRows,
       selectedTable,
+      sortColumn,
+      sortDirection,
       toggleVisibleRows,
     ],
   );
@@ -1481,7 +1536,7 @@ export function RowGrid() {
             </span>
             <button
               onClick={() => setDeleteRowsConfirmOpen(true)}
-              disabled={loading || deletingRows || readOnly}
+              disabled={loading || deletingRows || !permissions.bulkDelete}
               className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted disabled:opacity-40"
             >
               <Trash2 size={12} strokeWidth={1.5} />
@@ -1495,7 +1550,7 @@ export function RowGrid() {
             </button>
           </>
         )}
-        {!readOnly && (
+        {permissions.insert && (
           <button
             onClick={() => {
               setInsertError(null);
@@ -1512,11 +1567,11 @@ export function RowGrid() {
           onClick={() => void refreshVisibleWindow()}
           disabled={loading}
           title="Reload rows"
-          className={`${readOnly ? "ml-auto" : ""} inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40`}
+          className={`${permissions.insert ? "" : "ml-auto"} inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40`}
         >
           <RefreshCw size={14} strokeWidth={1.5} />
         </button>
-        {!readOnly && (
+        {permissions.deleteAll && (
           <button
             onClick={() => setDeleteAllConfirm({ typed: "" })}
             disabled={loading || total === 0}
@@ -1547,10 +1602,9 @@ export function RowGrid() {
           <Download size={14} strokeWidth={1.5} />
         </button>
       </div>
-      {readOnly && (
+      {permissions.reason !== null && (
         <div className="shrink-0 border-b border-border bg-surface-sunken px-4 py-2 text-[12px] text-text-muted">
-          Read only: this table has no rowid or primary key, so rows cannot be
-          edited safely without a stable identity.
+          {permissions.reason}
         </div>
       )}
       {error && (

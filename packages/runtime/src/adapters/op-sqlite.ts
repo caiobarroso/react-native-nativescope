@@ -162,14 +162,20 @@ export function isDdl(sql: string): boolean {
   return DDL_RE.test(sql);
 }
 
-/** Tabela alvo de uma mutação, para escopar a invalidação. `null` → "*". */
+/**
+ * Tabela alvo de uma mutação, para escopar a invalidação. `null` → "*".
+ *
+ * O DDL casa `table|view|trigger|index`, não só `table`. Antes, um
+ * `CREATE VIEW` caía em `null` e invalidava o schema inteiro — o que só não
+ * era visível porque a invalidação com "*" também estava quebrada.
+ */
 export function mutationTable(sql: string): string | null {
   const trimmed = String(sql ?? "").trim();
   const match =
     /^(?:insert|replace)\s+into\s+["'`[]?([A-Za-z_][\w$]*)/i.exec(trimmed) ||
     /^update\s+["'`[]?([A-Za-z_][\w$]*)/i.exec(trimmed) ||
     /^delete\s+from\s+["'`[]?([A-Za-z_][\w$]*)/i.exec(trimmed) ||
-    /^(?:create|drop|alter)\s+table(?:\s+if\s+(?:not\s+)?exists)?\s+["'`[]?([A-Za-z_][\w$]*)/i.exec(
+    /^(?:create|drop|alter)\s+(?:temp\s+|temporary\s+)?(?:table|view|trigger|index)(?:\s+if\s+(?:not\s+)?exists)?\s+["'`[]?([A-Za-z_][\w$]*)/i.exec(
       trimmed,
     );
   return match?.[1] ?? null;

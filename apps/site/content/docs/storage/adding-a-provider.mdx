@@ -124,6 +124,12 @@ and transactions for free, but it does **not** fire for:
 - `DELETE FROM t` with no `WHERE` clause, which SQLite serves with the truncate optimization;
 - DDL, which is not a row change at all — and DDL is exactly what has to invalidate the schema cache.
 
+And one thing it reports differently than you might expect: **a write to a view is never named after
+the view.** The hook reports the physical tables the `INSTEAD OF` trigger wrote, which may be more
+than one. The shared adapter resolves that back to the view for you — you do not need to handle it
+in the driver — but it is why a name-matching echo cannot be the whole story. See
+[SQL views](/docs/storage/sql-views).
+
 So a driver with a perfect hook still needs a small amount of statement inspection for those two
 cases. Without a hook at all, statement inspection carries the whole realtime feed; report that
 through `hasChangeListener: false` when registering the database, and the adapter adjusts.

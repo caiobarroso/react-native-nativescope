@@ -4,6 +4,8 @@ import {
   serializeMessage,
   commandMessageSchema,
   storageValueSchema,
+  tableSchema,
+  rowRefSchema,
   PROTOCOL_VERSION,
   type AnyMessage,
 } from "./index.ts";
@@ -223,5 +225,67 @@ describe("storageValueSchema", () => {
     expect(storageValueSchema.safeParse({ type: "number", value: 123 }).success).toBe(true);
     expect(storageValueSchema.safeParse({ type: "boolean", value: true }).success).toBe(true);
     expect(storageValueSchema.safeParse({ type: "null", value: null }).success).toBe(true);
+  });
+});
+
+describe("tableSchema e rowRefSchema — campos aditivos de VIEW", () => {
+  const base = {
+    name: "players",
+    columns: [{ name: "id", declaredType: "INTEGER", notNull: true, pkIndex: 1 }],
+    rowCount: 3,
+    identity: "rowid" as const,
+  };
+
+  it("aceita um schema SEM os campos novos — runtime anterior continua válido", () => {
+    const parsed = tableSchema.safeParse(base);
+    expect(parsed.success).toBe(true);
+    // Ausente ⇒ tabela. O desktop trata como hoje, sem ramo especial.
+    expect(parsed.success && parsed.data.kind).toBeUndefined();
+    expect(parsed.success && parsed.data.writable).toBeUndefined();
+  });
+
+  it("aceita uma view gravável com tudo preenchido", () => {
+    const parsed = tableSchema.safeParse({
+      ...base,
+      name: "todos",
+      identity: "pk",
+      kind: "view",
+      writable: { insert: true, update: true, delete: false },
+      dependsOn: ["ps_data__todos"],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("aceita uma view cuja base sumiu", () => {
+    const parsed = tableSchema.safeParse({
+      ...base,
+      name: "orphan",
+      columns: [],
+      identity: "none",
+      kind: "view",
+      unavailable: "no such table: main.tmp_gone",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("recusa writable parcial — as três operações são obrigatórias juntas", () => {
+    const parsed = tableSchema.safeParse({ ...base, kind: "view", writable: { update: true } });
+    expect(parsed.success).toBe(false);
+  });
+
+  it.each([
+    ["rowid", { rowid: 12 }],
+    ["pk", { pk: { id: "t_01" } }],
+    ["scan", { scan: { offset: 41, orderBy: "created_at", direction: "desc" } }],
+  ])("aceita ref do tipo %s", (_label, ref) => {
+    expect(rowRefSchema.safeParse(ref).success).toBe(true);
+  });
+
+  it("recusa offset negativo numa ref posicional", () => {
+    expect(rowRefSchema.safeParse({ scan: { offset: -1 } }).success).toBe(false);
+  });
+
+  it("nada disso mexeu na versão do protocolo", () => {
+    expect(PROTOCOL_VERSION).toBe(1);
   });
 });

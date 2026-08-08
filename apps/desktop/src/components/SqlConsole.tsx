@@ -1,6 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { autocompletion, snippetCompletion, startCompletion } from "@codemirror/autocomplete";
+import {
+  acceptCompletion,
+  autocompletion,
+  completionStatus,
+  snippetCompletion,
+  startCompletion,
+} from "@codemirror/autocomplete";
 import type {
   Completion,
   CompletionContext,
@@ -140,7 +146,7 @@ function tableOptions(tables: TableSchema[]): Completion[] {
     label: table.name,
     apply: quoteIdent(table.name),
     type: "type",
-    detail: `${table.rowCount} rows`,
+    detail: table.kind === "view" ? `view · ${table.rowCount} rows` : `${table.rowCount} rows`,
     info: table.columns.map((column) => `${column.name} ${column.declaredType}`.trim()).join("\n"),
     boost: table.rowCount > 0 ? 2 : 0,
   }));
@@ -329,6 +335,8 @@ function createEditorExtensions(
   selectedTable: string | null,
   run: () => void,
 ): Extension[] {
+  const selected = selectedTable ? tableByName(tables, selectedTable) : undefined;
+  const defaultQuery = previewSqlForTable(selected, "select");
   const schema = Object.fromEntries(
     tables.map((table) => [
       table.name,
@@ -355,6 +363,20 @@ function createEditorExtensions(
     }),
     Prec.highest(
       keymap.of([
+        {
+          key: "Tab",
+          run: (view) => {
+            const status = completionStatus(view.state);
+            if (status === "active") return acceptCompletion(view);
+            if (status === "pending") return false;
+            if (view.state.doc.toString().trim() !== "" || defaultQuery === "") return false;
+            view.dispatch({
+              changes: { from: 0, to: view.state.doc.length, insert: defaultQuery },
+              selection: { anchor: defaultQuery.length },
+            });
+            return true;
+          },
+        },
         {
           key: "Mod-Enter",
           run: () => {
@@ -474,12 +496,29 @@ function previewSqlForTable(table: TableSchema | undefined, kind: "select" | "co
   if (!table) return "";
   const tableName = quoteIdent(table.name);
   if (kind === "count") return `SELECT COUNT(*) AS total\nFROM ${tableName};`;
+  // Numa view sem INSTEAD OF INSERT o template geraria SQL que o SQLite
+  // recusa. Cair no SELECT é mais útil que oferecer um erro pronto.
+  if (kind === "insert" && table.kind === "view" && table.writable?.insert !== true) {
+    return `SELECT *\nFROM ${tableName}\nLIMIT 100;`;
+  }
   if (kind === "insert") {
     const writable = table.columns.filter((column) => column.pkIndex === 0);
     const columns = writable.length > 0 ? writable : table.columns;
     return `INSERT INTO ${tableName} (${columns.map((column) => quoteIdent(column.name)).join(", ")})\nVALUES (${columns.map(() => "?").join(", ")});`;
   }
   return `SELECT *\nFROM ${tableName}\nLIMIT 100;`;
+}
+
+function resultCountLabel(count: number): string {
+  return `${count.toLocaleString()} ${count === 1 ? "row" : "rows"} returned`;
+}
+
+function resultColumnSchema(
+  columnName: string,
+  schema: TableSchema | undefined,
+): TableSchema["columns"][number] | undefined {
+  const normalized = columnName.replace(/^"|"$/g, "").replaceAll('""', '"').toLowerCase();
+  return schema?.columns.find((column) => column.name.toLowerCase() === normalized);
 }
 
 /**
@@ -620,7 +659,11 @@ export function SqlConsole() {
                 theme="none"
                 minHeight="96px"
                 maxHeight="240px"
-                placeholder="SELECT * FROM customers WHERE tier = 'pro';"
+                placeholder={
+                  selectedSchema
+                    ? previewSqlForTable(selectedSchema, "select")
+                    : "Select a table to load a real query template."
+                }
               />
             </div>
             <button
@@ -644,47 +687,92 @@ export function SqlConsole() {
           {error && <p className="text-[12px] text-deleted">{error}</p>}
 
           {result?.kind === "mutation" && (
-            <p className="text-[12px] text-text-muted">
-              OK - {result.rowsAffected} row(s) affected.
-            </p>
+            <div className="flex h-10 shrink-0 items-center gap-2 rounded-md border border-border bg-surface px-3 text-[12px]">
+              <span className="font-mono font-semibold text-text">Result</span>
+              <span className="text-text-muted">
+                {result.rowsAffected.toLocaleString()} {result.rowsAffected === 1 ? "row" : "rows"} affected
+              </span>
+            </div>
           )}
 
           {result?.kind === "rows" && (
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border">
-              <table className="w-full border-collapse font-mono text-[11px]">
-                <thead className="sticky top-0 bg-surface-sunken">
-                  <tr>
-                    {result.columns.map((column) => (
-                      <th key={column} className="px-2 py-1 text-left font-semibold">
-                        {column}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.rows.map((row, i) => (
-                    <tr key={i} className="border-t border-border">
-                      {result.columns.map((column) => {
-                        const value = row[column] ?? null;
-                        return (
-                          <td key={column} className="max-w-48 truncate px-2 py-1">
-                            {value === null ? (
-                              <span className="text-text-subtle">NULL</span>
-                            ) : isBlobCell(value) ? (
-                              <span className="text-text-muted">{blobLabel(value)}</span>
-                            ) : (
-                              String(value)
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {result.rows.length === 0 && (
-                <p className="p-2 text-[11px] text-text-subtle">0 rows.</p>
-              )}
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-surface">
+              <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+                <Table2 size={13} strokeWidth={1.5} className="text-text-subtle" />
+                <span className="font-mono text-[12px] font-semibold text-text">Results</span>
+                <span className="text-[11px] tabular-nums text-text-subtle">
+                  {resultCountLabel(result.rows.length)}
+                </span>
+                <span className="ml-auto text-[11px] tabular-nums text-text-subtle">
+                  {result.columns.length.toLocaleString()} {result.columns.length === 1 ? "column" : "columns"}
+                </span>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto">
+                {result.rows.length === 0 ? (
+                  <div className="flex min-h-24 items-center justify-center px-4 text-[12px] text-text-subtle">
+                    No rows returned by this query.
+                  </div>
+                ) : (
+                  <table
+                    aria-label="SQL query results"
+                    className="w-full border-separate border-spacing-0 font-mono text-[12px]"
+                    style={{ minWidth: Math.max(720, result.columns.length * 160) }}
+                  >
+                    <thead className="sticky top-0 z-10 bg-surface">
+                      <tr>
+                        {result.columns.map((column) => {
+                          const schemaColumn = resultColumnSchema(column, selectedSchema);
+                          return (
+                            <th
+                              key={column}
+                              className="h-9 border-b border-r border-border bg-surface px-0 text-left align-middle font-normal"
+                            >
+                              <div className="flex h-full min-w-0 items-center gap-2 px-3">
+                                <span className="min-w-0 truncate font-semibold text-text">{column}</span>
+                                {schemaColumn !== undefined && schemaColumn.pkIndex > 0 && (
+                                  <span className="shrink-0 text-[10px] font-medium text-accent">pk</span>
+                                )}
+                                <span className="shrink-0 text-[11px] font-normal text-text-subtle">
+                                  {schemaColumn?.declaredType || "no type"}
+                                </span>
+                              </div>
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.rows.map((row, i) => (
+                        <tr key={i} className="group hover:bg-surface-hover">
+                          {result.columns.map((column) => {
+                            const value = row[column] ?? null;
+                            const displayValue =
+                              value === null
+                                ? "NULL"
+                                : isBlobCell(value)
+                                  ? blobLabel(value)
+                                  : String(value);
+                            return (
+                              <td
+                                key={column}
+                                className="h-8 max-w-[32rem] border-b border-r border-border px-3 align-middle"
+                              >
+                                <div
+                                  className={`max-w-[32rem] truncate ${value === null ? "text-text-subtle" : isBlobCell(value) ? "text-text-muted" : "text-text"}`}
+                                  title={displayValue}
+                                >
+                                  {displayValue}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
         </div>
