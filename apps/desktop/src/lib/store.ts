@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { KeyEntry, ProviderDescriptor, ChangeSource, TableSchema } from "@rnsi/protocol";
+import { sameTableSchemas } from "./table-schema-eq.ts";
 
 export type Phase =
   | "no-token" // aberto sem a CLI — sem token na URL
@@ -492,8 +493,15 @@ export const useStudio = create<StudioState>((set) => ({
         isCurrentSelection && state.selectedTable && !valid.has(state.selectedTable)
           ? (nextTabs[0] ?? null)
           : state.selectedTable;
+      // O zod reparseia a resposta inteira, então `tables` é sempre um array
+      // novo — mesmo quando nada mudou. Guardar o antigo nesse caso evita
+      // propagar identidade nova por metade do RowGrid, e "nada mudou" é o
+      // caso comum: o refresh de schema é debounced e dispara em toda escrita
+      // da instância.
+      const existing = state.tables[id];
+      const nextTables = sameTableSchemas(existing, tables) ? (existing as TableSchema[]) : tables;
       return {
-        tables: { ...state.tables, [id]: tables },
+        tables: { ...state.tables, [id]: nextTables },
         tableTabs: { ...state.tableTabs, [id]: nextTabs },
         selectedTable,
       };

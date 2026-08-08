@@ -533,6 +533,27 @@ export function RowGrid() {
     selectableRows.length > 0 &&
     selectedVisibleRows.length === selectableRows.length;
 
+  /**
+   * Identidade das colunas comparada por VALOR.
+   *
+   * `schema.columns` é um array recriado a cada setTables — o zod reparseia a
+   * resposta inteira —, então usá-lo como dependência fazia `refresh` e
+   * `refreshVisibleWindow` trocarem de identidade a cada evento do banco,
+   * mesmo quando nada no schema mudou. Cada troca disparava o efeito de
+   * refetch de novo: uma escrita em QUALQUER tabela da instância custava três
+   * `database.rows` na tabela aberta, e num app que escreve o tempo todo o
+   * inspector virava gerador de carga no device.
+   *
+   * As colunas em si continuam sendo lidas por referência lá dentro; o que
+   * muda é só o gatilho.
+   */
+  const columnsKey = useMemo(
+    () => (schema?.columns ?? []).map((column) => column.name).join("\u0000"),
+    [schema?.columns],
+  );
+  const columnsRef = useRef(schema?.columns);
+  columnsRef.current = schema?.columns;
+
   const showToast = useCallback((input: Omit<TableToastState, "id">) => {
     setToast({ id: nextToastId.current++, ...input });
   }, []);
@@ -546,7 +567,7 @@ export function RowGrid() {
       try {
         const sort = sorting[0];
         const orderBy = sort
-          ? schema?.columns.find((column) => column.name === sort.id)?.name
+          ? columnsRef.current?.find((column) => column.name === sort.id)?.name
           : undefined;
         const page = await loadRows(selection.providerId, selection.instanceId, selectedTable, {
           limit,
@@ -568,7 +589,7 @@ export function RowGrid() {
         endLoad();
       }
     },
-    [selection, selectedTable, sorting, schema?.columns, beginLoad, endLoad],
+    [selection, selectedTable, sorting, columnsKey, beginLoad, endLoad],
   );
 
   /**
@@ -584,7 +605,7 @@ export function RowGrid() {
     try {
       const sort = sorting[0];
       const orderBy = sort
-        ? schema?.columns.find((column) => column.name === sort.id)?.name
+        ? columnsRef.current?.find((column) => column.name === sort.id)?.name
         : undefined;
       const last = rows[rows.length - 1];
       const keysetCursor =
@@ -608,7 +629,7 @@ export function RowGrid() {
     } finally {
       setLoadingMore(false);
     }
-  }, [selection, selectedTable, sorting, schema?.columns, rows, loadingMore]);
+  }, [selection, selectedTable, sorting, columnsKey, rows, loadingMore]);
 
   /**
    * Refresh do REALTIME e pós-edição: re-consulta apenas a JANELA VISÍVEL
@@ -635,7 +656,7 @@ export function RowGrid() {
     const fetchCount = lastIdx - firstIdx + 1 + (atEnd ? PAGE : 0);
     const sort = sorting[0];
     const orderBy = sort
-      ? schema?.columns.find((column) => column.name === sort.id)?.name
+      ? columnsRef.current?.find((column) => column.name === sort.id)?.name
       : undefined;
     const before = firstIdx > 0 ? current[firstIdx - 1]?.ref : undefined;
     const keysetCursor = !orderBy && before && "rowid" in before ? before.rowid : undefined;
@@ -662,7 +683,7 @@ export function RowGrid() {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     }
-  }, [selection, selectedTable, sorting, schema?.columns]);
+  }, [selection, selectedTable, sorting, columnsKey]);
 
   /** Célula truncada: busca o conteúdo completo via stream antes de usar. */
   const loadFullCellText = useCallback(

@@ -20,6 +20,45 @@ describe("activityKey", () => {
   });
 });
 
+describe("setTables", () => {
+  const provider = "expo-sqlite";
+  const instance = "app.db";
+  const id = keysId(provider, instance);
+
+  function payload(rowCount = 3) {
+    return [
+      {
+        name: "items",
+        columns: [{ name: "id", declaredType: "INTEGER", notNull: true, pkIndex: 1 }],
+        rowCount,
+        identity: "rowid" as const,
+      },
+    ];
+  }
+
+  beforeEach(() => {
+    useStudio.setState({ tables: {}, tableTabs: {}, selectedTable: null, selection: null });
+  });
+
+  it("guarda a referência antiga quando nada mudou", () => {
+    useStudio.getState().setTables(provider, instance, payload());
+    const first = useStudio.getState().tables[id];
+
+    // Payload novo em folha, estruturalmente idêntico — é o que chega em todo
+    // refresh debounced. Propagar identidade nova aqui fazia o RowGrid refazer
+    // a consulta da tabela aberta sem nada ter mudado.
+    useStudio.getState().setTables(provider, instance, payload());
+    expect(useStudio.getState().tables[id]).toBe(first);
+  });
+
+  it("troca a referência quando algo mudou de verdade", () => {
+    useStudio.getState().setTables(provider, instance, payload(3));
+    const first = useStudio.getState().tables[id];
+    useStudio.getState().setTables(provider, instance, payload(4));
+    expect(useStudio.getState().tables[id]).not.toBe(first);
+  });
+});
+
 describe("applyDatabaseChange", () => {
   const provider = "expo-sqlite";
   const instance = "app.db";
