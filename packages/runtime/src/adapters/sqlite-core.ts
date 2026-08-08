@@ -8,6 +8,7 @@ import {
   type Row,
 } from "@rnsi/protocol";
 import type { DatabaseAdapter, DatabaseChange } from "../adapter.ts";
+import { referencedNames, triggerOldColumns, triggerOperation } from "./sqlite-sql.ts";
 
 /**
  * Interface mínima de um banco SQLite. É o SEAM do módulo: qualquer engine que
@@ -210,6 +211,8 @@ export function createSqliteAdapter(identity: {
      * uma estimativa muito melhor que MAX(rowid) — ver tableCount.
      */
     lastExactCount: Map<string, number>;
+    /** Ver loadCatalog. null = ainda não lido ou invalidado por DDL. */
+    catalog: Catalog | null;
   }
 
   const tracked = new Map<string, Tracked>();
@@ -280,22 +283,173 @@ export function createSqliteAdapter(identity: {
     }
   }
 
-  async function tableIdentity(db: SQLiteDatabaseLike, table: string): Promise<TableSchema["identity"]> {
+  interface Catalog {
+    /** Tabelas e views, na ordem em que o sqlite_master devolveu (por nome). */
+    objects: Map<string, { kind: "table" | "view"; sql: string }>;
+    /** tbl_name → SQL de cada trigger que aponta para ele. */
+    triggersByTable: Map<string, string[]>;
+    /** Objeto → views que leem dele, transitivamente. Alimenta a atribuição. */
+    dependents: Map<string, string[]>;
+  }
+
+  const NO_WRITES = { insert: false, update: false, delete: false } as const;
+  const ALL_WRITES = { insert: true, update: true, delete: true } as const;
+
+  /**
+   * Uma leitura do sqlite_master responde três perguntas de uma vez: quais
+   * objetos existem e de que tipo, o SQL de cada view (de onde saem as
+   * dependências) e o SQL de cada trigger (de onde saem gravabilidade e
+   * chave). Antes disso a listagem e a busca faziam a mesma query separada,
+   * cada uma cravando `type = 'table'`.
+   */
+  async function loadCatalog(t: Tracked): Promise<Catalog> {
+    if (t.catalog) return t.catalog;
+    const rows = await t.db.getAllAsync(
+      `SELECT type, name, tbl_name, sql FROM sqlite_master
+        WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%'
+        ORDER BY name`,
+    );
+
+    const objects = new Map<string, { kind: "table" | "view"; sql: string }>();
+    const triggersByTable = new Map<string, string[]>();
+    for (const row of rows) {
+      const type = String(row["type"]);
+      const sql = String(row["sql"] ?? "");
+      if (type === "trigger") {
+        const target = String(row["tbl_name"] ?? "");
+        if (target.length === 0) continue;
+        const existing = triggersByTable.get(target);
+        if (existing) existing.push(sql);
+        else triggersByTable.set(target, [sql]);
+        continue;
+      }
+      objects.set(String(row["name"]), { kind: type === "view" ? "view" : "table", sql });
+    }
+
+    const catalog: Catalog = { objects, triggersByTable, dependents: new Map() };
+    for (const [name, object] of objects) {
+      if (object.kind !== "view") continue;
+      for (const base of viewDependencies(catalog, name)) {
+        const existing = catalog.dependents.get(base);
+        if (existing) {
+          if (!existing.includes(name)) existing.push(name);
+        } else catalog.dependents.set(base, [name]);
+      }
+    }
+
+    t.catalog = catalog;
+    return catalog;
+  }
+
+  /** Objetos que a view lê diretamente. A própria view sai — ela aparece no CREATE. */
+  function directDependencies(catalog: Catalog, name: string): string[] {
+    const object = catalog.objects.get(name);
+    if (!object || object.kind !== "view") return [];
+    return referencedNames(object.sql, catalog.objects.keys()).filter((other) => other !== name);
+  }
+
+  /**
+   * Fecho transitivo: uma view sobre view depende também das tabelas da de
+   * baixo, senão uma escrita na base não marcaria a de cima. `seen` também
+   * protege de view auto-referente, que é criável e faria loop.
+   *
+   * Ordenado por nome — a saída vai para a UI e para teste, então precisa ser
+   * determinística, e a ordem não carrega significado.
+   */
+  function viewDependencies(catalog: Catalog, view: string): string[] {
+    const found: string[] = [];
+    const seen = new Set<string>([view]);
+    const queue = directDependencies(catalog, view);
+    while (queue.length > 0) {
+      const name = queue.shift() as string;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      found.push(name);
+      for (const next of directDependencies(catalog, name)) {
+        if (!seen.has(next)) queue.push(next);
+      }
+    }
+    return found.sort();
+  }
+
+  /**
+   * O SQLite recusa DML numa view que não tenha o trigger INSTEAD OF
+   * correspondente — e uma view pode ter só o de INSERT. Por isso a
+   * gravabilidade é por operação: um booleano faria a UI oferecer edição que
+   * sempre termina em "cannot modify x because it is a view".
+   */
+  function viewWritability(catalog: Catalog, view: string): TableInfo["writable"] {
+    const writable = { insert: false, update: false, delete: false };
+    for (const sql of catalog.triggersByTable.get(view) ?? []) {
+      const operation = triggerOperation(sql);
+      if (operation !== null) writable[operation] = true;
+    }
+    return writable;
+  }
+
+  /**
+   * A chave de uma linha de view, lida do `OLD.*` dos triggers.
+   *
+   * É a declaração do próprio autor sobre o que identifica um registro, no
+   * único lugar em que o SQLite permite declará-la: dentro do INSTEAD OF,
+   * `OLD` é a linha que estava lá, e o que o trigger usa dela para achar o
+   * registro na tabela-base é, por definição, a identidade.
+   *
+   * Descartados (e o motivo, porque cada um parece razoável de longe):
+   *  - "primeira coluna chamada id" — mágico, e erra calado num
+   *    `SELECT u.id, o.id FROM users u JOIN orders o`;
+   *  - a linha inteira como chave — `toParam` lança em BLOB, e uma célula que
+   *    veio truncada no preview nunca casaria no WHERE;
+   *  - `PRAGMA index_list` da tabela-base — só serve para view trivialmente
+   *    derivada, e não diz nada sobre uma view de `json_extract`.
+   *
+   * Super-aproximar aqui é seguro: coluna a mais só deixa o WHERE mais
+   * seletivo, e o preflight recusa se ainda assim ficar ambíguo.
+   */
+  function viewKeyColumns(catalog: Catalog, view: string, columnNames: string[]): string[] {
+    const byOperation = new Map<string, string>();
+    for (const sql of catalog.triggersByTable.get(view) ?? []) {
+      const operation = triggerOperation(sql);
+      if (operation !== null && !byOperation.has(operation)) byOperation.set(operation, sql);
+    }
+    // UPDATE primeiro: é o trigger que precisa achar a linha E reescrevê-la,
+    // então é o que declara a chave de forma mais completa.
+    const source = byOperation.get("update") ?? byOperation.get("delete");
+    if (source === undefined) return [];
+
+    const canonical = new Map(columnNames.map((name) => [name.toLowerCase(), name]));
+    const keys: string[] = [];
+    for (const column of triggerOldColumns(source)) {
+      const match = canonical.get(column.toLowerCase());
+      if (match !== undefined && !keys.includes(match)) keys.push(match);
+    }
+    return keys;
+  }
+
+  async function tableIdentity(
+    db: SQLiteDatabaseLike,
+    table: string,
+    columns: Array<Record<string, unknown>>,
+  ): Promise<TableSchema["identity"]> {
     try {
       await db.getAllAsync(`SELECT rowid FROM ${quoteIdent(table)} LIMIT 1`);
       return "rowid";
     } catch {
-      /* WITHOUT ROWID ou view */
+      /* WITHOUT ROWID */
     }
-    const columns = await db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
     return columns.some((c) => Number(c["pk"]) > 0) ? "pk" : "none";
   }
 
   interface TableInfo {
+    kind: "table" | "view";
     identity: TableSchema["identity"];
     columnNames: string[];
     pkColumns: string[];
     columns: TableSchema["columns"];
+    writable: { insert: boolean; update: boolean; delete: boolean };
+    dependsOn: string[];
+    /** Mensagem do SQLite quando nem o PRAGMA respondeu (view órfã). */
+    unavailable: string | null;
   }
 
   /**
@@ -307,22 +461,78 @@ export function createSqliteAdapter(identity: {
   async function tableInfo(t: Tracked, table: string): Promise<TableInfo> {
     const cached = t.schemaCache.get(table);
     if (cached) return cached;
-    const identity = await tableIdentity(t.db, table);
-    const columns = await t.db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
-    const info: TableInfo = {
-      identity,
-      columnNames: columns.map((c) => String(c["name"])),
-      pkColumns: columns
-        .filter((c) => Number(c["pk"]) > 0)
-        .sort((a, b) => Number(a["pk"]) - Number(b["pk"]))
-        .map((c) => String(c["name"])),
-      columns: columns.map((c) => ({
-        name: String(c["name"]),
-        declaredType: String(c["type"] ?? ""),
-        notNull: Number(c["notnull"]) === 1,
-        pkIndex: Number(c["pk"]),
-      })),
-    };
+
+    const catalog = await loadCatalog(t);
+    // O tipo vem do catálogo, NUNCA do probe de rowid: numa
+    // `CREATE VIEW v AS SELECT rowid, … FROM t` o probe passa, e daí sairia
+    // identity "rowid" numa view — com `DELETE … WHERE rowid IN (…)` quebrando
+    // na cara do usuário.
+    const kind = catalog.objects.get(table)?.kind ?? "table";
+
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = await t.db.getAllAsync(`PRAGMA table_info(${quoteIdent(table)})`);
+    } catch (error) {
+      // View sobre tabela que sumiu — normal no meio de uma migração. Sem
+      // isto, uma view órfã derruba a listagem inteira e a sidebar fica em
+      // branco em vez de mostrar uma linha com problema.
+      const info: TableInfo = {
+        kind,
+        identity: "none",
+        columnNames: [],
+        pkColumns: [],
+        columns: [],
+        writable: { ...NO_WRITES },
+        dependsOn: kind === "view" ? viewDependencies(catalog, table) : [],
+        unavailable: error instanceof Error ? error.message : String(error),
+      };
+      t.schemaCache.set(table, info);
+      return info;
+    }
+
+    const columnNames = raw.map((c) => String(c["name"]));
+    const columns: TableSchema["columns"] = raw.map((c) => ({
+      name: String(c["name"]),
+      declaredType: String(c["type"] ?? ""),
+      notNull: Number(c["notnull"]) === 1,
+      pkIndex: Number(c["pk"]),
+    }));
+
+    let info: TableInfo;
+    if (kind === "view") {
+      const keyColumns = viewKeyColumns(catalog, table, columnNames);
+      info = {
+        kind,
+        identity: keyColumns.length > 0 ? "pk" : "none",
+        columnNames,
+        pkColumns: keyColumns,
+        // pkIndex preenchido dá de brinde os templates do console SQL, que
+        // escolhem a primeira coluna com pkIndex > 0 e hoje caem em `rowid` —
+        // que não existe em view.
+        columns: columns.map((column) => {
+          const position = keyColumns.indexOf(column.name);
+          return position === -1 ? column : { ...column, pkIndex: position + 1 };
+        }),
+        writable: viewWritability(catalog, table),
+        dependsOn: viewDependencies(catalog, table),
+        unavailable: null,
+      };
+    } else {
+      info = {
+        kind,
+        identity: await tableIdentity(t.db, table, raw),
+        columnNames,
+        pkColumns: raw
+          .filter((c) => Number(c["pk"]) > 0)
+          .sort((a, b) => Number(a["pk"]) - Number(b["pk"]))
+          .map((c) => String(c["name"])),
+        columns,
+        writable: { ...ALL_WRITES },
+        dependsOn: [],
+        unavailable: null,
+      };
+    }
+
     t.schemaCache.set(table, info);
     return info;
   }
@@ -552,6 +762,7 @@ export function createSqliteAdapter(identity: {
         schemaCache: new Map(),
         countCache: new Map(),
         lastExactCount: new Map(),
+        catalog: null,
       });
       for (const listener of registrationListeners) listener();
     },
@@ -583,30 +794,66 @@ export function createSqliteAdapter(identity: {
       // DDL do app (CREATE/DROP/ALTER): invalida só a tabela afetada. A
       // contagem cai junto — depois de um DROP/CREATE do mesmo nome, o que
       // sabíamos sobre o tamanho da tabela não vale mais nada.
-      t.schemaCache.delete(table);
+      //
+      // O catálogo cai INTEIRO em qualquer DDL: é uma query só para
+      // reconstruir, DDL é raro, e um CREATE/DROP VIEW muda o grafo de
+      // dependências de objetos que não são o alvo nomeado.
+      t.catalog = null;
+      if (table === "*") {
+        // `delete("*")` era no-op — só invalidateCount tratava o coringa. Como
+        // `mutationTable` devolve null (logo "*") justamente para DDL que ele
+        // não sabe escopar, era o caso do CREATE VIEW que nunca invalidava.
+        t.schemaCache.clear();
+        t.lastExactCount.clear();
+      } else {
+        t.schemaCache.delete(table);
+        t.lastExactCount.delete(table);
+      }
       invalidateCount(t, table);
-      t.lastExactCount.delete(table);
     },
 
     async tables(instanceId) {
       const t = get(instanceId);
-      const names = await t.db.getAllAsync(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
-      );
+      const catalog = await loadCatalog(t);
       const result: TableSchema[] = [];
-      for (const row of names) {
-        const name = String(row["name"]);
+
+      // Tabelas e views vêm intercaladas por nome. Agrupar é apresentação e
+      // mora no Studio — o adapter não escolhe ordem de exibição.
+      for (const [name, object] of catalog.objects) {
         // Colunas e identidade vêm do cache; contagem em duas fases — o
         // refresh de schema não custa um COUNT(*) full-scan por tabela.
         const info = await tableInfo(t, name);
+
+        if (info.unavailable !== null) {
+          result.push({
+            name,
+            columns: [],
+            rowCount: 0,
+            identity: "none",
+            kind: object.kind,
+            writable: { ...NO_WRITES },
+            unavailable: info.unavailable,
+          });
+          continue;
+        }
+
         const count = await tableCount(t, name, info.identity);
-        result.push({
+        const entry: TableSchema = {
           name,
           columns: info.columns,
           rowCount: count.total,
           rowCountIsEstimate: !count.exact,
           identity: info.identity,
-        });
+        };
+        // `kind` e `writable` só saem para view: ausente já significa tabela
+        // física com tudo permitido, e não trafegar o óbvio mantém o payload
+        // do refresh igual ao de hoje em app que não usa view.
+        if (object.kind === "view") {
+          entry.kind = "view";
+          entry.writable = info.writable;
+          if (info.dependsOn.length > 0) entry.dependsOn = info.dependsOn;
+        }
+        result.push(entry);
       }
       return result;
     },
@@ -713,18 +960,19 @@ export function createSqliteAdapter(identity: {
 
     async search(instanceId, query, limit) {
       const t = get(instanceId);
-      const names = await t.db.getAllAsync(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
-      );
+      const catalog = await loadCatalog(t);
       const matches: Array<{ table: string; ref: RowRef | null; snippet: string }> = [];
       const pattern = `%${query.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
       let complete = true;
-      for (const row of names) {
+      // Views entram na busca. Num setup clássico isso devolve a mesma linha
+      // duas vezes (view e tabela), o que é chatice; excluí-las devolveria
+      // ZERO num setup onde a tabela física guarda JSON e a view é a única
+      // superfície legível. Errar para o lado de incluir.
+      for (const [table] of catalog.objects) {
         if (matches.length >= limit) {
           complete = false;
           break;
         }
-        const table = String(row["name"]);
         const info = await tableInfo(t, table);
         if (info.columnNames.length === 0) continue;
         // LIKE roda NO device (thread nativa do SQLite): buscar em milhões
@@ -738,10 +986,18 @@ export function createSqliteAdapter(identity: {
             ? `SELECT rowid AS ${ROWID_ALIAS}, * FROM ${quoteIdent(table)}`
             : `SELECT * FROM ${quoteIdent(table)}`;
         const remaining = limit - matches.length;
-        const raw = await t.db.getAllAsync(`${select} WHERE ${where} LIMIT ?`, [
-          ...params,
-          remaining + 1,
-        ]);
+        // Uma view que quebra na execução (base sumiu entre o PRAGMA e agora)
+        // não pode zerar a busca inteira — mesmo motivo do try/catch da
+        // listagem, só que aqui o erro só aparece ao rodar a query.
+        let raw: Array<Record<string, unknown>>;
+        try {
+          raw = await t.db.getAllAsync(`${select} WHERE ${where} LIMIT ?`, [
+            ...params,
+            remaining + 1,
+          ]);
+        } catch {
+          continue;
+        }
         if (raw.length > remaining) complete = false;
         for (const record of raw.slice(0, remaining)) {
           let ref: RowRef | null = null;
@@ -969,6 +1225,7 @@ export function createSqliteAdapter(identity: {
       t.schemaCache.clear();
       t.countCache.clear();
       t.lastExactCount.clear();
+      t.catalog = null;
       const result = await t.db.runAsync(trimmed);
       if (!t.hasChangeListener) {
         emit(t, { table: "*", rowId: null, operation: "unknown", source: "studio" });

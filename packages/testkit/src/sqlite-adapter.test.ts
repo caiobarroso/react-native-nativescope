@@ -23,6 +23,20 @@ const SETUP = `
   INSERT INTO composite_pk VALUES ('x', 1, 'primeiro'), ('y', 2, 'segundo');
 
   CREATE TABLE no_identity_view_base (v TEXT);
+  INSERT INTO no_identity_view_base VALUES ('um'), ('dois');
+
+  -- View só-leitura: sem trigger INSTEAD OF o SQLite recusa qualquer DML.
+  CREATE VIEW plain_view AS SELECT v FROM no_identity_view_base;
+
+  -- View que expõe rowid. Existe para provar que o tipo vem do sqlite_master
+  -- e não do probe: aqui "SELECT rowid FROM rowid_view" responde, e um probe
+  -- ingênuo concluiria identity "rowid" numa view.
+  CREATE VIEW rowid_view AS SELECT rowid, v FROM no_identity_view_base;
+
+  -- View órfã: a base foi embora numa migração e o PRAGMA passa a lançar.
+  CREATE TABLE gone (x TEXT);
+  CREATE VIEW orphan_view AS SELECT x FROM gone;
+  DROP TABLE gone;
 `;
 
 function setup() {
@@ -52,6 +66,69 @@ describe("expo-sqlite adapter", () => {
 
     // WITHOUT ROWID com PK composta → identidade pk
     expect(byName["composite_pk"]?.identity).toBe("pk");
+
+    // Tabela física não carrega kind nem writable: ausente já significa
+    // "tabela, tudo permitido", e não trafegar o óbvio mantém o payload do
+    // refresh idêntico ao de antes num app sem view.
+    expect(byName["visits"]?.kind).toBeUndefined();
+    expect(byName["visits"]?.writable).toBeUndefined();
+  });
+
+  it("lista views ao lado das tabelas, marcadas e sem escrita", async () => {
+    const { adapter } = setup();
+    const byName = Object.fromEntries((await adapter.tables("app.db")).map((t) => [t.name, t]));
+
+    expect(byName["plain_view"]?.kind).toBe("view");
+    expect(byName["plain_view"]?.rowCount).toBe(2);
+    expect(byName["plain_view"]?.columns.map((c) => c.name)).toEqual(["v"]);
+    // Sem trigger INSTEAD OF não há como derivar chave, e o SQLite recusaria
+    // a escrita de qualquer forma.
+    expect(byName["plain_view"]?.identity).toBe("none");
+    expect(byName["plain_view"]?.writable).toEqual({
+      insert: false,
+      update: false,
+      delete: false,
+    });
+    expect(byName["plain_view"]?.dependsOn).toEqual(["no_identity_view_base"]);
+  });
+
+  it("view que expõe rowid continua sendo view — o tipo vem do sqlite_master", async () => {
+    const { adapter, db } = setup();
+    // O probe passa: a coluna existe mesmo.
+    await expect(db.getAllAsync("SELECT rowid FROM rowid_view LIMIT 1")).resolves.toBeDefined();
+
+    const byName = Object.fromEntries((await adapter.tables("app.db")).map((t) => [t.name, t]));
+    // Se o tipo saísse do probe, isto seria "rowid" e o Studio emitiria
+    // `DELETE … WHERE rowid IN (…)` numa view, que o SQLite recusa.
+    expect(byName["rowid_view"]?.kind).toBe("view");
+    expect(byName["rowid_view"]?.identity).toBe("none");
+  });
+
+  it("view órfã aparece com o motivo em vez de derrubar a listagem inteira", async () => {
+    const { adapter } = setup();
+    const tables = await adapter.tables("app.db");
+    const byName = Object.fromEntries(tables.map((t) => [t.name, t]));
+
+    // O ponto do teste: as OUTRAS chegaram. Sem o try/catch, o PRAGMA da view
+    // órfã rejeita a promise inteira e a sidebar fica em branco.
+    expect(byName["visits"]).toBeDefined();
+    expect(byName["plain_view"]).toBeDefined();
+
+    expect(byName["orphan_view"]?.unavailable).toContain("gone");
+    expect(byName["orphan_view"]?.columns).toEqual([]);
+    expect(byName["orphan_view"]?.identity).toBe("none");
+  });
+
+  it("busca global sobrevive a uma view que quebra ao executar", async () => {
+    const { adapter } = setup();
+    const found = await adapter.search("app.db", "dois", 20);
+    expect(found.matches.map((m) => m.table)).toContain("plain_view");
+  });
+
+  it("busca global inclui views", async () => {
+    const { adapter } = setup();
+    const found = await adapter.search("app.db", "dois", 20);
+    expect(found.matches.map((m) => m.table)).toContain("plain_view");
   });
 
   it("pagina, ordena e devolve refs estáveis", async () => {
