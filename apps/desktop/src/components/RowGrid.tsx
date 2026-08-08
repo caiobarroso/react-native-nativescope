@@ -1085,8 +1085,9 @@ export function RowGrid() {
         },
       }));
 
-      // Sem exclusão em lote não há por que oferecer seleção de linha.
-      if (!permissions.bulkDelete) return dataColumns;
+      // Sem exclusão em lote ou sem linhas selecionáveis, não há por que
+      // reservar uma coluna para seleção.
+      if (!permissions.bulkDelete || selectableRows.length === 0) return dataColumns;
 
       return [
         {
@@ -1135,6 +1136,7 @@ export function RowGrid() {
       onToggleRow,
       permissions,
       schema?.columns,
+      selectableRows.length,
       selectedRows,
       selectedTable,
       sortColumn,
