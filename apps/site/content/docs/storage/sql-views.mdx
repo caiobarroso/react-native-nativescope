@@ -1,0 +1,148 @@
+---
+title: SQL views
+description: Views are listed, read, counted and edited like tables — including the INSTEAD OF trigger schemas that sync engines generate.
+---
+
+If your database has views, NativeScope lists them. There is no flag to turn on and nothing to
+register: the studio reads `sqlite_master`, so a view is discovered the same way a table is.
+
+This matters most when the tables your app queries are not the tables your data lives in. A sync
+engine typically stores rows as opaque JSON in an internal table and exposes each app table as a
+view that unpacks it, with `INSTEAD OF` triggers routing writes back. Without view support you would
+open the inspector and see the plumbing — a `data` column holding
+`{"title":"Buy milk","done":0}` — instead of the `todos` your code reads.
+
+## In the sidebar
+
+Views are grouped under their own **VIEWS** heading, below the tables. Each row names what it reads:
+
+```
+TABLES
+  ps_crud                    12
+  ps_data__todos            340
+VIEWS
+  todos                     340   reads: ps_data__todos
+  pending_todos              18   reads: todos, ps_data__todos
+```
+
+The dependency chain is transitive, so a view built on another view names both. That chain is also
+what drives change highlighting — see [Realtime](#realtime) below.
+
+<Callout kind="note">
+If your database has no views, nothing changes. The **VIEWS** heading only renders when there is at
+least one, so the sidebar looks exactly as it did.
+</Callout>
+
+## Reading
+
+A view's columns come from the same `PRAGMA table_info` the studio uses for tables, so the grid,
+sorting, pagination, global search, export and snapshots all work with no special case.
+
+Two details are worth knowing:
+
+- **A `JOIN` view that selects the same column name twice keeps both.** SQLite disambiguates at
+  `CREATE VIEW` time, so `SELECT u.id, o.id` becomes the addressable columns `id` and `id:1` — both
+  are shown, with their own values.
+- **A view whose base table is gone still lists.** That happens mid-migration. The row carries the
+  SQLite error instead of columns, and the rest of the listing is unaffected.
+
+## Writing
+
+SQLite only accepts `INSERT`, `UPDATE` or `DELETE` on a view that has the matching `INSTEAD OF`
+trigger. NativeScope reads those triggers and offers exactly what the database will accept —
+**per operation**, because a view can have only one of the three:
+
+| Triggers present | What the studio offers |
+| --- | --- |
+| `INSTEAD OF UPDATE` + `DELETE` + `INSERT` | Inline editing, insert, single-row delete |
+| `INSTEAD OF INSERT` only | Insert. Editing a cell is refused before the statement runs |
+| None | Read-only, with a lock naming the missing trigger |
+
+### How a row is identified
+
+A view has no rowid and no primary key, so the studio derives the row key from the triggers
+themselves: the columns the `INSTEAD OF UPDATE` (or `DELETE`) trigger reads from `OLD`. That is the
+author's own declaration of what identifies a record, in the one place SQLite lets it be declared.
+
+For a trigger that ends in `WHERE id = OLD.id`, the key is `id`. If no key can be derived, the view
+stays read-only rather than guessing.
+
+### Every write is proved before it happens
+
+On a table, the studio can check afterwards how many rows a statement touched. On a view it cannot:
+with an `INSTEAD OF` trigger, SQLite reports **zero rows changed** for a write that succeeded,
+because the outer statement itself modifies nothing. Verifying after the fact is impossible.
+
+So the guarantee is moved in front of the write. Inside the same transaction, the studio first
+confirms the reference matches exactly one row, then runs the statement:
+
+- matches **one** row → the write proceeds;
+- matches **none** → *row no longer matches* — someone changed it underneath you;
+- matches **more than one** → *reference matches more than one row* — refused, and nothing is written.
+
+The third case is real, not theoretical: a `JOIN` view repeats the left-side key across rows, so
+`id = 1` can address four rows that look distinct in the grid. Editing one of them without this
+check would rewrite all four.
+
+## What is refused, and why
+
+| Operation | On a view |
+| --- | --- |
+| **Empty table** (the eraser) | Refused. `DELETE FROM` skips the truncate optimization on a view and fires the trigger once per row — on a 200k-row sync database that enqueued 200,000 operations for upload to a production server. An inspector button must not generate production traffic |
+| **Bulk delete** of selected rows | Refused. The batch path exists to run one statement instead of N; doing it correctly on a view would be N proofs plus N deletes. Deleting rows one at a time keeps working |
+| **Writing through a positional reference** | Refused. A row with no derivable key can still be read by position, but a position is not an identity and must never address a write |
+
+Each refusal states its reason in the studio. None of them are silent.
+
+## Counting
+
+A table can be measured cheaply before counting it. A view cannot: it has no metadata, and a
+`COUNT(*)` may materialize an entire `JOIN`. So the studio counts views with the limit **inside** the
+subquery, which caps the work by construction rather than by hope. Below the budget the count is
+exact; above it, an estimate renders instantly with a `~` and the exact count arrives from the
+background — the same behaviour as a large table, described in
+[Large datasets](/docs/storage/large-datasets).
+
+## Realtime
+
+SQLite's change hook operates at the VDBE level, which means it never names the view: writing to
+`todos` reports changes on `ps_data__todos` and on whatever else the trigger touched. Two things
+follow, and NativeScope handles both:
+
+- **A write from your app to the base table highlights the views that read it**, so the row you have
+  open lights up instead of a physical table you never opened. It stays **one** event carrying the
+  view names, not one event per view — a single write must not read as several changes in the
+  Timeline.
+- **A write you make from the studio is attributed to the studio**, under the name of the view you
+  actually edited, even though the driver reports two or three physical tables underneath.
+
+## A schema this was built against
+
+The shape below is what a sync engine generates. Every capability on this page comes from reading it
+— there is no vendor-specific code anywhere in NativeScope.
+
+```sql
+CREATE TABLE ps_data__todos (id TEXT PRIMARY KEY, data TEXT);
+
+CREATE VIEW todos AS
+  SELECT id,
+         json_extract(data, '$.title') AS title,
+         json_extract(data, '$.done')  AS done
+    FROM ps_data__todos;
+
+CREATE TRIGGER todos_update INSTEAD OF UPDATE ON todos BEGIN
+  UPDATE ps_data__todos
+     SET data = json_set(data, '$.title', NEW.title, '$.done', NEW.done)
+   WHERE id = OLD.id;
+  INSERT INTO ps_crud (op, payload) VALUES ('PATCH', NEW.id);
+END;
+```
+
+Opening `todos` shows `title` and `done` as real columns. Editing a title writes through the
+trigger, `ps_crud` gains its upload row, and the change is attributed to the studio under the name
+`todos`.
+
+<Callout kind="note">
+The playground app ships this schema. Run it, open the **Sync** tab, and the sidebar shows the
+tables and the views side by side in one database.
+</Callout>
