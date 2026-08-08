@@ -1431,9 +1431,31 @@ export function createSqliteAdapter(identity: {
       const trimmed = sql.trim().replace(/;\s*$/, "");
       const isQuery = /^(select|pragma|with|explain)\b/i.test(trimmed);
       if (isQuery) {
-        // LIMIT implícito: console SQL nunca derruba a UI com 200k linhas.
+        /*
+         * `SELECT u.id, o.id FROM …` devolvia UMA coluna `id`, com o valor da
+         * SEGUNDA — o driver entrega cada linha como objeto JS e a chave
+         * repetida sobrescreve a anterior. Não é só coluna faltando: o que
+         * sobra tem o valor errado, sem aviso nenhum.
+         *
+         * Embrulhar em subconsulta resolve porque o SQLite desambigua nomes de
+         * saída ao materializar (`id`, `id:1`), e aí as chaves do objeto já
+         * chegam distintas. Sem parser, sem criar objeto no banco.
+         *
+         * Só SELECT/WITH: PRAGMA e EXPLAIN não são subconsultáveis. Verificado
+         * que o embrulho não muda resultado em ORDER BY, GROUP BY, window
+         * function, CTE, DISTINCT, UNION e subconsulta correlacionada.
+         */
+        const subqueryable = /^(select|with)\b/i.test(trimmed);
         const hasLimit = /\blimit\s+\d+/i.test(trimmed);
-        const final = hasLimit ? trimmed : `${trimmed} LIMIT ${DEFAULT_SELECT_LIMIT}`;
+        // LIMIT implícito: console SQL nunca derruba a UI com 200k linhas.
+        //
+        // Só em SELECT/WITH. `PRAGMA table_info(x) LIMIT 200` é erro de
+        // sintaxe — a cláusula não existe em PRAGMA nem em EXPLAIN —, então
+        // até aqui as duas só funcionavam no console se o usuário digitasse um
+        // LIMIT à mão. Elas devolvem saída limitada por natureza.
+        const final = subqueryable
+          ? `SELECT * FROM (${trimmed})${hasLimit ? "" : ` LIMIT ${DEFAULT_SELECT_LIMIT}`}`
+          : trimmed;
         const raw = await t.db.getAllAsync(final);
         const columns = raw.length > 0 ? Object.keys(raw[0]!) : [];
         return {

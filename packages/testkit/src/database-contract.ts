@@ -382,6 +382,58 @@ export function describeDatabaseAdapterContract(options: {
     });
 
     /* ---------------------------------------------------------------- */
+    /* Console SQL                                                       */
+    /* ---------------------------------------------------------------- */
+
+    it("console preserva colunas de mesmo nome, com os valores certos", async () => {
+      // Sem o embrulho em subconsulta isto devolvia UMA coluna `id`, com o
+      // valor da SEGUNDA — o driver entrega a linha como objeto JS e a chave
+      // repetida sobrescreve a anterior. Não é coluna faltando: é valor
+      // errado, calado.
+      const harness = await setup();
+      const result = await harness.adapter.execute(
+        harness.instanceId,
+        "SELECT i.id, t.id FROM items i JOIN tags t ON t.item_id = i.id",
+      );
+      expect(result.kind).toBe("rows");
+      if (result.kind !== "rows") return;
+      expect(result.columns).toEqual(["id", "id:1"]);
+      expect(result.rows[0]?.["id"]).toBe(1);
+      expect(result.rows[0]?.["id:1"]).toBe(1);
+      expect(result.rows[1]?.["id:1"]).toBe(2);
+    });
+
+    it("console não muda o resultado de consultas normais", async () => {
+      const harness = await setup();
+      const result = await harness.adapter.execute(
+        harness.instanceId,
+        "SELECT name FROM items ORDER BY name DESC",
+      );
+      if (result.kind !== "rows") throw new Error("esperava linhas");
+      expect(result.rows.map((r) => r["name"])).toEqual(["caneta", "caderno"]);
+    });
+
+    it("console responde PRAGMA — que não aceita LIMIT nem subconsulta", async () => {
+      // Regressão pinada: o LIMIT implícito era colado em QUALQUER leitura, e
+      // `PRAGMA table_info(x) LIMIT 200` é erro de sintaxe. Ou seja, PRAGMA e
+      // EXPLAIN no console só funcionavam se o usuário digitasse um LIMIT.
+      const harness = await setup();
+      const result = await harness.adapter.execute(harness.instanceId, "PRAGMA table_info(items)");
+      if (result.kind !== "rows") throw new Error("esperava linhas");
+      expect(result.rows.map((r) => r["name"])).toEqual(["id", "name", "qty"]);
+    });
+
+    it("console respeita o LIMIT que o usuário escreveu", async () => {
+      const harness = await setup();
+      const result = await harness.adapter.execute(
+        harness.instanceId,
+        "SELECT name FROM items LIMIT 1",
+      );
+      if (result.kind !== "rows") throw new Error("esperava linhas");
+      expect(result.rows).toHaveLength(1);
+    });
+
+    /* ---------------------------------------------------------------- */
     /* Tabela física — o que views não podem ter quebrado                */
     /* ---------------------------------------------------------------- */
 
