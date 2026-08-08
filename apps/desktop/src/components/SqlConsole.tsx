@@ -140,7 +140,7 @@ function tableOptions(tables: TableSchema[]): Completion[] {
     label: table.name,
     apply: quoteIdent(table.name),
     type: "type",
-    detail: `${table.rowCount} rows`,
+    detail: table.kind === "view" ? `view · ${table.rowCount} rows` : `${table.rowCount} rows`,
     info: table.columns.map((column) => `${column.name} ${column.declaredType}`.trim()).join("\n"),
     boost: table.rowCount > 0 ? 2 : 0,
   }));
@@ -474,6 +474,11 @@ function previewSqlForTable(table: TableSchema | undefined, kind: "select" | "co
   if (!table) return "";
   const tableName = quoteIdent(table.name);
   if (kind === "count") return `SELECT COUNT(*) AS total\nFROM ${tableName};`;
+  // Numa view sem INSTEAD OF INSERT o template geraria SQL que o SQLite
+  // recusa. Cair no SELECT é mais útil que oferecer um erro pronto.
+  if (kind === "insert" && table.kind === "view" && table.writable?.insert !== true) {
+    return `SELECT *\nFROM ${tableName}\nLIMIT 100;`;
+  }
   if (kind === "insert") {
     const writable = table.columns.filter((column) => column.pkIndex === 0);
     const columns = writable.length > 0 ? writable : table.columns;

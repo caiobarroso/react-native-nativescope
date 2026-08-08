@@ -199,6 +199,8 @@ interface StudioState {
     source: ChangeSource;
     timestamp: number;
     coalescedCount?: number;
+    /** Views que leem `table` — vêm no mesmo evento, não em eventos separados. */
+    views?: string[];
   }): void;
   focusActivity(item: ActivityItem): void;
   clearActivityFocus(token: number): void;
@@ -206,6 +208,26 @@ interface StudioState {
 
 export function keysId(providerId: string, instanceId: string): string {
   return `${providerId} ${instanceId}`;
+}
+
+/**
+ * Rótulo de uma mudança de banco no feed de atividade e na Timeline.
+ *
+ * Quando exatamente UMA view lê a tabela alterada, é o nome dela que aparece:
+ * numa base onde o dado físico é JSON opaco, o nome da tabela não diz nada ao
+ * dev — ele só conhece a view. Com mais de uma não há como escolher, e o nome
+ * físico volta a ser a resposta honesta.
+ *
+ * O `target` continua apontando para a tabela física: é onde a escrita
+ * realmente aconteceu, e é para lá que o clique tem que navegar.
+ */
+export function activityKey(
+  table: string,
+  views: string[] | undefined,
+  rowId: number | null,
+): string {
+  const name = views !== undefined && views.length === 1 ? (views[0] as string) : table;
+  return rowId !== null ? `${name} · rowid ${rowId}` : name;
 }
 
 /**
@@ -538,7 +560,10 @@ export const useStudio = create<StudioState>((set) => ({
         providerId: input.providerId,
         providerLabel: input.providerLabel,
         instanceId: input.instanceId,
-        key: input.rowId !== null ? `${input.table} · rowid ${input.rowId}` : input.table,
+        // Quando UMA view lê esta tabela, é o nome dela que o dev reconhece —
+        // a tabela física costuma ser encanamento que ele nunca abriu. Com mais
+        // de uma não dá para escolher, então fica o nome físico.
+        key: activityKey(input.table, input.views, input.rowId),
         change:
           input.operation === "insert"
             ? "created"
@@ -550,21 +575,31 @@ export const useStudio = create<StudioState>((set) => ({
         target: { kind: "database", table: input.table, rowId: input.rowId },
         ...(input.coalescedCount !== undefined ? { coalesced: input.coalescedCount } : {}),
       };
-      const tableHistoryKey = `${keysId(input.providerId, input.instanceId)} ${input.table}`;
       // O nonce dispara refetch no RowGrid — só bump quando o evento é da
       // instância selecionada; evento de outro banco não deve custar query.
       const matchesSelection =
         state.selection?.providerId === input.providerId &&
         state.selection.instanceId === input.instanceId;
+
+      // Carimba a tabela E as views que a leem. Sem isso a escrita acende a
+      // linha errada na sidebar: pisca a tabela física, que ninguém abriu, e
+      // deixa parada a view que está na tela.
+      const stamp = Date.now();
+      const prefix = keysId(input.providerId, input.instanceId);
+      let recentChanges = state.recentChanges;
+      for (const name of [input.table, ...(input.views ?? [])]) {
+        recentChanges = withBoundedEntry(
+          recentChanges,
+          `${prefix} ${name}`,
+          stamp,
+          RECENT_CHANGE_LIMIT,
+        );
+      }
+
       return {
         activity: [item, ...state.activity].slice(0, ACTIVITY_LIMIT),
         dbRefreshNonce: matchesSelection ? state.dbRefreshNonce + 1 : state.dbRefreshNonce,
-        recentChanges: withBoundedEntry(
-          state.recentChanges,
-          tableHistoryKey,
-          Date.now(),
-          RECENT_CHANGE_LIMIT,
-        ),
+        recentChanges,
       };
     }),
 

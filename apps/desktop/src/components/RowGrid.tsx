@@ -51,6 +51,7 @@ import {
 } from "../lib/studio-client.ts";
 import { createFileSink } from "../lib/export.ts";
 import { cellText, isBlobCell, type BlobCell } from "../lib/cell-format.ts";
+import { tablePermissions } from "../lib/table-permissions.ts";
 import { AppToast, type AppToastState } from "./AppToast.tsx";
 import { BlobCellModal } from "./BlobCellModal.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
@@ -519,7 +520,10 @@ export function RowGrid() {
   const editingRef = useRef(editing);
   editingRef.current = editing;
 
-  const readOnly = schema?.identity === "none";
+  // Um objeto de permissões no lugar de um booleano: numa view a escrita é por
+  // operação (dá para inserir e não dar para apagar), e "não pode editar" tem
+  // motivos diferentes que o usuário precisa distinguir. Ver table-permissions.
+  const permissions = tablePermissions(schema);
   const selectableRows = rows.filter((row) => row.ref !== null);
   const selectedVisibleRows = selectableRows.filter((row) => {
     const key = refKey(row.ref);
@@ -791,6 +795,10 @@ export function RowGrid() {
   }, [toast]);
 
   useEffect(() => {
+    // O autosave só existe onde a escrita existe. Sem este gate, abrir o JSON
+    // numa tabela só-leitura disparava um updateCell 500 ms depois, que voltava
+    // com a mensagem crua do SQLite — sem o usuário ter pedido para salvar.
+    if (!permissions.update) return;
     if (!jsonCell || jsonCell.draft === jsonCell.original || jsonSaving) return;
     const seq = jsonSaveSeqRef.current + 1;
     jsonSaveSeqRef.current = seq;
@@ -799,7 +807,7 @@ export function RowGrid() {
       void saveJsonCell();
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [jsonCell?.draft, jsonCell?.original, jsonSaving]);
+  }, [jsonCell?.draft, jsonCell?.original, jsonSaving, permissions.update]);
 
   const onStartEdit = useCallback((ref: RowRef, column: string, draft: string) => {
     setEditing({ ref, column, draft });
@@ -948,7 +956,7 @@ export function RowGrid() {
                     openBlob();
                     return;
                   }
-                  if (readOnly) return;
+                  if (!permissions.update) return;
                   if (isTruncated) {
                     // Editar sobre preview truncado corromperia — carrega o
                     // conteúdo completo (stream) antes de abrir a edição.
@@ -967,7 +975,7 @@ export function RowGrid() {
                       : cellText(value)
                 }
                 className={`block h-full min-w-0 flex-1 truncate px-3 text-left ${
-                  readOnly || rowRef === null ? "cursor-default" : "cursor-text"
+                  !permissions.update || rowRef === null ? "cursor-default" : "cursor-text"
                 } ${value === null ? "text-text-subtle" : openBlob ? "text-text-muted" : "text-text"}`}
               >
                 {value === null ? "NULL" : cellText(value)}
@@ -1020,7 +1028,7 @@ export function RowGrid() {
                           draft: jsonDraft(full),
                         });
                       } catch {
-                        if (!readOnly) onStartEdit(rowRef, schemaColumn.name, full);
+                        if (permissions.update) onStartEdit(rowRef, schemaColumn.name, full);
                       }
                     });
                   }}
@@ -1035,7 +1043,8 @@ export function RowGrid() {
         },
       }));
 
-      if (readOnly) return dataColumns;
+      // Sem exclusão em lote não há por que oferecer seleção de linha.
+      if (!permissions.bulkDelete) return dataColumns;
 
       return [
         {
@@ -1082,7 +1091,7 @@ export function RowGrid() {
       onDraftChange,
       onStartEdit,
       onToggleRow,
-      readOnly,
+      permissions,
       schema?.columns,
       selectedRows,
       selectedTable,
@@ -1481,7 +1490,7 @@ export function RowGrid() {
             </span>
             <button
               onClick={() => setDeleteRowsConfirmOpen(true)}
-              disabled={loading || deletingRows || readOnly}
+              disabled={loading || deletingRows || !permissions.bulkDelete}
               className="inline-flex h-7 items-center gap-1 rounded-md border border-deleted/30 bg-deleted-wash px-2.5 text-[11px] font-medium text-deleted disabled:opacity-40"
             >
               <Trash2 size={12} strokeWidth={1.5} />
@@ -1495,7 +1504,7 @@ export function RowGrid() {
             </button>
           </>
         )}
-        {!readOnly && (
+        {permissions.insert && (
           <button
             onClick={() => {
               setInsertError(null);
@@ -1512,11 +1521,11 @@ export function RowGrid() {
           onClick={() => void refreshVisibleWindow()}
           disabled={loading}
           title="Reload rows"
-          className={`${readOnly ? "ml-auto" : ""} inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40`}
+          className={`${permissions.insert ? "" : "ml-auto"} inline-flex h-7 w-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-hover hover:text-text disabled:opacity-40`}
         >
           <RefreshCw size={14} strokeWidth={1.5} />
         </button>
-        {!readOnly && (
+        {permissions.deleteAll && (
           <button
             onClick={() => setDeleteAllConfirm({ typed: "" })}
             disabled={loading || total === 0}
@@ -1547,10 +1556,9 @@ export function RowGrid() {
           <Download size={14} strokeWidth={1.5} />
         </button>
       </div>
-      {readOnly && (
+      {permissions.reason !== null && (
         <div className="shrink-0 border-b border-border bg-surface-sunken px-4 py-2 text-[12px] text-text-muted">
-          Read only: this table has no rowid or primary key, so rows cannot be
-          edited safely without a stable identity.
+          {permissions.reason}
         </div>
       )}
       {error && (

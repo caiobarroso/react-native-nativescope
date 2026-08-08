@@ -572,6 +572,7 @@ function handleEvent(event: Extract<AnyMessage, { kind: "event" }>): void {
         ...(event.payload.coalescedCount !== undefined
           ? { coalescedCount: event.payload.coalescedCount }
           : {}),
+        ...(event.payload.views !== undefined ? { views: event.payload.views } : {}),
       });
       scheduleTableRefresh(event.payload.providerId, event.payload.instanceId);
       return;
