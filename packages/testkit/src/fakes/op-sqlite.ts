@@ -61,8 +61,52 @@ export function createFakeOpSqlite(options: FakeOpSqliteOptions = {}): FakeOpSql
         }),
       );
     } catch {
+      // Sem rowid (view ou WITHOUT ROWID): snapshot vazio, e o hook não dispara
+      // — que é o comportamento do hook real, documentado para WITHOUT ROWID.
       return new Map();
     }
+  }
+
+  let rowidTables: string[] | null = null;
+
+  /** Tabelas com rowid — as únicas em que o `sqlite3_update_hook` dispara. */
+  function physicalTables(): string[] {
+    if (rowidTables) return rowidTables;
+    const names = raw
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+      .all()
+      .map((row) => String((row as Record<string, unknown>)["name"]));
+    rowidTables = names.filter((name) => {
+      try {
+        raw.prepare(`SELECT rowid FROM "${name}" LIMIT 1`).all();
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    return rowidTables;
+  }
+
+  /**
+   * Quais tabelas o hook pode nomear para este statement.
+   *
+   * O hook é a nível de VDBE, então numa VIEW ele nunca nomeia a view: dispara
+   * nas tabelas FÍSICAS que os triggers `INSTEAD OF` escreveram — e podem ser
+   * várias (a base e a fila de upload, num motor de sync). Sem isto o fake
+   * tentava `SELECT rowid FROM "<view>"`, o snapshot vinha vazio e o hook
+   * simplesmente não disparava: o contrato passava verde provando nada sobre
+   * realtime de view, que é justamente onde o driver e o adapter divergem.
+   */
+  function footprint(sql: string): string[] {
+    const target = statementTable(sql);
+    const isView =
+      raw.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = ?`).get(target) !==
+      undefined;
+    return isView ? physicalTables() : [target];
+  }
+
+  function snapshotFootprint(sql: string): Map<string, Map<number, string>> {
+    return new Map(footprint(sql).map((table) => [table, snapshot(table)]));
   }
 
   /**
@@ -75,24 +119,25 @@ export function createFakeOpSqlite(options: FakeOpSqliteOptions = {}): FakeOpSql
    * E, crucialmente, o fake sabe o que o hook real NÃO cobre: DDL e
    * `DELETE FROM t` sem WHERE (truncate optimization).
    */
-  function fireHook(sql: string, before: Map<number, string> | null): void {
+  function fireHook(sql: string, before: Map<string, Map<number, string>> | null): void {
     if (!hook || !before) return;
     if (DDL_RE.test(sql)) return;
     const operation = OPERATION_RE.exec(sql)?.[1]?.toUpperCase();
     if (!operation) return;
     if (operation === "DELETE" && !/\bwhere\b/i.test(sql)) return;
 
-    const table = statementTable(sql);
-    const after = snapshot(table);
-    const emit = (op: string, rowId: number): void => hook?.({ table, operation: op, rowId });
+    for (const [table, rowsBefore] of before) {
+      const after = snapshot(table);
+      const emit = (op: string, rowId: number): void => hook?.({ table, operation: op, rowId });
 
-    for (const [rowId, value] of after) {
-      const previous = before.get(rowId);
-      if (previous === undefined) emit("INSERT", rowId);
-      else if (previous !== value) emit("UPDATE", rowId);
-    }
-    for (const rowId of before.keys()) {
-      if (!after.has(rowId)) emit("DELETE", rowId);
+      for (const [rowId, value] of after) {
+        const previous = rowsBefore.get(rowId);
+        if (previous === undefined) emit("INSERT", rowId);
+        else if (previous !== value) emit("UPDATE", rowId);
+      }
+      for (const rowId of rowsBefore.keys()) {
+        if (!after.has(rowId)) emit("DELETE", rowId);
+      }
     }
   }
 
@@ -101,6 +146,11 @@ export function createFakeOpSqlite(options: FakeOpSqliteOptions = {}): FakeOpSql
     params: unknown[],
   ): { rows: unknown[]; rowsAffected: number; insertId?: number } {
     executed.push(sql);
+    // DDL muda quais tabelas existem e quais têm rowid. Em qualquer posição:
+    // este `run` também recebe lote separado por `;`.
+    if (/\b(?:create|drop|alter)\s+(?:temp\s+|temporary\s+)?(?:table|view)\b/i.test(sql)) {
+      rowidTables = null;
+    }
 
     // Multi-statement: o op-sqlite itera todos; node:sqlite só aceita via exec.
     if (sql.trim().replace(/;\s*$/, "").includes(";")) {
@@ -109,7 +159,7 @@ export function createFakeOpSqlite(options: FakeOpSqliteOptions = {}): FakeOpSql
         .map((p) => p.trim())
         .filter(Boolean);
       const before = parts.map((part) =>
-        hook && !DDL_RE.test(part) ? snapshot(statementTable(part)) : null,
+        hook && !DDL_RE.test(part) ? snapshotFootprint(part) : null,
       );
       raw.exec(sql);
       parts.forEach((part, index) => fireHook(part, before[index] ?? null));
@@ -125,7 +175,7 @@ export function createFakeOpSqlite(options: FakeOpSqliteOptions = {}): FakeOpSql
       return { rows, rowsAffected: 0 };
     }
 
-    const before = hook && !DDL_RE.test(sql) ? snapshot(statementTable(sql)) : null;
+    const before = hook && !DDL_RE.test(sql) ? snapshotFootprint(sql) : null;
     const info = raw.prepare(sql).run(...bound);
     const rowsAffected = Number(info.changes);
     const lastInsertRowId = Number(info.lastInsertRowid);
