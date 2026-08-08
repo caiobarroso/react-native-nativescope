@@ -68,6 +68,70 @@ async function getDb() {
           score INTEGER NOT NULL,
           created_at TEXT NOT NULL
         );
+
+        -- ---------------------------------------------------------------
+        -- Formato de motor de sync (PowerSync e afins) em miniatura.
+        --
+        -- O dado sincronizado mora como JSON opaco numa tabela interna, e a
+        -- "tabela" que o app enxerga é uma VIEW que o desempacota. As escritas
+        -- voltam por triggers INSTEAD OF, que gravam no depósito e enfileiram
+        -- na fila de upload. O app nunca toca ps_data__notes.
+        --
+        -- Mora no MESMO banco de propósito: tabelas e views na mesma instância
+        -- é o que torna o agrupamento da sidebar visível.
+        -- ---------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS ps_data__notes (
+          id TEXT PRIMARY KEY,
+          data TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ps_crud (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          op TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE VIEW IF NOT EXISTS notes AS
+          SELECT id,
+                 json_extract(data, '$.title')      AS title,
+                 json_extract(data, '$.body')       AS body,
+                 json_extract(data, '$.pinned')     AS pinned,
+                 json_extract(data, '$.created_at') AS created_at
+            FROM ps_data__notes;
+
+        CREATE TRIGGER IF NOT EXISTS notes_insert INSTEAD OF INSERT ON notes
+        BEGIN
+          INSERT INTO ps_data__notes (id, data) VALUES (
+            NEW.id,
+            json_object('title', NEW.title, 'body', NEW.body,
+                        'pinned', NEW.pinned, 'created_at', NEW.created_at)
+          );
+          INSERT INTO ps_crud (op, payload, created_at)
+            VALUES ('PUT', json_object('type', 'notes', 'id', NEW.id), datetime('now'));
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS notes_update INSTEAD OF UPDATE ON notes
+        BEGIN
+          UPDATE ps_data__notes
+             SET data = json_set(data, '$.title', NEW.title,
+                                       '$.body', NEW.body,
+                                       '$.pinned', NEW.pinned)
+           WHERE id = OLD.id;
+          INSERT INTO ps_crud (op, payload, created_at)
+            VALUES ('PATCH', json_object('type', 'notes', 'id', OLD.id), datetime('now'));
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS notes_delete INSTEAD OF DELETE ON notes
+        BEGIN
+          DELETE FROM ps_data__notes WHERE id = OLD.id;
+          INSERT INTO ps_crud (op, payload, created_at)
+            VALUES ('DELETE', json_object('type', 'notes', 'id', OLD.id), datetime('now'));
+        END;
+
+        -- View SOBRE view, e sem trigger nenhum: exercita dependência
+        -- transitiva e o caminho só-leitura.
+        CREATE VIEW IF NOT EXISTS pinned_notes AS
+          SELECT id, title FROM notes WHERE pinned = 1;
       `);
       return db;
     })();
@@ -128,6 +192,13 @@ const TOY_EMOJIS = ["🧸", "🚗", "🪀", "🎈", "🧩", "🪁", "⚽", "🎨
 const PLAYER_NAMES = ["Alex", "Sam", "Kai", "Nova", "Max", "Luna", "Finn", "Ivy", "Theo", "Mia", "Ezra", "Remy"];
 const PHOTO_TITLES = ["sunset", "trail", "downtown", "waterfall", "harbor", "rooftop", "market", "dunes"];
 const PHOTO_EMOJIS = ["🌅", "🥾", "🏙️", "💦", "⛵", "🌇", "🍉", "🏜️"];
+const NOTE_TITLES = ["Groceries", "Standup notes", "Book list", "Trip plan", "Ideas", "Recipes", "Follow-ups"];
+const NOTE_BODIES = [
+  "Milk, eggs, coffee beans.",
+  "Ship the sync adapter, then review the migration.",
+  "Three things worth remembering from today.",
+  "Leaves at 7, gate B, do not forget the charger.",
+];
 
 function randomFrom(list) {
   return list[Math.floor(Math.random() * list.length)];
@@ -154,6 +225,7 @@ const TABS = [
   { key: "toys", label: "Toys", icon: "🧸" },
   { key: "scores", label: "Scores", icon: "🏆" },
   { key: "photos", label: "Photos", icon: "📸" },
+  { key: "sync", label: "Sync", icon: "🔄" },
   { key: "api", label: "Request", icon: "🌐" },
   { key: "logs", label: "Logs", icon: "📝" },
 ];
@@ -168,6 +240,7 @@ function Shell() {
         {tab === "toys" && <ToysScreen />}
         {tab === "scores" && <ScoresScreen />}
         {tab === "photos" && <PhotosScreen />}
+        {tab === "sync" && <SyncScreen />}
         {tab === "api" && <ApiScreen />}
         {tab === "logs" && <LogsScreen />}
       </View>
@@ -433,6 +506,70 @@ async function clearScores() {
   await db.execAsync("DELETE FROM players; DELETE FROM sqlite_sequence WHERE name = 'players';");
 }
 
+// ==================================================== Sync (SQLite, views)
+// O app só fala com a VIEW `notes`. A tabela física guarda JSON opaco e nunca
+// é lida aqui — é exatamente o que acontece num app com motor de sync, e o
+// motivo de o inspector precisar enxergar view.
+
+async function readNotes() {
+  const db = await getDb();
+  const notes = await db.getAllAsync(
+    "SELECT id, title, body, pinned FROM notes ORDER BY created_at DESC LIMIT 20",
+  );
+  const [countRow] = await db.getAllAsync("SELECT COUNT(*) AS n FROM notes");
+  // A fila de upload: é onde a escrita feita pelo Studio aparece, provando que
+  // ela entrou no fluxo de sync em vez de contornar por fora.
+  const outbox = await db.getAllAsync(
+    "SELECT id, op, payload FROM ps_crud ORDER BY id DESC LIMIT 5",
+  );
+  return { total: Number(countRow?.n ?? 0), notes, outbox };
+}
+
+async function insertNotes(count) {
+  const db = await getDb();
+  const createdAt = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    const stmt = await db.prepareAsync(
+      "INSERT INTO notes (id, title, body, pinned, created_at) VALUES (?, ?, ?, ?, ?)",
+    );
+    try {
+      for (let i = 0; i < count; i += 1) {
+        await stmt.executeAsync([
+          `n_${Date.now().toString(36)}_${i}_${randomInt(0, 9999)}`,
+          randomFrom(NOTE_TITLES),
+          randomFrom(NOTE_BODIES),
+          0,
+          createdAt,
+        ]);
+      }
+    } finally {
+      await stmt.finalizeAsync();
+    }
+  });
+}
+
+async function togglePin() {
+  const db = await getDb();
+  const [note] = await db.getAllAsync(
+    "SELECT id, title, body, pinned FROM notes ORDER BY RANDOM() LIMIT 1",
+  );
+  if (!note) return;
+  await db.runAsync("UPDATE notes SET title = ?, body = ?, pinned = ? WHERE id = ?", [
+    note.title,
+    note.body,
+    note.pinned ? 0 : 1,
+    note.id,
+  ]);
+}
+
+async function clearNotes() {
+  const db = await getDb();
+  // Pela tabela física, e não `DELETE FROM notes`: numa view isso dispararia o
+  // trigger uma vez por linha e encheria a fila de upload — é a mesma razão
+  // pela qual o Studio recusa o botão de esvaziar em view.
+  await db.execAsync("DELETE FROM ps_data__notes; DELETE FROM ps_crud;");
+}
+
 // Botão secreto (long-press no troféu): zera 100% do storage que este app usa —
 // MMKV, AsyncStorage e todas as tabelas do SQLite. Serve para resetar entre
 // tomadas da demo sem reinstalar o app.
@@ -448,6 +585,10 @@ async function wipeEverything() {
   // AsyncStorage
   await AsyncStorage.clear();
   // SQLite — esvazia toda tabela de usuário e reseta os AUTOINCREMENT.
+  //
+  // Continua enumerando só `type = 'table'`, e isso está certo: view não tem
+  // armazenamento para limpar. Apagar ps_data__notes esvazia `notes` por
+  // construção, que é justamente o ponto da aba Sync.
   const db = await getDb();
   const tables = await db.getAllAsync(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -667,6 +808,74 @@ function ScoresScreen() {
       </View>
 
       <GhostButton label="Clear the board" onPress={() => clear.mutate()} />
+      <LiveHint />
+    </ScrollView>
+  );
+}
+
+function SyncScreen() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["notes"], queryFn: readNotes });
+  const total = data?.total ?? 0;
+  const notes = data?.notes ?? [];
+  const outbox = data?.outbox ?? [];
+  const refresh = { onSuccess: () => qc.invalidateQueries({ queryKey: ["notes"] }) };
+
+  const add = useMutation({ mutationFn: (count) => insertNotes(count), ...refresh });
+  const pin = useMutation({ mutationFn: togglePin, ...refresh });
+  const clear = useMutation({ mutationFn: clearNotes, ...refresh });
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <Header
+        emoji="🔄"
+        title="Sync"
+        subtitle="The app only talks to a view — open notes in NativeScope"
+      />
+      <BigCount value={total} unit={total === 1 ? "note" : "notes"} />
+
+      <View style={styles.buttonRow}>
+        <BigButton label="Add a note" emoji="➕" onPress={() => add.mutate(1)} />
+        <BigButton label="Add 20" emoji="🚀" onPress={() => add.mutate(20)} />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Notes</Text>
+        {notes.length === 0 ? (
+          <Text style={styles.empty}>No notes yet — add some!</Text>
+        ) : (
+          notes.slice(0, 6).map((note) => (
+            <View key={note.id} style={styles.noteRow}>
+              <Text style={styles.notePin}>{note.pinned ? "📌" : "·"}</Text>
+              <View style={styles.noteText}>
+                <Text style={styles.noteTitle}>{note.title}</Text>
+                <Text style={styles.noteBody} numberOfLines={1}>
+                  {note.body}
+                </Text>
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Upload queue</Text>
+        {outbox.length === 0 ? (
+          <Text style={styles.empty}>Empty — every write lands here first.</Text>
+        ) : (
+          outbox.map((row) => (
+            <View key={row.id} style={styles.outboxRow}>
+              <Text style={styles.outboxOp}>{row.op}</Text>
+              <Text style={styles.outboxPayload} numberOfLines={1}>
+                {row.payload}
+              </Text>
+            </View>
+          ))
+        )}
+      </View>
+
+      <GhostButton label="Pin a random note" onPress={() => pin.mutate()} />
+      <GhostButton label="Clear the notes" onPress={() => clear.mutate()} />
       <LiveHint />
     </ScrollView>
   );
@@ -1451,6 +1660,35 @@ const styles = StyleSheet.create({
     borderTopColor: "#f0ece4",
   },
   rank: { fontSize: 15, fontWeight: "900", color: MUTED, width: 22 },
+
+  noteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#f0ece4",
+  },
+  notePin: { fontSize: 15, width: 20, textAlign: "center", color: MUTED },
+  noteText: { flex: 1, minWidth: 0 },
+  noteTitle: { fontSize: 15, fontWeight: "700", color: INK },
+  noteBody: { fontSize: 13, color: MUTED, marginTop: 1 },
+  outboxRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: "#f0ece4",
+  },
+  outboxOp: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: CORAL,
+    width: 56,
+    letterSpacing: 0.4,
+  },
+  outboxPayload: { flex: 1, fontSize: 12, color: MUTED, fontFamily: "Menlo" },
   scoreEmoji: { fontSize: 24 },
   scoreName: { flex: 1, fontSize: 17, fontWeight: "700", color: INK },
   scoreValue: { fontSize: 16, fontWeight: "800", color: CORAL },
