@@ -149,4 +149,13 @@ export interface DatabaseChange {
   rowId: number | null;
   operation: "insert" | "update" | "delete" | "unknown";
   source: ChangeSource;
+  /**
+   * Views que leem `table`. Presente só quando existem.
+   *
+   * UM evento enriquecido, e não um evento por view dependente: numa base
+   * onde a tabela física guarda JSON e a view é o que o app enxerga, emitir
+   * os dois leria como dois fatos distintos na Timeline sem forma de saber
+   * que são a mesma escrita.
+   */
+  views?: string[];
 }

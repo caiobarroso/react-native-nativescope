@@ -379,6 +379,15 @@ describe("op-sqlite — detecção de SQL", () => {
     ["CREATE TABLE IF NOT EXISTS photos (v)", "photos"],
     ["DROP TABLE photos", "photos"],
     ["VACUUM", null],
+    // DDL de view/trigger/index: antes caía em null, ou seja, invalidava o
+    // schema inteiro em vez de escopar. Escopar importa porque um refresh de
+    // schema custa um PRAGMA por objeto.
+    ["CREATE VIEW recent AS SELECT * FROM photos", "recent"],
+    ["CREATE VIEW IF NOT EXISTS recent AS SELECT 1", "recent"],
+    ["DROP VIEW recent", "recent"],
+    ["CREATE TRIGGER recent_upd INSTEAD OF UPDATE ON recent BEGIN SELECT 1; END", "recent_upd"],
+    ["CREATE TEMP VIEW scratch AS SELECT 1", "scratch"],
+    ["CREATE INDEX ix_photos ON photos (a)", "ix_photos"],
   ])("mutationTable(%s) = %s", (sql, expected) => {
     expect(mutationTable(sql)).toBe(expected);
   });

@@ -260,6 +260,7 @@ export function startRuntime(options: RuntimeOptions): Runtime {
         operation: change.operation,
         source: change.source,
         ...(coalescedCount > 1 ? { coalescedCount } : {}),
+        ...(change.views && change.views.length > 0 ? { views: change.views } : {}),
       },
     });
     emitAppDevtoolsChange({

@@ -29,15 +29,11 @@ if (runtime) {
     runtime.registry.register(adapter);
     const databaseByPath = new Map();
 
-    const mutationTable = (sql) => {
-      const trimmed = String(sql || "").trim();
-      const match =
-        /^(?:insert|replace)\s+into\s+["'`]?([A-Za-z_][\w]*)/i.exec(trimmed) ||
-        /^update\s+["'`]?([A-Za-z_][\w]*)/i.exec(trimmed) ||
-        /^delete\s+from\s+["'`]?([A-Za-z_][\w]*)/i.exec(trimmed) ||
-        /^(?:create|drop|alter)\s+table(?:\s+if\s+(?:not\s+)?exists)?\s+["'`]?([A-Za-z_][\w]*)/i.exec(trimmed);
-      return match ? match[1] : null;
-    };
+    // Vindas do runtime, não recopiadas aqui. Esta cópia existiu por um tempo
+    // e divergiu em silêncio da versão do op-sqlite: quando o DDL de VIEW
+    // passou a ser reconhecido lá, o expo continuou sem reconhecer. Shim é
+    // cola; o que tem lógica mora onde há tipo e teste.
+    const { mutationTable, isDdl } = rnsi;
 
     const isMutation = (sql) =>
       /^\s*(insert|replace|update|delete|create|drop|alter)\b/i.test(String(sql || ""));
@@ -76,9 +72,7 @@ if (runtime) {
       const notifyMutation = (sql, rowId = null) => {
         if (!isMutation(sql)) return;
         const table = mutationTable(sql) ?? "*";
-        if (/^\s*(create|drop|alter)\b/i.test(String(sql || ""))) {
-          adapter.notifySchemaChanged(name, table);
-        }
+        if (isDdl(sql)) adapter.notifySchemaChanged(name, table);
         adapter.notifyAppMutation(
           name,
           table,

@@ -238,8 +238,32 @@ export function createSqliteAdapter(identity: {
     return t;
   }
 
+  /**
+   * Teto de nomes por evento. Um schema patológico (uma tabela lida por
+   * dezenas de views) não pode inflar o fio; acima disso a UI já não teria o
+   * que fazer com a lista de qualquer forma.
+   */
+  const MAX_DEPENDENT_VIEWS = 32;
+
+  /**
+   * Anexa as views que leem a tabela alterada.
+   *
+   * Aplicado DENTRO do emit de propósito: hook nativo, fallback JS, eco do
+   * Studio, exclusão em lote e esvaziamento passam todos por aqui, então
+   * nenhum caminho — nem um futuro — consegue esquecer a atribuição.
+   *
+   * Só usa catálogo já carregado: o emit é síncrono e está no caminho quente
+   * de um evento do banco. Sem catálogo, o evento sai sem views e o Studio se
+   * comporta como antes — nada quebra, só fica menos preciso até a próxima
+   * listagem, que é quando o catálogo chega.
+   */
   function emit(t: Tracked, change: DatabaseChange): void {
-    for (const listener of t.listeners) listener(change);
+    const dependents = t.catalog?.dependents.get(change.table);
+    const enriched: DatabaseChange =
+      dependents && dependents.length > 0
+        ? { ...change, views: dependents.slice(0, MAX_DEPENDENT_VIEWS) }
+        : change;
+    for (const listener of t.listeners) listener(enriched);
   }
 
   function recentKeys(table: string, rowId: number | null): string[] {

@@ -298,6 +298,46 @@ describe("expo-sqlite adapter", () => {
     });
   });
 
+  describe("atribuição de mudança", () => {
+    it("um evento na tabela física carrega as views que a leem", async () => {
+      const { adapter, changes } = setup();
+      // Carrega o catálogo — é dele que sai o grafo de dependências.
+      await adapter.tables("app.db");
+
+      adapter.notifyNativeChange("app.db", "ps_data__notes", 1, "UPDATE");
+
+      // UM evento, não dois. Emitir um por view dependente leria como dois
+      // fatos distintos na Timeline sem forma de saber que são a mesma
+      // escrita.
+      expect(changes).toHaveLength(1);
+      expect(changes[0]?.table).toBe("ps_data__notes");
+      expect(changes[0]?.views).toEqual(["notes"]);
+    });
+
+    it("escrita em tabela sem view dependente não carrega o campo", async () => {
+      const { adapter, changes } = setup();
+      await adapter.tables("app.db");
+      adapter.notifyNativeChange("app.db", "visits", 1, "UPDATE");
+      expect(changes[0]?.views).toBeUndefined();
+    });
+
+    it("view sobre view é atribuída transitivamente", async () => {
+      const db = createNodeSqlite(`
+        CREATE TABLE base (id INTEGER PRIMARY KEY, v TEXT);
+        CREATE VIEW mid AS SELECT id, v FROM base;
+        CREATE VIEW top AS SELECT id FROM mid;
+      `);
+      const adapter = createExpoSqliteAdapter();
+      adapter.registerDatabase("chain.db", db);
+      const changes: DatabaseChange[] = [];
+      adapter.subscribe("chain.db", (c) => changes.push(c));
+      await adapter.tables("chain.db");
+
+      adapter.notifyNativeChange("chain.db", "base", 1, "INSERT");
+      expect(changes[0]?.views?.slice().sort()).toEqual(["mid", "top"]);
+    });
+  });
+
   it("chave NULA é editável — `IS ?` acha a linha que `= ?` nunca achava", async () => {
     // Numa tabela isso é inalcançável: WITHOUT ROWID exige PK NOT NULL. Numa
     // view a chave sai de expressão, e `json_extract` de campo ausente devolve
