@@ -1,0 +1,162 @@
+---
+title: Troubleshooting
+description: The errors you can actually hit when starting NativeScope, what causes each one, and the fix.
+---
+
+Most problems at startup come from the same place: `nativescope` runs the studio **and** your
+bundler in one terminal, so two programs are printing to the same screen. This page separates them.
+
+## Who printed this line?
+
+Every line NativeScope writes after startup is prefixed:
+
+```
+[nativescope] app connected: iPhone 15 Pro (ios)
+```
+
+The terminal is also split by a ruler labelled with the exact command NativeScope launched:
+
+```
+-------------------------------------------- npx expo start --port 8081 --
+```
+
+The ruler marks the point where the bundler takes over the terminal. Unprefixed lines below it
+come from Expo (or the React Native CLI), including the interactive keys it lists — `i`, `a`, `r`,
+`j` — and any error they produce. NativeScope messages remain prefixed wherever they appear.
+
+## `TypeError: fetch failed` after pressing `i` or `a`
+
+**This one is not NativeScope.** It comes from the Expo CLI, and you can reproduce it with the
+same project command, for example `npx expo start`.
+
+Pressing `i` asks Expo to open the iOS Simulator. Before it does, Expo checks with its own servers
+which Expo Go build matches your SDK version. That check is an ordinary internet request, and when
+it fails, Node reports it as a bare `TypeError: fetch failed`.
+
+So it means one of:
+
+- you are offline, or the network dropped for a moment;
+- a VPN, corporate proxy, or firewall is blocking `api.expo.dev`;
+- Expo's API is having a bad minute.
+
+**What to do**
+
+1. Press `i` again. A transient failure usually clears on the second try.
+2. If it keeps failing, open the app yourself on the simulator and reload it from the
+   NativeScope-owned Metro. The launch mechanism does not matter; the bundle source does.
+3. Check the VPN or proxy if you are on a managed network.
+
+<Callout kind="note">
+  A development build (`expo-dev-client`) does not need Expo Go's version lookup. Expo CLI can still
+  perform other background dependency checks, so it is not a promise that every startup operation is
+  offline. If this specific error is frequent, a development build is the durable fix.
+</Callout>
+
+## `Metro port is already in use`
+
+NativeScope checks the preferred Metro port before spawning the bundler. If it is already occupied,
+NativeScope chooses the next free local port and prints the exact command it is starting:
+
+```
+Metro
+  Port 8081 is already in use. NativeScope will use port 8082
+  for the Metro it starts:  npx expo start --port 8082
+```
+
+The explicit `--port` keeps the app's bundle and NativeScope's Metro wrapper aligned. Do not start
+another Metro for the same workflow in a second terminal; use the command NativeScope printed and
+reload the app.
+
+**What to do**
+
+- Let NativeScope continue on the printed port, or stop the existing process if you need to reclaim 8081.
+- If you want to own Metro yourself, stop this NativeScope process and use
+  [`--no-metro`](#running-metro-yourself) so there is only one bundler in the workflow.
+- If NativeScope reports that it could not find a free port, stop an unused bundler and run it
+  again.
+
+The most common cause is running `npx expo start` in a second terminal. You do not need to —
+`nativescope` already started it. If you would rather own that command, see
+[Running Metro yourself](#running-metro-yourself) below.
+
+## Nothing appears in the studio
+
+The studio is up but no app ever connects. In order of likelihood:
+
+1. **The app has not reloaded since NativeScope started.** The session — port and token — is baked
+   into the bundle. Reload the app.
+2. **Two bundlers are running.** See the section above. This is the failure mode with no error
+   message.
+3. **Metro started before the NativeScope config existed.** Restart Metro.
+4. **Physical iPhone without `--lan`.** A device on Wi-Fi cannot reach your Mac's loopback. See
+   [Devices & connection](/docs/storage/devices).
+5. **Android device with no tunnel.** NativeScope reapplies `adb reverse` on its own, but it needs
+   `adb` on your `PATH` and an authorized device — it reports both, prefixed with `[nativescope]`.
+
+## `Metro stopped unexpectedly`
+
+NativeScope shuts down when its Metro child exits. For a numeric non-zero exit it returns the same
+code instead of pretending everything was fine; a signal or a spawn failure returns `1`.
+
+Run the exact command it names directly in your project folder — including its `--port` — to see
+the full error. It is almost always a missing dependency, a broken `metro.config.js`, or a Node
+version the project does not support.
+
+## `Port 4782 is already in use`
+
+That is NativeScope's own port, not Metro's. Another NativeScope is running — often one left behind
+in a background terminal. Close it, or pick a different port:
+
+<InstallCommand run="nativescope --port 4900" />
+
+## Metro config needs a manual step
+
+NativeScope creates or wraps `metro.config.js` for you, but it will not rewrite a
+`metro.config.ts`, `.cjs`, or `.mjs` — a codemod on those is too likely to break something. It stops
+and prints a variant-appropriate wrapper. For CommonJS (`.cjs`):
+
+```js
+const { withNativeScope } = require("react-native-nativescope/metro");
+
+module.exports = withNativeScope(yourConfig, { projectRoot: __dirname });
+```
+
+For ESM or TypeScript (`.mjs`/`.ts`), keep your existing config expression and export the wrapped
+value:
+
+```ts
+import { withNativeScope } from "react-native-nativescope/metro";
+
+export default withNativeScope(yourConfig, { projectRoot: process.cwd() });
+```
+
+`withNativeScope` wraps your config; it does not replace it. Run NativeScope again afterwards.
+
+## The studio tab says the session is invalid
+
+You are looking at a tab left open from an earlier session, holding a token that no longer applies.
+NativeScope says so in the terminal. Close the tab and open the Studio URL printed at startup.
+
+The token persists across restarts precisely so this stays rare — restarting the CLI does not
+invalidate an open tab. Rotate it deliberately with `--new-token`.
+
+## Running Metro yourself
+
+If you already have a Metro workflow — a custom start script, an IDE launch, your own terminal —
+tell NativeScope to stay out of it:
+
+<InstallCommand run="nativescope --no-metro" />
+
+NativeScope then starts only the studio, and you attach the resolver once in your Metro config. The
+full setup is in [Devices & connection](/docs/storage/devices#bring-your-own-metro).
+
+Never combine the two: `nativescope` on its own already runs Metro, so adding your own
+`expo start` alongside it creates two competing bundlers. If you own the Metro process, use
+`--no-metro`.
+
+## Still stuck
+
+Open an issue with the terminal output from the first line to the error, including the ruler. Which
+side of that ruler the error is on is usually the whole diagnosis.
+
+[github.com/caiobarroso/react-native-nativescope/issues](https://github.com/caiobarroso/react-native-nativescope/issues)

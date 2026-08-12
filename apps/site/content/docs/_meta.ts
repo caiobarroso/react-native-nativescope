@@ -45,6 +45,7 @@ export const storageDocsNav: DocGroup[] = [
     title: "Reference",
     items: [
       { slug: "storage/cli", title: "CLI" },
+      { slug: "storage/troubleshooting", title: "Troubleshooting" },
       { slug: "storage/api", title: "App API" },
       { slug: "storage/privacy", title: "Privacy & security" },
     ],

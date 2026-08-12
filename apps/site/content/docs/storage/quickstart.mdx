@@ -82,6 +82,11 @@ If you manage Metro yourself, run `nativescope --no-metro` and attach the wrappe
 config. [Devices & connection](/docs/storage/devices#bring-your-own-metro) covers that setup, when to choose
 it, and how it compares to letting NativeScope start Metro for you.
 
+Do not run both: `nativescope` on its own already starts Metro, and it prints the exact port and
+command it owns. A second `expo start` in another terminal creates two competing bundlers. If the
+preferred port is occupied, NativeScope selects a free one instead of letting the bundler choose silently.
+See [Troubleshooting](/docs/storage/troubleshooting#metro-port-is-already-in-use).
+
 ## Common adjustments
 
 Use a different port:
