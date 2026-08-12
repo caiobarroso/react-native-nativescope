@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMetroConfig } from "./metro-config.ts";
@@ -39,7 +45,9 @@ module.exports = getDefaultConfig(__dirname);
     expect(result.status).toBe("wrapped");
 
     // original intacto no backup
-    expect(readFileSync(join(dir, "metro.config.original.js"), "utf8")).toBe(original);
+    expect(readFileSync(join(dir, "metro.config.original.js"), "utf8")).toBe(
+      original,
+    );
     // delegate requer o original e embrulha
     const delegate = readFileSync(join(dir, "metro.config.js"), "utf8");
     expect(delegate).toContain('require("./metro.config.original.js")');
@@ -75,12 +83,27 @@ module.exports = withNativeScope({});
     }
   });
 
+  it("usa sintaxe de módulo na instrução para .mjs e .ts", () => {
+    for (const variant of ["metro.config.mjs", "metro.config.ts"]) {
+      writeFileSync(join(dir, variant), "export default {};\n");
+      const result = ensureMetroConfig(dir, "expo");
+      expect(result.status).toBe("manual");
+      if (result.status === "manual") {
+        expect(result.reason).toContain("import { withNativeScope }");
+        expect(result.reason).toContain("export default withNativeScope");
+      }
+      rmSync(join(dir, variant), { force: true });
+    }
+  });
+
   it("backup pré-existente aborta com instrução em vez de sobrescrever", () => {
     writeFileSync(join(dir, "metro.config.js"), "module.exports = {};\n");
     writeFileSync(join(dir, "metro.config.original.js"), "// sobra de antes\n");
     const result = ensureMetroConfig(dir, "expo");
     expect(result.status).toBe("manual");
     // nada foi alterado
-    expect(readFileSync(join(dir, "metro.config.js"), "utf8")).toBe("module.exports = {};\n");
+    expect(readFileSync(join(dir, "metro.config.js"), "utf8")).toBe(
+      "module.exports = {};\n",
+    );
   });
 });

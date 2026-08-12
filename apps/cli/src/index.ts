@@ -2,12 +2,31 @@ import { networkInterfaces } from "node:os";
 import { basename, resolve } from "node:path";
 import { execFile, type ChildProcess } from "node:child_process";
 import { DEFAULT_PORT } from "@rnsi/protocol";
-import { detectProject, KNOWN_PROVIDER_LABELS, type DetectedProject } from "./detect.ts";
+import {
+  detectProject,
+  KNOWN_PROVIDER_LABELS,
+  type DetectedProject,
+} from "./detect.ts";
 import { runInit } from "./init.ts";
 import { MODULES, resolveEnabledModules } from "./modules-cli.ts";
 import { startLocalServer } from "./server.ts";
 import { startFakeRuntime } from "./fake-runtime.ts";
-import { ensureMetroConfig, spawnMetro } from "./metro-config.ts";
+import { ensureMetroConfig, metroCommand, spawnMetro } from "./metro-config.ts";
+import { findFreeMetroPort, resolveMetroPort } from "./metro-port.ts";
+import {
+  manualConfigLines,
+  metroExitLines,
+  metroPortChangedLines,
+  metroPortUnavailableLines,
+  metroStartFailureLines,
+  noMetroLines,
+  noSessionLines,
+  prefixedLines,
+  separator,
+  startingMetroLines,
+  toolLabel,
+  unknownProjectLines,
+} from "./metro-notice.ts";
 import { startAdbWatcher } from "./android.ts";
 import {
   removeSessionFile,
@@ -27,6 +46,25 @@ function flag(name: string): boolean {
 function option(name: string): string | undefined {
   const index = args.indexOf(`--${name}`);
   return index >= 0 ? args[index + 1] : undefined;
+}
+
+/**
+ * Toda mensagem que a CLI emite depois do boot passa por aqui.
+ *
+ * A partir do momento em que o Metro assume o terminal, as duas saídas se
+ * misturam. Sem prefixo, um "app connected" nosso parecia do Expo e um erro do
+ * Expo parecia nosso — foi exatamente essa confusão que chegou como bug report.
+ */
+function note(line: string): void {
+  for (const prefixed of prefixedLines(line)) console.log(prefixed);
+}
+
+function noteError(line: string): void {
+  for (const prefixed of prefixedLines(line)) console.error(prefixed);
+}
+
+function printLines(lines: string[]): void {
+  for (const line of lines) console.log(line);
 }
 
 function openBrowser(url: string): void {
@@ -61,9 +99,9 @@ function watchAndroid(port: number): () => void {
   return startAdbWatcher(port, (state) => {
     if (!state.available) return; // sem adb no PATH: irrelevante fora do Android
     if (state.problem) {
-      console.log(`android: ${state.problem}`);
+      note(`android: ${state.problem}`);
     } else if (state.reversed.length > 0) {
-      console.log(
+      note(
         `android: adb reverse active (${state.reversed.length} device${state.reversed.length > 1 ? "s" : ""})`,
       );
     }
@@ -184,7 +222,7 @@ async function main(): Promise<void> {
     sessionToken,
     uiDir,
     project,
-    log: (line) => console.log(line),
+    log: note,
     host: lan ? "0.0.0.0" : "127.0.0.1",
   });
 
@@ -216,45 +254,27 @@ async function main(): Promise<void> {
     ],
     exit: (code) => process.exit(code),
     onStepError: (name, error) =>
-      console.error(
+      noteError(
         `shutdown: ${name} failed (${error instanceof Error ? error.message : String(error)})`,
       ),
   });
 
-  process.on("SIGINT", () => shutdown(0));
-  process.on("SIGTERM", () => shutdown(0));
+  let shuttingDown = false;
+  const requestShutdown = (code: number): void => {
+    shuttingDown = true;
+    shutdown(code);
+  };
 
-  // Zero config: garante o wrap do Metro e sobe o Metro do projeto junto.
-  const isAppProject = project.flavor !== "unknown";
-  if (isAppProject && !flag("fake")) {
-    const metroResult = ensureMetroConfig(projectDir, project.flavor);
-    if (metroResult.status === "created") {
-      console.log("Created metro.config.js with NativeScope enabled.");
-    } else if (metroResult.status === "wrapped") {
-      console.log(
-        `Wrapped metro.config.js (original preserved as ${metroResult.originalBackup}).`,
-      );
-    } else if (metroResult.status === "manual") {
-      console.log("");
-      console.log(metroResult.reason);
-    }
+  process.on("SIGINT", () => requestShutdown(0));
+  process.on("SIGTERM", () => requestShutdown(0));
 
-    if (!flag("no-metro") && metroResult.status !== "manual" && session) {
-      metro = spawnMetro(projectDir, project.flavor, session.path);
-      // O Metro morrendo (inclusive pelo Ctrl+C que o Expo trata como tecla,
-      // sem sinal nenhum chegar aqui) encerra a CLI junto: o terminal volta ao
-      // prompt em vez de ficar com um serviço órfão logando sozinho.
-      metro?.on("exit", () => {
-        console.log("Metro stopped — shutting down NativeScope.");
-        shutdown(0);
-      });
-    }
-  }
-
+  // O bloco do Studio vem ANTES do Metro. Depois do spawn o banner do Expo cai
+  // por cima e a URL do Studio some no scroll — era a primeira coisa que o
+  // usuário precisava e a última que conseguia achar.
   const url = `http://127.0.0.1:${port}/?token=${sessionToken}`;
   console.log("");
+  console.log(`Studio:        ${url}`);
   console.log(`Local service: ws://127.0.0.1:${port}`);
-  console.log(`Studio: ${url}`);
   if (lan) {
     const ip = lanIp();
     console.log("");
@@ -272,6 +292,9 @@ async function main(): Promise<void> {
   }
   console.log("");
 
+  // Antes do Metro: a aba do Studio abre enquanto o bundler ainda está subindo.
+  if (!flag("no-open")) openBrowser(url);
+
   if (flag("fake")) {
     const scale = flag("fake-scale");
     startFakeRuntime({ port, sessionToken, scale });
@@ -280,12 +303,124 @@ async function main(): Promise<void> {
         ? "(--fake --fake-scale: simulated runtime with 100k rows and MB-sized values)"
         : "(--fake: simulated runtime connected)",
     );
+    console.log("");
+    return;
   }
 
-  if (!flag("no-open")) openBrowser(url);
+  // A seção do Metro é a última saída planejada da CLI antes de o filho assumir
+  // o terminal. Depois da régua os streams se misturam; por isso os eventos
+  // assíncronos do NativeScope usam o prefixo e o texto sem prefixo pertence ao
+  // bundler.
+  if (project.flavor === "unknown") {
+    printLines(unknownProjectLines());
+    console.log("");
+    return;
+  }
+
+  const preferredMetroPort = resolveMetroPort(projectDir);
+  const command = metroCommand(project.flavor, preferredMetroPort);
+  const metroResult = ensureMetroConfig(projectDir, project.flavor);
+
+  if (metroResult.status === "created") {
+    console.log("Created metro.config.js with NativeScope enabled.");
+    console.log("");
+  } else if (metroResult.status === "wrapped") {
+    console.log(
+      `Wrapped metro.config.js (original preserved as ${metroResult.originalBackup}).`,
+    );
+    console.log("");
+  }
+
+  if (metroResult.status === "manual") {
+    printLines(manualConfigLines(metroResult.reason, command.display));
+    console.log("");
+    return;
+  }
+
+  if (flag("no-metro")) {
+    printLines(noMetroLines(command.display));
+    console.log("");
+    return;
+  }
+
+  // Sem session.js em node_modules/.cache/rnsi o bundle sai sem porta nem
+  // token: o app subiria e nunca conectaria. Subir o Metro assim seria entregar
+  // um silêncio em vez de um erro.
+  if (!session) {
+    printLines(noSessionLines());
+    console.log("");
+    return;
+  }
+
+  // Não deixe o bundler escolher silenciosamente outra porta. Se a preferida
+  // está ocupada, escolhemos uma livre e passamos a mesma porta ao processo
+  // filho e ao comando impresso — o bundle e a instrumentação continuam
+  // alinhados. A checagem é uma sondagem, não uma reserva; se houver uma corrida
+  // entre ela e o spawn, o erro explícito do Metro cai no handler abaixo.
+  const metroPort = await findFreeMetroPort(preferredMetroPort);
+  if (metroPort === null) {
+    printLines(metroPortUnavailableLines(preferredMetroPort, command.display));
+    console.log("");
+    return;
+  }
+
+  const selectedCommand = metroCommand(project.flavor, metroPort);
+  if (metroPort !== preferredMetroPort) {
+    printLines(
+      metroPortChangedLines(
+        preferredMetroPort,
+        metroPort,
+        selectedCommand.display,
+      ),
+    );
+    console.log("");
+  }
+
+  const startLines = startingMetroLines(
+    selectedCommand.display,
+    toolLabel(project.flavor),
+  );
+  printLines(
+    metroPort !== preferredMetroPort ? startLines.slice(1) : startLines,
+  );
+  console.log("");
+  console.log(
+    separator(
+      selectedCommand.display,
+      Math.min(process.stdout.columns ?? 80, 100),
+    ),
+  );
+  console.log("");
+
+  metro = spawnMetro(projectDir, project.flavor, session.path, metroPort);
+  // Tanto falha de spawn quanto saída posterior encerram a CLI. Assim não
+  // existe serviço órfão nem processo pai que esconde um erro do bundler.
+  metro.once("error", (error) => {
+    if (shuttingDown) return;
+    for (const line of metroStartFailureLines(
+      selectedCommand.display,
+      error.message,
+    )) {
+      noteError(line);
+    }
+    requestShutdown(1);
+  });
+  metro.once("exit", (code, signal) => {
+    if (shuttingDown) return;
+    if (code === 0 && signal === null) {
+      note("Metro stopped. Shutting down NativeScope.");
+      requestShutdown(0);
+      return;
+    }
+
+    for (const line of metroExitLines(selectedCommand.display, code, signal)) {
+      noteError(line);
+    }
+    requestShutdown(typeof code === "number" ? code : 1);
+  });
 }
 
 main().catch((error: Error) => {
-  console.error(`error: ${error.message}`);
+  noteError(`error: ${error.message}`);
   process.exit(1);
 });

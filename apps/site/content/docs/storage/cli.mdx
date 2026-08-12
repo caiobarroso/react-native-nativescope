@@ -10,6 +10,11 @@ nativescope [options]
 Running it with no arguments is the intended path: it detects your project, starts Metro with the
 NativeScope resolver, sets up the Android tunnel if needed, and opens the studio.
 
+Because it starts Metro in the same terminal, two programs share that screen. NativeScope prefixes
+its own lines with `[nativescope]`, passes Metro an explicit port, and prints a ruler where the
+bundler takes over. If something goes wrong, [Troubleshooting](/docs/storage/troubleshooting) is
+organised around that split.
+
 ## Options
 
 | Flag | Default | What it does |
